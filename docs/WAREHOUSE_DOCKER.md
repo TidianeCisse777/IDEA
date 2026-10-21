@@ -44,6 +44,9 @@ Les dumps et le fichier `.env.warehouse` ne doivent jamais être commités.
 
 ## Accès lecture pour un agent ou DbHub
 
+La [procédure d'accès et de qualification](WAREHOUSE_ACCESS_QUALIFICATION.md)
+décrit le diagnostic reproductible, les variables lecteur et la recette MCP.
+
 Le rôle `warehouse_reader` est séparé du rôle de chargement `neolab`. Il peut
 lire les 16 vues du schéma `explore` (`uvp_projects`, `uvp_samples`,
 `uvp_objects`, `uvp_ctd`, `filet_samples`, `filet_uvp_matches`, etc.) et ne

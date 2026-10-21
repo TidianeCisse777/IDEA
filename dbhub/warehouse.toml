@@ -1,0 +1,38 @@
+# Secrets fournis uniquement par l'environnement du lanceur.
+[[sources]]
+id = "neolab"
+description = "Warehouse NeoLab. Lire warehouse_context(topic=overview) avant analyse, puis la fiche de chaque vue utilisée. Types, colonnes et SQL dans explore.warehouse_dictionary; versions présentes dans explore.dataset_versions. Lecture seule."
+type = "postgres"
+host = "${WAREHOUSE_READER_HOST}"
+port = 55432
+database = "neolab_warehouse"
+user = "warehouse_reader"
+password = "${WAREHOUSE_READER_PASSWORD}"
+sslmode = "disable"
+search_path = "explore"
+query_timeout = 30
+connection_timeout = 5
+
+[[tools]]
+name = "execute_sql"
+source = "neolab"
+readonly = true
+max_rows = 1000
+
+[[tools]]
+name = "search_objects"
+source = "neolab"
+
+[[tools]]
+name = "warehouse_context"
+source = "neolab"
+description = "Lire en premier topic=overview pour le contexte métier NeoLab, puis topic=nom_de_vue pour grain, clés, limites et exemple SQL. topic=all donne toutes les fiches. Consulter explore.warehouse_dictionary pour les colonnes/types/transformations et explore.dataset_versions pour les versions réellement enregistrées. Un catalogue existant ne prouve pas la présence de données."
+readonly = true
+max_rows = 100
+statement = "SELECT topic,purpose,grain,relations,caveats,sql_example FROM explore.warehouse_context WHERE topic=COALESCE($1::text,'overview') OR $1::text='all' ORDER BY topic"
+
+[[tools.parameters]]
+name = "topic"
+type = "string"
+description = "overview (défaut), all, ou nom de vue sans préfixe explore."
+required = false

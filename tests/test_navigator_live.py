@@ -116,7 +116,10 @@ def test_invalid_filters_are_rejected(params):
 
 @pytest.mark.parametrize("params", [[], [("zone", "Baie de Baffin")], [("year_from", 2024), ("year_to", 2024)], [("ecotaxa_project", 14844), ("ecotaxa_project", 14859)], [("zone", "Baie d'Hudson"), ("zone", "Nunavik")]])
 @pytest.mark.parametrize("hours", [4, 10])
-def test_matched_map_and_totals_use_exact_same_pairs(params, hours):
+@pytest.mark.parametrize("distance", [None, 0, 1, 25])
+def test_matched_map_and_totals_use_exact_same_pairs(params, hours, distance):
+    if distance is not None:
+        params = params + [("max_distance_km", distance)]
     pairs = api("/api/filet-uvp", params + [("max_gap_hours", hours)])["matches"]
     accepted = [r for r in pairs if r["match_status"] == "accepted"]
     selected = params + [("max_gap_hours", hours), ("matched_only", "true")]
@@ -128,6 +131,16 @@ def test_matched_map_and_totals_use_exact_same_pairs(params, hours):
     assert {s for p in points["uvp"] for s in p["samples"].split(", ")} == expected_uvp
     assert coverage["filet"]["samples"] == len(expected_filet)
     assert coverage["uvp"]["profiles"] == len(expected_uvp)
+
+
+@pytest.mark.parametrize("distance", [0, 1, 25])
+def test_spatial_threshold_returns_exact_subset_of_existing_pairs(distance):
+    baseline = api('/api/filet-uvp')['matches']
+    expected = {(r['sample_id'], r['sample_name']) for r in baseline
+                if r['distance_km'] <= distance}
+    filtered = api('/api/filet-uvp', [('max_distance_km', distance)])
+    assert {(r['sample_id'], r['sample_name']) for r in filtered['matches']} == expected
+    assert all(0 <= r['distance_km'] <= distance for r in filtered['matches'])
 
 
 def test_filet_period_and_multizone_union(source):

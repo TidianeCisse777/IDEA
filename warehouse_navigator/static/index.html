@@ -127,7 +127,7 @@
       </section>
       <section class="section"><h3 class="section-title">Correspondances</h3>
         <label class="layer-toggle"><input id="matches" type="checkbox"><i class="symbol filet" aria-hidden="true"></i><span class="toggle-copy">Comparer FILET et UVP<small>Affiche seulement les paires acceptées</small></span></label>
-        <div id="matchOptions" hidden><label class="field"><span class="range-head">Écart temporel maximal <output id="hoursOut">10 h</output></span><input id="hours" type="range" min="1" max="10" value="10"><span class="range-note">Une correspondance utilise la station normalisée et l’heure.</span></label></div>
+        <div id="matchOptions" hidden><label class="field"><span class="range-head">Écart temporel maximal <output id="hoursOut">10 h</output></span><input id="hours" type="range" min="1" max="10" value="10"><span class="range-note">Une correspondance utilise la station normalisée et l’heure.</span></label><label class="field">Écart spatial maximal (km)<input id="distanceKm" type="number" min="0" step="any" placeholder="Sans limite"><span class="range-note">Distance géodésique entre FILET et UVP. Filtre les paires existantes.</span></label></div>
       </section>
       <section class="section"><h3 class="section-title">Périmètre</h3>
         <div class="year-range" role="group" aria-label="Plage d’années"><label class="field">De<select id="yearFrom"><option value="">Début</option></select></label><label class="field">À<select id="yearTo"><option value="">Fin</option></select></label></div>
@@ -148,7 +148,7 @@ function opts(id,a){a.forEach(x=>{let value=typeof x==='object'?x.value:x,label=
 function selected(id){return [...document.querySelectorAll('#'+id+'Choices input:checked')].map(input=>input.value)}
 function updateMultiSummary(id,empty){let values=selected(id),summary=$(id+'Summary');summary.textContent=values.length===0?empty:values.length===1?document.querySelector('#'+id+'Choices input:checked').dataset.label:values.length+' sélectionnés'}
 let appliedFilterSignature='';
-function filterSignature(){return qs().toString()+'|matches='+$('matches').checked+'|hours='+$('hours').value}
+function filterSignature(){return qs().toString()+'|matches='+$('matches').checked+'|hours='+$('hours').value+'|distance='+$('distanceKm').value}
 function renderFilterState(){let dirty=Boolean(appliedFilterSignature)&&filterSignature()!==appliedFilterSignature,button=$('go'),status=$('filterStatus');button.dataset=button.dataset||{};status.dataset=status.dataset||{};button.dataset.dirty=dirty?'true':'false';button.textContent=dirty?'Appliquer les filtres':'Filtres appliqués';status.dataset.dirty=dirty?'true':'false';status.textContent=dirty?'Filtres modifiés — appliquez-les pour actualiser la carte.':'Aucune modification en attente.'}
 function markFiltersDirty(){renderActiveFilters();renderFilterState();if(coverageData)renderSummary()}
 function clearYearRange(){$('yearFrom').value='';$('yearTo').value=''}
@@ -171,7 +171,7 @@ function depthRange(x){let min=x.min_sample_depth,max=x.max_sample_depth;if(min!
 function filetEquipmentSection(x){return popupSection('Équipement FILET',[popupRow('Support',x.sampling_platform),popupRow('Engin',x.gear),popupRow('Type de trait',x.tow_type),popupRow('Maille déclarée',x.net_mesh_size),popupRow('Nombre de filets',x.number_of_nets),popupRow('Profondeur',depthRange(x))])}
 function profilePopup(p,name,isFilet){let quantity=isFilet?`${fmt(p.count)} échantillon${p.count>1?'s':''} FILET au même emplacement`:`${fmt(p.count)} profil${p.count>1?'s':''} UVP au même emplacement`,time=p.last_sampled_at&&p.last_sampled_at!==p.sampled_at?`${dateTime(p.sampled_at)} → ${dateTime(p.last_sampled_at)}`:dateTime(p.sampled_at),identity=popupSection(isFilet?'Échantillon FILET':'Profil UVP',[popupRow(isFilet?'Échantillon(s)':'Profil(s)',p.samples),popupRow('Station',p.stations),popupRow('Date et heure',time)]),provenance=isFilet?filetEquipmentSection(p):popupSection('Données associées',[popupRow('Projet UVP / EcoTaxa',p.ecotaxa_projects),popupRow('Données EcoPart',p.ecopart_projects?'oui (projet '+p.ecopart_projects+')':'non'),popupRow('CTD lié',p.ctd_profiles?'oui':'non')]);return `<article class="popup"><h2 class="popup-title">${escapeHtml(name)}</h2><p class="popup-summary">${escapeHtml(quantity)}</p>${identity}${provenance}</article>`}
 function group(ps,col,name){let g=L.layerGroup(),isFilet=name==='Échantillon FILET';ps.forEach(p=>{let info=profilePopup(p,name,isFilet),marker=L.circleMarker([p.latitude,p.longitude],{radius:Math.min(12,4+Math.log2(p.count)),color:'#fff',weight:1,fillColor:(p.ctd_profiles>0?'#6854b8':col),fillOpacity:.9});marker._baseWeight=1;marker.bindPopup(info,{maxHeight:320}).on('click',focusPoint).addTo(g)});return g}
-function comparePopup(x){let filet=popupSection('Échantillon FILET',[popupRow('Échantillon',x.sample_id),popupRow('Station',x.station_name),popupRow('Date et heure',dateTime(x.filet_time))])+filetEquipmentSection(x),uvp=popupSection('Profil UVP',[popupRow('Profil',x.sample_name),popupRow('Projet UVP / EcoTaxa',x.uvp_project),popupRow('Station',x.station_key),popupRow('Date et heure',dateTime(x.uvp_time))]);return `<article class="popup"><h2 class="popup-title">Comparaison FILET ↔ UVP</h2><p class="popup-summary popup-status">${escapeHtml(x.match_status)} · écart ${escapeHtml(gap(x.time_gap_hours))}</p>${filet}${uvp}</article>`}
+function comparePopup(x){let filet=popupSection('Échantillon FILET',[popupRow('Échantillon',x.sample_id),popupRow('Station',x.station_name),popupRow('Date et heure',dateTime(x.filet_time))])+filetEquipmentSection(x),uvp=popupSection('Profil UVP',[popupRow('Profil',x.sample_name),popupRow('Projet UVP / EcoTaxa',x.uvp_project),popupRow('Station',x.station_key),popupRow('Date et heure',dateTime(x.uvp_time))]);return `<article class="popup"><h2 class="popup-title">Comparaison FILET ↔ UVP</h2><p class="popup-summary popup-status">${escapeHtml(x.match_status)} · écart ${escapeHtml(gap(x.time_gap_hours))}</p>${popupSection('Distance',[popupRow('Écart spatial',x.distance_km==null?'Non disponible':Number(x.distance_km).toLocaleString('fr-CA',{maximumFractionDigits:2})+' km')])}${filet}${uvp}</article>`}
 let coverageData=null,mapData=null,zoneData=null;
 function renderZoneLayer(){if(zoneLayer)map.removeLayer(zoneLayer);zoneLayer=null;const visible=visibleZoneFeatures(zoneData,mapData);if(visible?.features.length)zoneLayer=L.geoJSON(visible,{style:{color:'#0b6975',weight:2,fillOpacity:.06},onEachFeature:(f,l)=>l.bindTooltip(f.properties.canonical,{permanent:true,direction:'center',className:'zone-label'})}).addTo(map)}
 function renderLegend(){let comparing=$('matches').checked,showUvp=comparing||$('uvp').checked,showFilet=comparing||$('filet').checked,ctd=Boolean(coverageData?.ctd?.profiles);$('legendUvp').hidden=!showUvp;$('legendCtd').hidden=!showUvp||!ctd;$('legendFilet').hidden=!showFilet;$('legendMatch').hidden=!comparing;$('legendEmpty').hidden=showUvp||showFilet}
@@ -208,11 +208,12 @@ async function load(){
   try{
     const q=qs(),params=new URLSearchParams(q),zoneParams=new URLSearchParams();
     selected('zones').forEach(name=>zoneParams.append('name',name));
-    if(comparing){params.set('matched_only','true');params.set('max_gap_hours',$('hours').value)}
+    const pairParams=new URLSearchParams(q);pairParams.set('max_gap_hours',$('hours').value);
+    if(comparing){params.set('matched_only','true');params.set('max_gap_hours',$('hours').value);const distance=$('distanceKm').value;if(distance!==''){if(!Number.isFinite(Number(distance))||Number(distance)<0)throw new Error('Distance invalide');params.set('max_distance_km',distance);pairParams.set('max_distance_km',distance)}}
     const [d,m,z,r]=await Promise.all([
       fetchJson('/api/coverage?'+params),fetchJson('/api/map?'+params),
       selected('zones').length?fetchJson('/api/zone?'+zoneParams):null,
-      comparing?fetchJson('/api/filet-uvp?max_gap_hours='+$('hours').value+'&'+q):null
+      comparing?fetchJson('/api/filet-uvp?'+pairParams):null
     ]);
     if(sequence!==loadSequence)return;
     Object.values(layers).forEach(layer=>map.removeLayer(layer));
@@ -252,6 +253,7 @@ async function load(){
 ['uvp','filet'].forEach(x=>$(x).onchange=()=>{if(!$('matches').checked){if($(x).checked)layers[x]?.addTo(map);else if(layers[x])map.removeLayer(layers[x]);}renderZoneLayer();renderSummary();syncUrlState()});
 $('hours').oninput=()=>{$('hoursOut').textContent=$('hours').value+' h'};
 $('hours').onchange=load;
+$('distanceKm').onchange=load;
 $('matches').onchange=()=>{$('matchOptions').hidden=!$('matches').checked;['uvp','filet'].forEach(x=>{if($('matches').checked)$(x).checked=true;$(x).disabled=$('matches').checked});load()};
 $('yearFrom').onchange=()=>{if($('yearTo').value&&$('yearFrom').value>$('yearTo').value)$('yearTo').value=$('yearFrom').value;markFiltersDirty()};
 $('yearTo').onchange=()=>{if($('yearFrom').value&&$('yearTo').value<$('yearFrom').value)$('yearFrom').value=$('yearTo').value;markFiltersDirty()};

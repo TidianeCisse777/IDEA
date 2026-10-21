@@ -16,6 +16,13 @@ function setup(){
   return {context,element,drawn,run:code=>vm.runInContext(code,context)};
 }
 const coverage={filters:{zones:[]},uvp:{profiles:5,geolocated_profiles:4,objects_mapped:12,first_date:'2020-01-01',last_date:'2024-01-01'},ctd:{profiles:2},filet:{samples:9,first_date:'2010-01-01',last_date:'2025-01-01'}};
+test('spatial threshold reaches all three comparison endpoints, including zero',async()=>{
+  const s=setup(),urls=[];s.element('matches').checked=true;s.element('hours').value='10';s.element('distanceKm').value='0';
+  s.context.fetch=async url=>{urls.push(url);return {ok:true,json:async()=>url.includes('/coverage')?coverage:url.includes('/map')?{uvp:[],filet:[]}:{matches:[]}}};
+  await s.run('load()');
+  assert.equal(urls.length,3);
+  urls.forEach(url=>assert.equal(new URL(url,'http://localhost').searchParams.get('max_distance_km'),'0'));
+});
 test('summary follows the visible sources and combines their periods',()=>{
   const s=setup();s.context.fixture=coverage;s.run('coverageData=fixture');
   s.element('uvp').checked=true;s.element('filet').checked=true;s.run('renderSummary()');

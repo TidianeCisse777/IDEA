@@ -2,7 +2,82 @@
 
 **Période proposée :** du 14 septembre au 30 novembre 2026
 
-**Dernière mise à jour :** 8 octobre 2026
+**Dernière mise à jour :** 21 octobre 2026
+
+### 21 octobre 2026 — Contexte métier distribué via le MCP (phases 1 et 2)
+
+- Dictionnaire versionné des 16 vues scientifiques : usage, grain, clés de
+  jointure, provenance par SQL réel, limites et exemples. Publication de
+  commentaires sur 304 colonnes; unités inconnues explicitement à confirmer.
+- Surfaces lecteur additives : `explore.warehouse_context`,
+  `explore.warehouse_dictionary`, `explore.dataset_versions`. Aucun secret
+  ni URI locale de manifeste exposé par l'inventaire des versions.
+- Outil DbHub `warehouse_context` avec fiche générale, fiche par vue ou
+  ensemble des fiches. Description invitant le modèle à lire le contexte
+  avant analyse; aucune injection automatique de tout le dictionnaire promise.
+- TDD : tests du contrat écrits et exécutés en échec avant implémentation,
+  puis 4 tests réussis. Recette MCP réelle réussie : contexte général et
+  FILET CTD, dictionnaire SQL, commentaire de volume renvoyé par search_objects,
+  requête lecteur; les droits bruts restent limités.
+- [Dictionnaire Markdown](docs/WAREHOUSE_MCP_DICTIONARY.md) généré depuis
+  l'instance et le même contenu métier. Risques de doublons/versions de
+  `filet_uvp_abundance` documentés; calcul scientifique non déclaré validé.
+- Limites : base toujours vide, nouveau chargement du catalogue MCP dans Codex
+  requis. La disponibilité du contexte ne garantit pas que chaque modèle le
+  consulte systématiquement. Phases non clôturées.
+
+### 21 octobre 2026 — Warehouse portable, interface et DbHub dans Codex (phases 1 et 2)
+
+- PostgreSQL 16.15/PostGIS 3.6.2, Python 3.11.9, Node 24.22.0 et DbHub 1.5.0
+  installés sous `data/tooling/`, sans Docker ni service Windows.
+- Cluster et base vide initialisés; interface lancée sur `127.0.0.1:8090`.
+  Les huit routes HTTP de recette répondent 200, avec et sans filtre spatial.
+- Rôles `warehouse_reader` et `warehouse_navigator` contrôlés en SQL réel :
+  lecture seule, absence de droits DDL/écriture et privilèges administratifs,
+  lecture brute refusée au lecteur MCP. Calcul géodésique PostGIS vérifié.
+- DbHub : handshake MCP, découverte et requête SQL lecteur réussis;
+  serveur `neolab-warehouse` enregistré dans la configuration personnelle
+  Codex sans secret. Rechargement de Codex requis pour le catalogue d'outils.
+- Tests exécutés : 20 schéma, 6 audit, 2 contrat spatial, 12 UI et contrôle
+  PowerShell du lanceur, tous réussis. Les blocages Windows initdb ont été
+  résolus avec les chemins courts et l'extraction complète du runtime.
+- Livrable : [résumé opérationnel](docs/RESUME_WAREHOUSE_LOCAL.md), procédure
+  [portable](docs/WAREHOUSE_PORTABLE.md), scripts de cycle de vie et recette.
+- Limites : archive et sauvegarde absentes, aucune donnée scientifique
+  restaurée; recette visuelle et conversation Codex après rechargement non
+  exécutées. Phases non clôturées. Aucun changement publié ou poussé;
+  suivi GitHub Project non synchronisé dans cette session.
+
+### 21 octobre 2026 — Écart spatial de comparaison FILET–UVP (phase 2)
+
+- Ajout d'un seuil spatial facultatif en km, combiné au seuil temporel sur
+  les paires stockées. Distance géodésique PostGIS, affichée dans les fiches;
+  même filtre sur carte, compteurs et liste des correspondances.
+- Contrats écrits avant implémentation, tests UI et recette live étendus
+  (seuil nul, sous-ensembles, cohérence des trois routes).
+- Tentative d'exécution Python bloquée avant collecte : interpréteur absent.
+  Node et Docker indisponibles dans le PATH; recette UI/PostgreSQL non exécutée.
+  `git diff --check` est le seul contrôle exécuté avec succès.
+- Limite : aucune nouvelle paire spatiale n'est créée et aucun statut
+  scientifique n'est modifié; la phase reste en cours.
+
+### 21 octobre 2026 — Documentation, accès lecteur et qualification (phases 1 et 2)
+
+- Contrat et procédure regroupés dans
+  [WAREHOUSE_ACCESS_QUALIFICATION.md](docs/WAREHOUSE_ACCESS_QUALIFICATION.md) :
+  grains, références du dictionnaire, connexion lecteur et recette MCP à effectuer.
+- Tests de contrat écrits avant `scripts/audit_warehouse.py` : absence de
+  fallback propriétaire, délais et lecture seule, découverte sans scan,
+  vues manquantes explicites et restitution des mesures par version.
+- Diagnostic ajouté : inventaire des colonnes accessibles puis scan taxonomique
+  uniquement avec `--qualify`. Identifiant, libellé, annotation et contrat FILET
+  sont distingués; aucun rapprochement scientifique n'est créé.
+- Tentative de test : `python -m unittest discover -s tests -p test_warehouse_audit.py`
+  échoue avant collecte car Python est absent (raccourci Microsoft Store).
+  Aucun résultat rouge/vert TDD exécuté n'est donc revendiqué.
+- Limites : ni connexion PostgreSQL live ni configuration DbHub/MCP validée
+  dans cet environnement; aucun credential local trouvé ou affiché. « Données
+  contrats » reste à clarifier. Phases et use cases restent en cours.
 
 ### 8 octobre 2026 - Brouillon PGD/DMP et audit des métadonnées (phases 1 et 2)
 

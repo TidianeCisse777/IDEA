@@ -206,10 +206,23 @@ def filet_filter(zone_sample_ids: list[int] | None, year_from: int | None, year_
 
 
 
-def accepted_pair_ids(zones, year_from, year_to, projects, ecopart_project, search, hours):
+PAIR_DISTANCE_SQL = """ST_Distance(
+    ST_SetSRID(ST_MakePoint(s.longitude, s.latitude), 4326)::geography,
+    ST_SetSRID(ST_MakePoint(p.longitude, p.latitude), 4326)::geography) / 1000.0"""
+
+
+def spatial_pair_filter(max_distance_km):
+    """Distance géodésique WGS84 en km; None conserve les paires existantes."""
+    if max_distance_km is None:
+        return "TRUE", []
+    return f"({PAIR_DISTANCE_SQL}) <= %s", [max_distance_km]
+
+
+def accepted_pair_ids(zones, year_from, year_to, projects, ecopart_project, search, hours, max_distance_km=None):
     """Both endpoints must satisfy the filters and be mappable."""
     pw, pv = profile_filter(zones, year_from, year_to, projects, ecopart_project, search)
     fw, fv = filet_filter(filet_ids_in_zones(zones), year_from, year_to, [], None, search)
+    spatial_where, spatial_values = spatial_pair_filter(max_distance_km)
     with db() as conn:
         rows = conn.execute(f"""
             SELECT DISTINCT p.id AS profile_id, s.id AS sample_id
@@ -219,7 +232,7 @@ def accepted_pair_ids(zones, year_from, year_to, projects, ecopart_project, sear
             WHERE m.match_status='accepted' AND m.time_gap_hours <= %s
               AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL
               AND s.latitude IS NOT NULL AND s.longitude IS NOT NULL
-              AND {pw} AND {fw}""", [hours] + pv + fv).fetchall()
+              AND {spatial_where} AND {pw} AND {fw}""", [hours] + spatial_values + pv + fv).fetchall()
     return sorted({r["profile_id"] for r in rows}), sorted({r["sample_id"] for r in rows})
 
 @app.get("/")
@@ -271,6 +284,7 @@ def coverage(
     search: str | None = Query(None, max_length=100),
     matched_only: bool = False,
     max_gap_hours: float = Query(10, gt=0, le=72),
+    max_distance_km: float | None = Query(None, ge=0, allow_inf_nan=False),
 ):
     year_from = year if year_from is None else year_from
     year_to = year if year_to is None else year_to
@@ -279,7 +293,7 @@ def coverage(
     where, values = profile_filter(zone, year_from, year_to, ecotaxa_project, ecopart_project, search)
     filet_where, filet_values = filet_filter(filet_ids_in_zones(zone), year_from, year_to, ecotaxa_project, ecopart_project, search)
     if matched_only:
-        profile_ids, sample_ids = accepted_pair_ids(zone, year_from, year_to, ecotaxa_project, ecopart_project, search, max_gap_hours)
+        profile_ids, sample_ids = accepted_pair_ids(zone, year_from, year_to, ecotaxa_project, ecopart_project, search, max_gap_hours, max_distance_km)
         where += " AND p.id = ANY(%s::bigint[])"
         values.append(profile_ids)
         filet_where += " AND s.id = ANY(%s::bigint[])"
@@ -337,6 +351,7 @@ def map_points(
     year_from: int | None = Query(None, ge=1900, le=2100), year_to: int | None = Query(None, ge=1900, le=2100),
     ecotaxa_project: list[int] = Query(default=[]), ecopart_project: int | None = None,
     matched_only: bool = False, max_gap_hours: float = Query(10, gt=0, le=72),
+    max_distance_km: float | None = Query(None, ge=0, allow_inf_nan=False),
 ):
     """One aggregated point per source coordinate: map coverage, never objects."""
     year_from = year if year_from is None else year_from
@@ -347,7 +362,7 @@ def map_points(
     filet_filter_sql, filet_values = filet_filter(filet_ids_in_zones(zone), year_from, year_to, ecotaxa_project, ecopart_project, None)
     filet_where = ["s.latitude IS NOT NULL", "s.longitude IS NOT NULL", filet_filter_sql]
     if matched_only:
-        profile_ids, sample_ids = accepted_pair_ids(zone, year_from, year_to, ecotaxa_project, ecopart_project, None, max_gap_hours)
+        profile_ids, sample_ids = accepted_pair_ids(zone, year_from, year_to, ecotaxa_project, ecopart_project, None, max_gap_hours, max_distance_km)
         where += " AND p.id = ANY(%s::bigint[])"
         values.append(profile_ids)
         filet_where.append("s.id = ANY(%s::bigint[])")
@@ -388,6 +403,7 @@ def map_points(
 @app.get("/api/filet-uvp")
 def filet_uvp(
     max_gap_hours: float = Query(10, gt=0, le=72),
+    max_distance_km: float | None = Query(None, ge=0, allow_inf_nan=False),
     zone: list[str] = Query(default=[]), year: int | None = Query(None, ge=1900, le=2100),
     year_from: int | None = Query(None, ge=1900, le=2100), year_to: int | None = Query(None, ge=1900, le=2100),
     ecotaxa_project: list[int] = Query(default=[]), ecopart_project: int | None = None,
@@ -399,8 +415,9 @@ def filet_uvp(
         year_from, year_to = year_to, year_from
     pw, pv = profile_filter(zone, year_from, year_to, ecotaxa_project, ecopart_project, None)
     fw, fv = filet_filter(filet_ids_in_zones(zone), year_from, year_to, [], None, None)
+    spatial_where, spatial_values = spatial_pair_filter(max_distance_km)
     with db() as conn:
-        rows = conn.execute(f"""SELECT m.match_status,m.time_gap_hours,s.sample_id,s.station_name,
+        rows = conn.execute(f"""SELECT m.match_status,m.time_gap_hours,({PAIR_DISTANCE_SQL}) AS distance_km,s.sample_id,s.station_name,
           s.deployment_datetime_start AS filet_time,s.sampling_platform,s.gear,s.tow_type,s.net_mesh_size,s.number_of_nets,
           (SELECT count(*) FROM warehouse.uvp_ctd c WHERE c.uvp_profile_id=p.id) AS ctd_profiles,
           s.min_sample_depth,s.max_sample_depth,p.sample_name,p.station_key,p.sampled_at AS uvp_time,ep.title AS uvp_project,
@@ -411,7 +428,7 @@ def filet_uvp(
           WHERE m.time_gap_hours <= %s
             AND s.latitude IS NOT NULL AND s.longitude IS NOT NULL
             AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL
-            AND {pw} AND {fw}
-          ORDER BY m.time_gap_hours, s.id, p.id""", [max_gap_hours] + pv + fv).fetchall()
-    return {"max_gap_hours": max_gap_hours, "accepted": sum(r["match_status"] == "accepted" for r in rows),
+            AND {spatial_where} AND {pw} AND {fw}
+          ORDER BY m.time_gap_hours, s.id, p.id""", [max_gap_hours] + spatial_values + pv + fv).fetchall()
+    return {"max_gap_hours": max_gap_hours, "max_distance_km": max_distance_km, "accepted": sum(r["match_status"] == "accepted" for r in rows),
             "ambiguous": sum(r["match_status"] == "ambiguous" for r in rows), "matches": rows}
