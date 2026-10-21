@@ -5,6 +5,62 @@ def view(purpose, grain, joins, caveats, example):
     return dict(purpose=purpose, grain=grain, joins=joins, caveats=caveats, example=example)
 
 
+GRAPHICS = view(
+    'Règles de graphiques NeoLab. Utiliser Python : pandas pour manipuler les résultats SQL, '
+    'Matplotlib pour les figures scientifiques statiques; seaborn facultatif pour les distributions. '
+    'Cartopy avec Matplotlib pour les cartes statiques et projections; Folium pour les cartes '
+    'interactives exportées en HTML. GeoPandas/Shapely/pyproj seulement si des opérations de '
+    'géométrie ou de reprojection sont nécessaires. cmocean pour les palettes de variables '
+    'océanographiques, avec barre de couleur et unités explicites; conserver cividis en repli. '
+    'Pour l’analyse physique océanographique : oceans fournit des utilitaires, gsw (GSW/TEOS-10) '
+    'les propriétés thermodynamiques; xarray convient aux données multidimensionnelles/NetCDF. '
+    'Ces bibliothèques sont facultatives selon le besoin; ne pas les installer ni les appeler toutes '
+    'systématiquement. Vérifier pour chaque fonction les entrées requises, unités, convention '
+    'scientifique et domaine de validité; toute grandeur dérivée conserve formule et provenance. '
+    'Avec gsw, distinguer salinité pratique/absolue et température in situ/conservative; ne pas '
+    'substituer directement pression et profondeur. Clarifier les hypothèses manquantes avant calcul. '
+    'Plotly uniquement si une interaction est demandée ou utile à une exploration explicitée; '
+    'fournir alors un HTML autonome. Vérifier les bibliothèques installées avant exécution; leur '
+    'mention ici ne signifie pas qu’elles sont disponibles. Respecter un choix explicite de l’utilisateur.',
+    'Le graphique représente le grain documenté et un résultat réellement calculé. Agréger dans SQL '
+    'avant transfert. DbHub limite les réponses à 1 000 lignes : contrôler le nombre attendu et toute '
+    'indication de résultat tronqué; ne jamais tracer un sous-ensemble tronqué comme une population complète. '
+    'Une base vide produit un constat d’absence de données, aucun graphique avec données inventées. '
+    'NULL et zéro restent distincts. Ne pas interpoler, lisser, normaliser ou exclure des valeurs sans '
+    'méthode explicite; demander une clarification si cela change le sens scientifique.',
+    'Style par défaut : fond blanc, police DejaVu Sans 11 pt, titre descriptif court en français, '
+    'axes avec noms et unités vérifiées, légende lisible, grille fine gris clair et marges sans texte coupé. '
+    'Couleurs catégorielles adaptées au daltonisme, palette séquentielle cividis pour une quantité continue. '
+    'Conserver couleurs et échelles cohérentes entre panneaux comparables. Pas de 3D décorative ou '
+    'double axe sans justification. Profils : profondeur en ordonnée croissante vers le bas; '
+    'échelle logarithmique uniquement explicitée et compatible avec zéros/valeurs négatives. '
+    'Conserver les deux dénominateurs FILET séparés et appliquer l’agrégation UVP pondérée par volume. '
+    'Cartographie : vérifier le CRS; les coordonnées du warehouse sont en degrés WGS84. '
+    'Avec Cartopy, séparer projection d’affichage et transform des données : PlateCarree pour les '
+    'longitudes/latitudes WGS84, projection polaire adaptée à l’Arctique si pertinente. '
+    'Ordre des points : Cartopy (longitude, latitude), Folium [latitude, longitude], '
+    'GeoJSON [longitude, latitude]. Exclure explicitement les coordonnées manquantes/hors domaine '
+    'sans les inventer. Calculer les distances en géodésique/PostGIS, pas en degrés ni en pixels. '
+    'Conserver la version des zones et les ambiguïtés; distinguer source, statut et concentration '
+    'dans la légende. Identifier les fonds/tuiles et leurs attributions. Les tuiles, bibliothèques '
+    'JavaScript distantes et fonds Cartopy peuvent nécessiter Internet ou un cache local : '
+    'ne pas annoncer une carte Folium autonome hors ligne sans l’avoir vérifiée. '
+    'Privilégier les fonds locaux/caches; confirmer tout téléchargement lourd.',
+    'Afficher un cartouche de statut : Exploratoire par défaut, pas une probabilité de confiance. '
+    'Convention confirmed (#007B88, trait plein), exploratory (#B87514, tirets), uncertain '
+    '(#737C86, pointillés); toujours ajouter un libellé ou symbole pour ne pas dépendre de la couleur. '
+    'confirmed exige une validation scientifique explicitement documentée; un match accepted ou un test '
+    'technique réussi ne suffit pas. uncertain signale les limites connues, sans inventer de valeurs '
+    'ou d’intervalles. Si la couleur code un taxon ou une quantité, garder le statut dans le cartouche '
+    'et les libellés. Aucune interprétation biologique, aucun ajustement statistique ni intervalle '
+    'd’incertitude inventé. Conserver requête SQL, paramètres, versions, méthode, exclusions et limites '
+    'dans un fichier de provenance accompagnant la figure. Produire un PNG à 300 dpi et un SVG pour '
+    'les figures statiques, le CSV exact tracé et le script Python reproductible; indiquer les chemins '
+    'réels des fichiers créés. Inspecter le rendu avant livraison et signaler toute limite restante.',
+    "SELECT topic,purpose,grain,relations,caveats FROM explore.warehouse_context WHERE topic='graphs';",
+)
+
+
 VIEWS = {
     'uvp_projects': view(
         'Inventaire agrégé des projets UVP liés à EcoTaxa/EcoPart.',

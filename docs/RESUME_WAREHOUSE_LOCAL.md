@@ -38,6 +38,27 @@ commentaires sont retournés par `search_objects`, et les fiches par l'outil
 MCP. Ce contenu est disponible à la demande, pas injecté intégralement dans
 chaque message; la description de l'outil demande de lire l'overview d'abord.
 
+Avant une figure, `warehouse_context(topic="graphs")` fournit les règles :
+Matplotlib/pandas par défaut, seaborn facultatif, Plotly pour une interaction
+justifiée, style scientifique sobre, unités, profondeur croissante vers le bas,
+statuts confirmed/exploratory/uncertain et provenance. Exports statiques PNG
+300 dpi/SVG, CSV tracé et script Python reproductible. Ces instructions ne
+garantissent pas que les bibliothèques sont installées et ne valident pas les
+données. Le dictionnaire Markdown expose le même contenu.
+
+La fiche graphs couvre aussi Cartopy (cartes statiques), Folium (cartes HTML),
+GeoPandas/Shapely/pyproj selon les besoins géométriques, cmocean (palettes),
+oceans (utilitaires océanographiques), gsw/TEOS-10 (propriétés physiques) et
+xarray (multidimensionnel/NetCDF). Ce sont des options documentées, sans
+installation automatique. Ordre des coordonnées, CRS/projection, unités,
+conventions salinité/température et dépendances réseau des fonds sont explicites.
+
+Références : [Cartopy — projection/transform](https://cartopy.readthedocs.io/stable/tutorials/understanding_transform.html),
+[Folium](https://python-visualization.github.io/folium/latest/getting_started.html),
+[oceans](https://github.com/pyoceans/python-oceans),
+[GSW-Python](https://teos-10.github.io/GSW-Python/),
+[cmocean](https://github.com/matplotlib/cmocean).
+
 L'enregistrement MCP est effectué dans la configuration personnelle Codex.
 **Recharger l'extension ou redémarrer Codex et ouvrir une nouvelle conversation**
 pour charger ses outils. Le processus de cette conversation ne recharge pas

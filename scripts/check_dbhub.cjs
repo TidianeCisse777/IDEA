@@ -26,6 +26,11 @@ const timeout=setTimeout(()=>{child.kill();console.error('FAIL : délai MCP dép
   assert.match(contextTool.description,/overview/);
   const context=await rpc('tools/call',{name:contextTool.name,arguments:{topic:'overview'}});
   assert.ok(!context.isError);assert.match(JSON.stringify(context),/annotation|dénominateurs/);
+  const graphContext=await rpc('tools/call',{name:contextTool.name,arguments:{topic:'graphs'}});
+  assert.ok(!graphContext.isError);assert.match(JSON.stringify(graphContext),/Matplotlib/);
+  assert.match(JSON.stringify(graphContext),/Exploratoire/);
+  assert.match(JSON.stringify(graphContext),/CSV/);
+  for(const library of ['Cartopy','Folium','oceans','TEOS-10','cmocean'])assert.ok(JSON.stringify(graphContext).includes(library));
   const sampleContext=await rpc('tools/call',{name:contextTool.name,arguments:{topic:'filet_ctd'}});
   assert.ok(!sampleContext.isError);assert.match(JSON.stringify(sampleContext),/NATIF/);
   const dictionary=await rpc('tools/call',{name:tool.name,arguments:{sql:"SELECT column_description,view_description,sql_definition FROM explore.warehouse_dictionary WHERE view_name='uvp_taxon_abundance' AND column_name='sampled_volume_l'"}});

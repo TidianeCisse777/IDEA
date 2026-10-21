@@ -4,7 +4,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from warehouse_context import VIEWS, column_description
+from warehouse_context import VIEWS, GRAPHICS, column_description
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -12,6 +12,8 @@ OVERVIEW = (
     'Warehouse NeoLab : EcoTaxa (objets/annotations), EcoPart (profils/bins/volumes), '
     'FILET (échantillons/analyses/abondances et biomasses source), CTD (mesures environnementales). '
     'Lire ce contexte puis demander la fiche de chaque vue utilisée avec warehouse_context(topic=nom). '
+    'Avant de produire un graphique, lire warehouse_context(topic=graphs) pour les bibliothèques, '
+    'le style, les règles scientifiques, la provenance et les exports. '
     'Les métadonnées et vues existent même quand les données sont absentes : lire '
     'explore.dataset_versions et mesurer la couverture avant de conclure. '
     'Ne pas inventer données, unités, taxons, liens ou validation scientifique. '
@@ -53,6 +55,8 @@ def publish(conn):
                  'Consulter dataset_versions puis warehouse_dictionary et les fiches des vues.',
                  'Un catalogue documenté ne prouve ni peuplement ni validation scientifique.',
                  'SELECT * FROM explore.dataset_versions LIMIT 20;')]
+        rows.append(('graphs', GRAPHICS['purpose'], GRAPHICS['grain'], GRAPHICS['joins'],
+                     GRAPHICS['caveats'], GRAPHICS['example']))
         rows += [(name, item['purpose'], item['grain'], item['joins'], item['caveats'], item['example'])
                  for name, item in VIEWS.items()]
         for name, purpose, grain, example in (
@@ -111,7 +115,10 @@ def markdown(columns, descriptions):
              'Généré depuis le schéma déployé et le dictionnaire métier versionné. Les données restent à qualifier.', '',
              'Dans DbHub : appeler `warehouse_context` avec `topic="overview"`, puis le nom de vue.',
              '`topic="all"` retourne toutes les fiches. Types et SQL réels : `explore.warehouse_dictionary`.', '',
-             OVERVIEW, '']
+             OVERVIEW, '', '## Règles de graphiques — topic=graphs', '']
+    for key, label in (('purpose', 'Bibliothèques'), ('grain', 'Données et calcul'),
+                       ('joins', 'Style'), ('caveats', 'Statut et livraison')):
+        lines += [f"**{label} :** {GRAPHICS[key]}", '']
     for name, item in VIEWS.items():
         lines += [f'## explore.{name}', '', item['purpose'], '', f"**Grain :** {item['grain']}", '',
                   f"**Relations :** {item['joins']}", '', f"**Limites :** {item['caveats']}", '',

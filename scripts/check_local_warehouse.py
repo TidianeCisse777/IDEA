@@ -23,7 +23,7 @@ for role, key, raw_allowed in (
                                 "FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
                                 "WHERE n.nspname='warehouse' AND c.relname='dataset_version'").fetchone()[0]
         conn.execute('SELECT * FROM explore.uvp_projects LIMIT 1')
-        assert conn.execute('SELECT count(*) FROM explore.warehouse_context').fetchone()[0] == 20
+        assert conn.execute('SELECT count(*) FROM explore.warehouse_context').fetchone()[0] == 21
         assert conn.execute('SELECT count(*) FROM explore.warehouse_dictionary '
                             'WHERE column_description IS NULL OR view_description IS NULL').fetchone()[0] == 0
         conn.execute('SELECT * FROM explore.dataset_versions LIMIT 1')

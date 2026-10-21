@@ -4,6 +4,47 @@
 
 **Dernière mise à jour :** 21 octobre 2026
 
+### 21 octobre 2026 — Cartographie et bibliothèques océanographiques dans le MCP
+
+- Fiche graphs étendue : Cartopy, Folium, GeoPandas/Shapely/pyproj, cmocean,
+  oceans, gsw/TEOS-10 et xarray selon besoin. Règles d’ordre des coordonnées,
+  CRS/projections, géodésie, attributions et fonctionnement réseau des fonds.
+- Conventions physiques et unités exigées avant calcul; pas de substitution
+  implicite salinité pratique/absolue, température ou pression/profondeur.
+  « oceangs » n’étant pas un nom confirmé, oceans est documenté comme option
+  d’analyse océanographique vérifiée, sans prétendre identifier le package voulu.
+- TDD : test cartographique en échec avant ajout, puis 8 tests de contexte
+  réussis; métadonnées et documentation générée republiées. Les bibliothèques
+  restent à installer selon le calcul demandé; aucun calcul scientifique réalisé.
+- Recette MCP réelle réussie : les noms Cartopy, Folium, oceans, TEOS-10 et
+  cmocean sont bien présents dans la fiche renvoyée par DbHub.
+
+### 21 octobre 2026 — Règles de graphiques dans le contexte MCP
+
+- Fiche `warehouse_context(topic=graphs)` publiée et annoncée dans l’overview
+  et la description de l’outil : bibliothèques Python, style, unités, axes,
+  palette/statuts, exports PNG/SVG/CSV et provenance SQL reproductible.
+- Règles explicites contre les graphiques sur données inventées ou résultat
+  tronqué, les normalisations implicites et la confusion entre lien accepted
+  et validation scientifique. Vérification des dépendances requise avant tracé.
+- TDD : contrat en échec avant ajout de la fiche, puis 6 tests de contexte
+  réussis. Publication SQL des métadonnées et contrôle des rôles réussis;
+  documentation générée actualisée. Aucune bibliothèque graphique installée
+  ni figure scientifique produite par ce changement de contexte.
+- Recette MCP réelle réussie : la fiche graphs renvoie Matplotlib, le statut
+  Exploratoire et les exports CSV; les contrôles métier/SQL existants passent.
+
+### 21 octobre 2026 — Recherche de sauvegarde dans l’historique de la branche
+
+- Audit de `codex/validate-warehouse-v1` au commit `0483871` : 869 commits
+  accessibles et 2 054 contenus de fichiers examinés, y compris fichiers supprimés.
+- Aucun chemin de fichier SQLite/dump/backup trouvé. Inspection des signatures
+  binaires : aucune base SQLite, dump PostgreSQL custom/SQL, archive ZIP/gzip
+  ou pointeur Git LFS détecté; inventaire LFS également vide.
+- Seuls les DDL/migrations et les mentions documentaires de sauvegardes
+  restent disponibles. Limite : audit de l’historique accessible depuis cette
+  branche; n’inclut pas d’autres branches, releases, artifacts ou objets orphelins.
+
 ### 21 octobre 2026 — Contexte métier distribué via le MCP (phases 1 et 2)
 
 - Dictionnaire versionné des 16 vues scientifiques : usage, grain, clés de
