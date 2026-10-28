@@ -49,3 +49,11 @@ résolues à l'ingestion.
 Cette V1 est un contrat logique à valider sur les exports retenus. Le DDL est
 un brouillon non déployé ; la vue finale de comparaison doit encore être
 implémentée après validation des colonnes CTD et des règles de support vertical.
+
+## Couche d'accès et de découverte
+
+Les tables `warehouse.*` appartiennent à `warehouse_data_owner` et sont protégées par sécurité par ligne;
+les comptes lisent `explore.*`, filtrés selon `warehouse.access_grant` (source, contrat, zone, année).
+`explore.my_access`, `dataset_catalog` et `fair_readiness` servent à découvrir son périmètre et les jeux décrits.
+Voir [rôles](WAREHOUSE_ROLES.md), [contrôle d'accès](WAREHOUSE_ACCESS_CONTROL.md) et
+[connexion DbHub](WAREHOUSE_CONNECT.md).

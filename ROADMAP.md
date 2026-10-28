@@ -4,6 +4,16 @@
 
 **Dernière mise à jour :** 28 octobre 2026
 
+### 28 octobre 2026 — Documentation d'accès et de découverte du warehouse (phase 4)
+
+- Point d'entrée unique [WAREHOUSE_README.md](docs/WAREHOUSE_README.md) : guide par besoin, parcours de
+  déploiement à la connexion d'un compte, ordre de découverte des données, variables d'environnement,
+  sécurité et tests. Modèle de variables `example.warehouse.env`, lien depuis `README.md`.
+- Corrections de la doc Docker : trois mots de passe requis (et non un), publication du contexte MCP à
+  lancer après le premier démarrage.
+- Vérifié : liens relatifs, aide des trois scripts, tests du warehouse. Limite : le démarrage
+  `docker compose` n'a pas été exécuté (Docker absent de l'environnement de travail).
+
 ### 28 octobre 2026 — Rôles, accès par périmètre, préparation FAIR et connexion DbHub (phases 2 et 4)
 
 - Rôles clarifiés ([WAREHOUSE_ROLES.md](docs/WAREHOUSE_ROLES.md)) : `docs/warehouse_roles.sql` est la

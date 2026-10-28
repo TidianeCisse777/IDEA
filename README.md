@@ -24,6 +24,12 @@ que lorsque son critère de réussite est vérifié.
 Le [plan de migration et de validation](docs/NEOLAB_MIGRATION.md) complète cette
 feuille de route avec les scénarios de référence et le protocole de preuve.
 
+### Warehouse de données
+
+Les données EcoTaxa, EcoPart, FILET et CTD sont centralisées dans un warehouse PostgreSQL, lu par comptes
+restreints (contrat, zone, années) et accessible depuis Codex ou Claude via DbHub. Point d'entrée :
+[docs/WAREHOUSE_README.md](docs/WAREHOUSE_README.md) (déploiement, rôles, accès, connexion, FAIR).
+
 ### Démarche technique
 
 1. Configurer IDEA Hawaii avec notre modèle et vérifier toute la chaîne

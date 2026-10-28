@@ -7,11 +7,8 @@ en collision avec un PostgreSQL local.
 
 ## Démarrage
 
-Créer un fichier `.env.warehouse` local (ignoré par Git) :
-
-```env
-WAREHOUSE_POSTGRES_PASSWORD=choisir-un-mot-de-passe-local
-```
+Copier `example.warehouse.env` vers `.env.warehouse` (ignoré par Git) et remplacer les valeurs
+`CHANGER_MOI` : le mot de passe propriétaire, ceux du lecteur et du navigateur sont tous requis.
 
 Puis lancer :
 
@@ -19,8 +16,11 @@ Puis lancer :
 docker compose --env-file .env.warehouse -f docker-compose.warehouse.yml up -d
 ```
 
-Le volume est persistant. Le script SQL est utilisé uniquement à la première
-initialisation du volume vide.
+Le volume est persistant. Les scripts SQL (schéma, migrations, contrôle d'accès, rôles) ne
+sont exécutés qu'à la première initialisation du volume vide. Lancer ensuite une fois
+`python scripts/deploy_warehouse_postgres.py` pour publier le contexte MCP, et le rejouer
+à chaque mise à jour: il applique seulement les migrations additives. Vue d'ensemble :
+[WAREHOUSE_README.md](WAREHOUSE_README.md).
 
 ## Sauvegarde et restauration
 
