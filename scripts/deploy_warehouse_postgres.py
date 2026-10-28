@@ -8,7 +8,8 @@ n'est chargée. Les secrets passent par l'environnement, jamais par argv.
     WAREHOUSE_NAVIGATOR_PASSWORD=... python scripts/deploy_warehouse_postgres.py
 
 Connexion: WAREHOUSE_POSTGRES_HOST|PORT|DB|USER|PASSWORD (le rôle propriétaire).
-Code de sortie: 0 déployé, 1 erreur, 2 --check avec critères FAIR manquants.
+Code de sortie: 0 déployé, 1 erreur, 2 --check avec critères FAIR manquants,
+3 --check avec un contournement du contrôle d'accès (prioritaire sur 2).
 """
 import argparse
 import os
@@ -21,7 +22,7 @@ DOCS = ROOT / 'docs'
 # Order matters: roles come last so they cover every object created above.
 FRESH_FILES = ('warehouse_schema_proposal.sql', 'warehouse_metadata_migration.sql',
                'warehouse_ecopart_migration.sql')
-ALWAYS_FILES = ('warehouse_fair_migration.sql',)
+ALWAYS_FILES = ('warehouse_fair_migration.sql', 'warehouse_access_control.sql')
 ROLES_FILE = 'warehouse_roles.sql'
 
 
@@ -83,7 +84,11 @@ def check(env):
             incomplete += 1
             print(f'  {name}: manque {missing}')
     print(f'FAIR: {total - incomplete}/{total} versions complètes.')
-    return 2 if incomplete else 0
+    gaps = [line for line in query(env, 'SELECT problem||\': \'||object_name FROM explore.access_audit').splitlines() if line]
+    for gap in gaps:
+        print('  ACCÈS:', gap)
+    print('Contrôle d\'accès:', 'écarts détectés' if gaps else 'aucun écart')
+    return 3 if gaps else (2 if incomplete else 0)
 
 
 def main(argv=None):

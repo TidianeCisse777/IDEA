@@ -69,7 +69,7 @@ pas dans Git.
 ## Déploiement sur un PostgreSQL existant
 
 Pour un serveur PostgreSQL 16+ déjà en place (hors Docker), une seule commande
-crée le schéma, applique les migrations (dont FAIR) et provisionne les rôles :
+crée le schéma, applique les migrations (FAIR, contrôle d'accès) et provisionne les rôles :
 
 ```bash
 WAREHOUSE_POSTGRES_HOST=... WAREHOUSE_POSTGRES_PASSWORD=... \

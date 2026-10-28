@@ -9,7 +9,8 @@ ALTER TABLE warehouse.dataset_metadata
     ADD COLUMN IF NOT EXISTS related_identifiers_json jsonb NOT NULL DEFAULT '[]'::jsonb,
     ADD COLUMN IF NOT EXISTS license_uri text,
     ADD COLUMN IF NOT EXISTS access_conditions text,
-    ADD COLUMN IF NOT EXISTS metadata_standard text;
+    ADD COLUMN IF NOT EXISTS metadata_standard text,
+    ADD COLUMN IF NOT EXISTS access_contract text;
 
 -- I1: a column can point to a community term (unit, variable, vocabulary).
 ALTER TABLE warehouse.column_metadata
@@ -74,7 +75,8 @@ SELECT
     m.metadata_standard,
     m.related_identifiers_json,
     (SELECT count(*) FROM warehouse.dataset_file f
-      WHERE f.dataset_version_id = v.id) AS file_count
+      WHERE f.dataset_version_id = v.id) AS file_count,
+    m.access_contract
 FROM warehouse.dataset_version v
 LEFT JOIN warehouse.dataset_metadata m ON m.dataset_version_id = v.id;
 

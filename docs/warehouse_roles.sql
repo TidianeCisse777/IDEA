@@ -10,6 +10,8 @@
 --   neolab               owner and loader. The only role that writes.
 --   warehouse_navigator  navigator API. SELECT on warehouse and explore.
 --   warehouse_reader     DbHub / agents. SELECT on explore only.
+-- Both are members of warehouse_all_access (see every row). Scoped readers are
+-- created separately and enrolled with warehouse.enroll_access_role().
 -- Both read roles are read-only, time-bounded and cannot create objects.
 \set ON_ERROR_STOP on
 \if :{?reader_password}
@@ -29,6 +31,15 @@
   DO $$ BEGIN RAISE EXCEPTION 'WAREHOUSE_NAVIGATOR_PASSWORD is required'; END $$;
 \endif
 
+-- The access-control file creates the groups used below and must run first.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'warehouse_all_access') THEN
+        RAISE EXCEPTION 'apply docs/warehouse_access_control.sql before warehouse_roles.sql';
+    END IF;
+END
+$$;
+
 -- Create the read roles when absent; rotate their password on every run.
 SELECT format('CREATE ROLE %I LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
               r.rolname, CASE r.rolname WHEN 'warehouse_reader' THEN :'reader_password'
@@ -44,8 +55,10 @@ SELECT format('ALTER ROLE %I PASSWORD %L', 'warehouse_navigator', :'navigator_pa
 SELECT format('REVOKE ALL ON DATABASE %I FROM PUBLIC', current_database()) \gexec
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 
-SELECT format('GRANT CONNECT ON DATABASE %I TO warehouse_reader, warehouse_navigator',
+SELECT format('GRANT CONNECT ON DATABASE %I TO warehouse_reader, warehouse_navigator, warehouse_explore_reader',
               current_database()) \gexec
+
+GRANT warehouse_all_access TO warehouse_reader, warehouse_navigator;
 
 ALTER ROLE warehouse_reader SET default_transaction_read_only = on;
 ALTER ROLE warehouse_reader SET statement_timeout = '30s';
@@ -55,15 +68,24 @@ ALTER ROLE warehouse_navigator SET statement_timeout = '30s';
 -- The reader sees the curated surface only; raw tables stay out of reach.
 REVOKE ALL ON SCHEMA warehouse FROM warehouse_reader;
 REVOKE ALL ON ALL TABLES IN SCHEMA warehouse FROM warehouse_reader;
-GRANT USAGE ON SCHEMA explore TO warehouse_reader, warehouse_navigator;
-GRANT SELECT ON ALL TABLES IN SCHEMA explore TO warehouse_reader, warehouse_navigator;
+GRANT USAGE ON SCHEMA explore TO warehouse_reader, warehouse_navigator, warehouse_explore_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA explore TO warehouse_reader, warehouse_navigator, warehouse_explore_reader;
 
 GRANT USAGE ON SCHEMA warehouse TO warehouse_navigator;
 GRANT SELECT ON ALL TABLES IN SCHEMA warehouse TO warehouse_navigator;
 
 -- Objects created later by the owner (new views, reloads) stay reachable
 -- without a re-grant; the reader still never gets the warehouse schema.
+-- Views are created by the loader or, once ownership is transferred, by the
+-- data owner: cover both.
 ALTER DEFAULT PRIVILEGES IN SCHEMA explore
-    GRANT SELECT ON TABLES TO warehouse_reader, warehouse_navigator;
+    GRANT SELECT ON TABLES TO warehouse_reader, warehouse_navigator, warehouse_explore_reader;
 ALTER DEFAULT PRIVILEGES IN SCHEMA warehouse
     GRANT SELECT ON TABLES TO warehouse_navigator;
+ALTER DEFAULT PRIVILEGES FOR ROLE warehouse_data_owner IN SCHEMA explore
+    GRANT SELECT ON TABLES TO warehouse_reader, warehouse_navigator, warehouse_explore_reader;
+ALTER DEFAULT PRIVILEGES FOR ROLE warehouse_data_owner IN SCHEMA warehouse
+    GRANT SELECT ON TABLES TO warehouse_navigator;
+
+-- Scoped readers never reach raw tables or the grant list.
+REVOKE ALL ON SCHEMA warehouse FROM warehouse_explore_reader;

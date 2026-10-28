@@ -24,6 +24,15 @@ rôle, rien de plus.
 | `warehouse_navigator` | API du navigateur (port 8090) | `warehouse` + `explore` | non | transaction lecture seule, 30 s |
 | `warehouse_reader` | DbHub, agents, audit | `explore` seulement | non | lecture seule, 30 s, tables brutes refusées |
 
+Rôles techniques sans connexion : `warehouse_data_owner` (propriétaire des tables et vues,
+nécessaire pour que le filtre s'applique), `warehouse_all_access` (voit toutes les lignes;
+`neolab`, `warehouse_navigator` et `warehouse_reader` en sont membres) et
+`warehouse_explore_reader` (lecture de `explore`, réservé aux rôles restreints).
+
+**Rôles restreints.** Un rôle supplémentaire (par exemple une équipe ou un partenaire) ne lit que
+certains contrats, zones et années : voir [contrôle d'accès](WAREHOUSE_ACCESS_CONTROL.md).
+Sans droit explicite il ne voit aucune ligne.
+
 Les deux rôles de lecture sont `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION
 NOBYPASSRLS`, sans `CREATE` sur aucun schéma, et `PUBLIC` n'a aucun droit sur la base.
 

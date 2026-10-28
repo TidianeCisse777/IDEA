@@ -17,8 +17,9 @@ services:
       - ./docs/warehouse_metadata_migration.sql:/docker-entrypoint-initdb.d/002_warehouse_metadata.sql:ro
       - ./docs/warehouse_ecopart_migration.sql:/docker-entrypoint-initdb.d/003_warehouse_ecopart.sql:ro
       - ./docs/warehouse_fair_migration.sql:/docker-entrypoint-initdb.d/004_warehouse_fair.sql:ro
+      - ./docs/warehouse_access_control.sql:/docker-entrypoint-initdb.d/005_warehouse_access.sql:ro
       - ./docs/warehouse_roles.sql:/opt/warehouse/warehouse_roles.sql:ro
-      - ./docker/warehouse_init_roles.sh:/docker-entrypoint-initdb.d/005_warehouse_roles.sh:ro
+      - ./docker/warehouse_init_roles.sh:/docker-entrypoint-initdb.d/006_warehouse_roles.sh:ro
 
   warehouse-navigator:
     build:

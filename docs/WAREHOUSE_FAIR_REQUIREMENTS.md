@@ -22,7 +22,7 @@ Légende : ✅ en place et testé · 🟡 structure en place, contenu à produir
 |---|---|---|---|
 | A1 | Récupérable par protocole standard, ouvert | protocole PostgreSQL + SQL; MCP via DbHub | ✅ |
 | A1.2 | Authentification et autorisation | trois rôles, lecture seule, `warehouse_reader` limité à `explore` ([rôles](WAREHOUSE_ROLES.md)) | ✅ testé en réel |
-| A1 (donnée) | Conditions d'accès déclarées | `access_level` + `access_conditions` (requis si non `open`) | 🟡 tout est `internal`; niveaux par jeu ⛔ |
+| A1 (donnée) | Conditions d'accès déclarées et appliquées | `access_level` + `access_conditions`; application par contrat, zone et année ([contrôle d'accès](WAREHOUSE_ACCESS_CONTROL.md)) | ✅ mécanisme testé; 🟡 tout est `internal`, contrats à renseigner ⛔ |
 | A2 | Métadonnées conservées même sans les données | catalogue lisible quel que soit `access_level`; `ON DELETE RESTRICT`; statut `retired` | ✅ ; sauvegarde et restauration ⛔ (DMP §8.4) |
 
 ## Interopérable

@@ -55,6 +55,9 @@ def initialize_database(conn, passwords):
             # historical migration assumes the pre-zone view column order.
             conn.execute('CREATE INDEX IF NOT EXISTS filet_sample_marine_zone_name_idx '
                          'ON warehouse.filet_sample (marine_zone_name)')
+    # Idempotent migrations: also applied to warehouses initialized before them.
+    for name in ('warehouse_fair_migration.sql', 'warehouse_access_control.sql'):
+        conn.execute((ROOT / 'docs' / name).read_text(encoding='utf-8'))
     conn.execute('REVOKE ALL ON DATABASE neolab_warehouse FROM PUBLIC')
     conn.execute('REVOKE CREATE ON SCHEMA public FROM PUBLIC')
     for role, key, schemas in (
@@ -65,6 +68,8 @@ def initialize_database(conn, passwords):
             conn.execute(sql.SQL('CREATE ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD {}').format(
                 sql.Identifier(role), sql.Literal(passwords[key])))
         conn.execute(sql.SQL('GRANT CONNECT ON DATABASE neolab_warehouse TO {}').format(sql.Identifier(role)))
+        # Local roles see every row; scoped readers are enrolled separately.
+        conn.execute(sql.SQL('GRANT warehouse_all_access TO {}').format(sql.Identifier(role)))
         conn.execute(sql.SQL('ALTER ROLE {} SET default_transaction_read_only=on').format(sql.Identifier(role)))
         conn.execute(sql.SQL("ALTER ROLE {} SET statement_timeout='30s'").format(sql.Identifier(role)))
         for schema in schemas:
