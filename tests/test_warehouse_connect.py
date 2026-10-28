@@ -119,6 +119,21 @@ class AdminProvisioningTests(unittest.TestCase):
         parser_args.year_min = 2018
         self.assertTrue(users.wants_grant(parser_args))
 
+    def test_sources_give_one_grant_each_and_warn_when_uvp_pair_is_incomplete(self):
+        def args(source):
+            return type("A", (), dict(source=source, contract="C1", zone=None, year_min=None, year_max=None,
+                                       note=None, name="ines", include_unknown=False))()
+        self.assertEqual(users.sources(args("ecotaxa, ecopart")), ["ecotaxa", "ecopart"])
+        self.assertEqual(users.sources(args(None)), [""])
+        with self.assertRaises(SystemExit):
+            users.sources(args("ecotaxa;drop"))
+        self.assertIn("ecopart", users.paired_source_warning(args("ecotaxa")))
+        self.assertIsNone(users.paired_source_warning(args("ecotaxa,ecopart")))
+        self.assertIsNone(users.paired_source_warning(args("filet")))
+        self.assertIsNone(users.paired_source_warning(args(None)))
+        self.assertEqual(users.grants_sql(args("ecotaxa,ecopart")).count("INSERT INTO warehouse.access_grant"), 2)
+        self.assertEqual(users.grant_variables(args("ecotaxa,ecopart"))["source_1"], "ecopart")
+
     def test_credential_bundle_is_private_and_defaults_to_tls_for_remote_hosts(self):
         tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, tmp, True)

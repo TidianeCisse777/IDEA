@@ -83,16 +83,49 @@ def write_bundle(env, name, password, out_dir, public_host, sslmode):
     return path
 
 
-def grant_sql():
-    return ("INSERT INTO warehouse.access_grant (grantee, source_instance, contract, zone_key, year_min, year_max, note) "
-            "VALUES (:'name', NULLIF(:'source', ''), NULLIF(:'contract', ''), NULLIF(:'zone', ''), "
-            "NULLIF(:'year_min', '')::integer, NULLIF(:'year_max', '')::integer, NULLIF(:'note', ''));")
+# The UVP views join an EcoPart profile to its EcoTaxa sample: a grant on only
+# one of them leaves those views empty.
+PAIRED_SOURCES = {'ecotaxa': 'ecopart', 'ecopart': 'ecotaxa'}
+
+
+def sources(args):
+    """`--source a,b` gives one grant per source; absent means every source."""
+    if not args.source:
+        return ['']
+    values = [value.strip() for value in args.source.split(',') if value.strip()]
+    if any(not re.match(r'^[a-z][a-z0-9_]*$', value) for value in values):
+        raise SystemExit('--source: noms de sources séparés par des virgules (ex. ecotaxa,ecopart).')
+    return values
+
+
+def grant_sql(source_index):
+    return ("INSERT INTO warehouse.access_grant (grantee, source_instance, contract, zone_key, year_min, year_max, "
+            "include_unknown_scope, note) "
+            "VALUES (:'name', NULLIF(:'source_%d', ''), NULLIF(:'contract', ''), NULLIF(:'zone', ''), "
+            "NULLIF(:'year_min', '')::integer, NULLIF(:'year_max', '')::integer, :'include_unknown'::boolean, "
+            "NULLIF(:'note', ''));" % source_index)
+
+
+def grants_sql(args):
+    return ''.join(grant_sql(index) + '\n' for index, _ in enumerate(sources(args)))
 
 
 def grant_variables(args):
-    return {'name': args.name, 'source': args.source or '', 'contract': args.contract or '', 'zone': args.zone or '',
-            'year_min': args.year_min if args.year_min is not None else '',
-            'year_max': args.year_max if args.year_max is not None else '', 'note': args.note or ''}
+    variables = {'name': args.name, 'contract': args.contract or '', 'zone': args.zone or '',
+                 'year_min': args.year_min if args.year_min is not None else '',
+                 'year_max': args.year_max if args.year_max is not None else '', 'note': args.note or '',
+                 'include_unknown': 'true' if getattr(args, 'include_unknown', False) else 'false'}
+    variables.update({'source_%d' % index: value for index, value in enumerate(sources(args))})
+    return variables
+
+
+def paired_source_warning(args):
+    granted = set(sources(args))
+    missing = sorted(PAIRED_SOURCES[value] for value in granted if value in PAIRED_SOURCES and PAIRED_SOURCES[value] not in granted)
+    if missing and '' not in granted:
+        return ('Attention: les vues UVP joignent EcoTaxa et EcoPart. Sans droit sur %s, elles resteront vides '
+                'pour ce compte (ajouter --source ecotaxa,ecopart ou un `grant`).' % ', '.join(missing))
+    return None
 
 
 def wants_grant(args):
@@ -109,17 +142,21 @@ def create(args):
                if args.expires_days else '')
     enroll = ("GRANT warehouse_all_access TO :\"name\"; GRANT warehouse_explore_reader TO :\"name\"; "
               "ALTER ROLE :\"name\" SET default_transaction_read_only = on; "
-              "ALTER ROLE :\"name\" SET statement_timeout = '30s';"
+              "ALTER ROLE :\"name\" SET statement_timeout = '30s'; "
+              "ALTER ROLE :\"name\" SET enable_mergejoin = off;"
               if args.all_access else "SELECT warehouse.enroll_access_role(:'name');")
     script = ("BEGIN;\nCREATE ROLE :\"name\" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS "
               "PASSWORD '%s' %s;\n%s\n" % (password, expires, enroll))
     if wants_grant(args) and not args.all_access:
-        script += grant_sql() + '\n'
+        script += grants_sql(args)
     psql(env, script + 'COMMIT;\n', grant_variables(args))
     path = write_bundle(env, args.name, password, Path(args.out_dir), args.public_host, args.sslmode)
     print('Compte %s créé (%s).' % (args.name, 'accès à toutes les données' if args.all_access else
                                     'périmètre restreint' if wants_grant(args) else 'AUCUN droit: refus par défaut'))
     print('Fichier d\'identifiants: %s (lecture réservée au propriétaire).' % path)
+    warning = paired_source_warning(args) if wants_grant(args) and not args.all_access else None
+    if warning:
+        print(warning)
     print('Remettre ce fichier par un canal sûr; la personne exécute:')
     print('  python scripts/warehouse_connect.py init --from-file <fichier> && python scripts/warehouse_connect.py check')
     return 0
@@ -132,8 +169,11 @@ def grant(args):
         raise SystemExit('Rôle inconnu: créer le compte avec `create`.')
     if not wants_grant(args):
         raise SystemExit('Préciser au moins une limite (--source, --contract, --zone, --year-min, --year-max).')
-    psql(env, grant_sql() + '\n', grant_variables(args))
-    print('Droit ajouté pour %s.' % args.name)
+    psql(env, grants_sql(args), grant_variables(args))
+    print('%d droit(s) ajouté(s) pour %s.' % (len(sources(args)), args.name))
+    warning = paired_source_warning(args)
+    if warning:
+        print(warning)
     return 0
 
 
@@ -166,7 +206,8 @@ def list_accounts(_args):
 SELECT r.rolname, CASE WHEN r.rolcanlogin THEN 'actif' ELSE 'fermé' END AS connexion,
        CASE WHEN pg_has_role(r.oid, 'warehouse_all_access', 'member') THEN 'toutes les données' ELSE 'restreint' END AS portée,
        coalesce((SELECT string_agg(format('%s/%s/%s/%s-%s', coalesce(g.source_instance, '*'), coalesce(g.contract, '*'),
-                 coalesce(g.zone_key, '*'), coalesce(g.year_min::text, '*'), coalesce(g.year_max::text, '*')), '; ')
+                 coalesce(g.zone_key, '*'), coalesce(g.year_min::text, '*'), coalesce(g.year_max::text, '*'))
+                 || CASE WHEN g.include_unknown_scope THEN ' +inconnues' ELSE '' END, '; ')
                  FROM warehouse.access_grant g WHERE g.grantee = r.rolname AND g.revoked_at IS NULL), '') AS droits_actifs,
        coalesce(r.rolvaliduntil::date::text, '') AS expire
 FROM pg_roles r
@@ -177,9 +218,12 @@ ORDER BY 1;""", tuples=True) or 'Aucun compte.')
 
 
 def add_grant_options(parser):
-    parser.add_argument('--source', help='ecotaxa, ecopart, filet, ctd… (absent = toutes)')
+    parser.add_argument('--source', help='ecotaxa, ecopart, filet, ctd…, ou plusieurs séparées par des virgules '
+                                         '(absent = toutes). Vues UVP: ecotaxa,ecopart')
     parser.add_argument('--contract', help='contrat de la version du jeu de données (absent = tous)')
     parser.add_argument('--zone', help='clé de zone marine (absent = toutes, zones inconnues incluses)')
+    parser.add_argument('--include-unknown', action='store_true',
+                        help='avec --zone ou des années: inclure aussi les lignes à zone non attribuée ou sans date')
     parser.add_argument('--year-min', type=int)
     parser.add_argument('--year-max', type=int)
     parser.add_argument('--note', help='référence de l\'entente ou de la demande')

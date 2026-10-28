@@ -27,18 +27,18 @@ couvrent (source, contrat, zone, années); le **contexte MCP** est l'ensemble de
 # 0. Variables (ne jamais commiter .env.warehouse)
 cp example.warehouse.env .env.warehouse      # puis remplacer les CHANGER_MOI
 
-# 1. Docker: schéma, migrations, contrôle d'accès et rôles à la première initialisation
+# 1. Docker: schéma, migrations, contrôle d'accès, rôles, puis publication du contexte MCP
 docker compose --env-file .env.warehouse -f docker-compose.warehouse.yml up -d
-#    ou, sur un PostgreSQL 16+ existant (base créée au préalable, psql disponible):
+#    ou, sur un PostgreSQL 16+ existant (base créée au préalable, psql et psycopg[binary] disponibles):
 set -a; . ./.env.warehouse; set +a
 python scripts/deploy_warehouse_postgres.py --check
 
-# 2. Dans les deux cas, lancer le script une fois: il publie le contexte MCP
-#    (warehouse_context, dictionnaire), absent d'un démarrage Docker seul
-python scripts/deploy_warehouse_postgres.py --check        # nécessite psycopg[binary]
+# 2. Après chaque chargement de profils CTD: zone marine depuis les coordonnées
+python scripts/assign_filet_zones.py --table ctd_profile
 
-# 3. Créer un compte restreint (aucun droit sans option) et obtenir son fichier d'identifiants
-python scripts/warehouse_user.py create ines --source ecotaxa --contract C1 --zone lab \
+# 3. Créer un compte restreint (aucun droit sans option) et obtenir son fichier d'identifiants.
+#    Les vues UVP exigent EcoTaxa ET EcoPart.
+python scripts/warehouse_user.py create ines --source ecotaxa,ecopart --contract C1 --zone lab \
     --year-min 2018 --year-max 2022 --expires-days 90 --public-host warehouse.exemple.org
 
 # 4. La personne enregistre le fichier reçu et teste (guide de connexion)
@@ -47,6 +47,8 @@ python scripts/warehouse_connect.py check
 python scripts/warehouse_connect.py config codex      # ou claude-code, claude-desktop
 ```
 
+Avec Docker, le service ponctuel `warehouse-context` publie le contexte MCP dès que la base est prête; le
+relancer après une modification du schéma : `docker compose ... run --rm warehouse-context`.
 Le script de déploiement est **rejouable** : une base existante ne reçoit que les migrations additives,
 le contrôle d'accès, les rôles et le contexte. À rejouer après toute nouvelle vue `explore`.
 Codes de sortie de `--check` : `0` conforme, `2` critères FAIR manquants, `3` écart du contrôle d'accès.
@@ -56,6 +58,7 @@ Codes de sortie de `--check` : `0` conforme, `2` critères FAIR manquants, `3` �
 Une personne ou un agent connecté découvre la base dans cet ordre :
 
 1. `explore.my_access` — ce que **ce compte** peut lire (source, contrat, zone, années).
+   `explore.my_datasets` — pour chaque version : accès complet, partiel ou aucun, et pourquoi (masqué ≠ absent).
 2. `warehouse_context(topic=overview)` puis `topic=<vue>` — contexte métier, grain, limites, exemple SQL.
 3. `explore.dataset_catalog` — toutes les versions de jeux de données, y compris hors périmètre (identifiant,
    licence, accès, couverture, méthode). Les métadonnées restent lisibles même quand les données sont restreintes.
@@ -94,6 +97,9 @@ WAREHOUSE_TEST_LIVE=1 PGHOST=... PGPORT=... PGUSER=... PGPASSWORD=... \
 ## État de validation
 
 Validé sur PostgreSQL 16 avec le vrai DbHub 1.5.0 (comptes, filtrage, rotation, révocation) et `claude mcp list`.
-**Non validé** : le démarrage `docker compose` lui-même, PostGIS et le navigateur spatial, Codex, Claude Desktop,
-Windows pour les scripts d'administration et de connexion, TLS distant, la performance du filtre sur 15 M d'objets.
+Performance mesurée sur 4,8 M d'objets (requêtes d'un compte restreint entre 0,4 et 6,8 s,
+[détail](WAREHOUSE_ACCESS_CONTROL.md#performance)).
+**Non validé** : le démarrage `docker compose` lui-même (dont le service `warehouse-context`), PostGIS et le
+navigateur spatial, Codex, Claude Desktop, Windows pour les scripts d'administration et de connexion, TLS distant,
+le volume réel de 15 M d'objets (extrapolé).
 Le warehouse n'est **pas FAIR** : identifiant persistant, licence, niveaux d'accès et vocabulaires restent à décider.

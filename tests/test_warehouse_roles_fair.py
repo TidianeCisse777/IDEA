@@ -74,7 +74,8 @@ class FairContractTests(unittest.TestCase):
 
 class AccessControlContractTests(unittest.TestCase):
     def test_every_protected_table_forces_row_security(self):
-        tables = re.findall(r"\(\'(\w+)\',\n\s+\'(?:warehouse\.row_allowed|EXISTS)", ACCESS)
+        policies = ACCESS.split("FOR spec IN SELECT * FROM (VALUES")[1].split(") AS t(table_name")[0]
+        tables = re.findall(r"\('(\w+)',\n", policies)
         self.assertGreaterEqual(len(tables), 23)
         self.assertIn("FORCE ROW LEVEL SECURITY", ACCESS)
         self.assertIn("OWNER TO warehouse_data_owner", ACCESS)
@@ -89,6 +90,36 @@ class AccessControlContractTests(unittest.TestCase):
         self.assertIn("rolsuper OR rolbypassrls", ACCESS)
         self.assertIn("warehouse_all_access", ACCESS)
 
+    def test_child_policies_are_set_based_except_for_objects(self):
+        self.assertGreaterEqual(ACCESS.count("IN (SELECT id FROM warehouse."), 20)
+        policies = ACCESS.split("FOR spec IN SELECT * FROM (VALUES")[1].split(") AS t(table_name")[0]
+        correlated = re.findall(r"EXISTS \(SELECT 1 FROM warehouse\.(\w+)", policies)
+        self.assertEqual(correlated, ["ecotaxa_object"], "only the unhashable object set is probed by index")
+        self.assertIn("warehouse.readable_versions()", ACCESS)
+        self.assertNotIn("row_allowed(dataset_version_id, NULL, NULL, NULL, false)", ACCESS)
+
+    def test_ctd_profiles_are_filtered_on_their_own_zone(self):
+        policy = ACCESS.split("('ctd_profile',")[1].split("),")[0]
+        self.assertIn("marine_zone_key, marine_zone_assignment_status", policy)
+        self.assertIn("warehouse_ctd_zone_migration", COMPOSE)
+        self.assertIn("warehouse_ctd_zone_migration.sql", DEPLOY.read_text(encoding="utf-8"))
+
+    def test_unknown_scope_is_opt_in_and_my_datasets_has_no_counts(self):
+        self.assertIn("include_unknown_scope boolean NOT NULL DEFAULT false", ACCESS)
+        view = ACCESS.split("CREATE OR REPLACE VIEW explore.my_datasets AS")[1].split("ALTER VIEW")[0]
+        self.assertNotRegex(view, r"(?i)count\(")
+
+    def test_compose_publishes_the_mcp_context_once_the_database_is_ready(self):
+        service = COMPOSE.split("warehouse-context:")[1].split("warehouse-navigator:")[0]
+        self.assertIn("publish_warehouse_context.py", service)
+        self.assertIn("condition: service_healthy", service)
+        self.assertIn("pg_isready -h 127.0.0.1", COMPOSE)
+
+    def test_agent_read_roles_disable_merge_joins(self):
+        self.assertIn("ALTER ROLE warehouse_reader SET enable_mergejoin = off", ROLES)
+        self.assertIn("SET enable_mergejoin = off", ACCESS)
+        self.assertIn("Accounts enrolled before a settings change get it on the next deploy", ACCESS)
+
     def test_no_psql_meta_commands_so_psycopg_can_apply_it(self):
         self.assertNotRegex(ACCESS, r"(?m)^\\")
 
@@ -99,7 +130,7 @@ class AccessControlContractTests(unittest.TestCase):
     def test_roles_file_requires_the_access_file_first(self):
         self.assertIn("apply docs/warehouse_access_control.sql before", ROLES)
         names = re.findall(r"/docker-entrypoint-initdb\.d/(\d+_\w+)", COMPOSE)
-        self.assertLess(names.index("005_warehouse_access"), names.index("006_warehouse_roles"))
+        self.assertLess(names.index("006_warehouse_access"), names.index("007_warehouse_roles"))
 
 
 class DeployScriptTests(unittest.TestCase):
@@ -265,6 +296,18 @@ class LivePostgresTests(unittest.TestCase):
         owner("CREATE VIEW explore.acl_samples AS SELECT s.sample_id, v.dataset_key "
               "FROM warehouse.ecotaxa_sample s JOIN warehouse.dataset_version v ON v.id = s.dataset_version_id")
         owner("CREATE VIEW explore.acl_objects AS SELECT o.object_id FROM warehouse.ecotaxa_object o")
+        owner("INSERT INTO warehouse.dataset_version (source_instance, dataset_key, version_key, file_manifest_uri, sha256) "
+              f"VALUES ('ctd','acl_ctd_{tag}','v1','u','4{tag}')")
+        owner("INSERT INTO warehouse.dataset_metadata (dataset_version_id, title, description, access_contract) "
+              f"SELECT id, 't', 'd', 'C1' FROM warehouse.dataset_version WHERE dataset_key = 'acl_ctd_{tag}'")
+        owner("INSERT INTO warehouse.ctd_profile (dataset_version_id, source_profile_key, sampled_at, "
+              "marine_zone_key, marine_zone_assignment_status) "
+              "SELECT v.id, c.k, c.d::timestamptz, c.z, c.st FROM warehouse.dataset_version v, (VALUES "
+              "('ctd_lab','2019-06-01','lab','assigned'),('ctd_bay','2019-06-01','bay','assigned'),"
+              "('ctd_unassigned','2019-06-01',NULL,NULL)) AS c(k,d,z,st) "
+              f"WHERE v.dataset_key = 'acl_ctd_{tag}'")
+        owner("CREATE VIEW explore.acl_ctd AS SELECT c.source_profile_key, v.dataset_key "
+              "FROM warehouse.ctd_profile c JOIN warehouse.dataset_version v ON v.id = c.dataset_version_id")
         # Views created by the loader are handed to the data owner by a replay.
         subprocess.run([sys.executable, str(DEPLOY)], env=self.deploy_env, check=True, capture_output=True)
         for name in ("scoped", "empty"):
@@ -350,6 +393,68 @@ class LivePostgresTests(unittest.TestCase):
         subprocess.run([sys.executable, str(DEPLOY)], env=self.deploy_env, check=True, capture_output=True)
         self.assertEqual(self.owner("SELECT count(*) FROM explore.access_audit"), (0, "0"))
         self.owner("DROP VIEW explore.acl_leak")
+
+    def revoke_all(self, role):
+        self.owner(f"UPDATE warehouse.access_grant SET revoked_at = now() WHERE grantee = '{role}' AND revoked_at IS NULL")
+
+    def test_zz_include_unknown_scope_is_an_explicit_choice(self):
+        if not hasattr(type(self), "tag"):
+            self.seed_access_data()
+        role = f"acl_scoped_{self.tag}"
+        self.revoke_all(role)
+        self.grant(role, source_instance="ecotaxa", contract="C1", zone_key="lab", year_min=2018, year_max=2022)
+        self.assertEqual(self.scoped_samples(role), f"ok@acl_c1_{self.tag}", "bounded grant hides unknown scope")
+        self.revoke_all(role)
+        code, out = self.owner(
+            "INSERT INTO warehouse.access_grant (grantee, source_instance, contract, zone_key, year_min, year_max, "
+            f"include_unknown_scope) VALUES ('{role}', 'ecotaxa', 'C1', 'lab', 2018, 2022, true)")
+        self.assertEqual(code, 0, out)
+        # Ambiguous zone and missing date join; another zone and another year never do.
+        self.assertEqual(self.scoped_samples(role),
+                         ",".join(f"{n}@acl_c1_{self.tag}" for n in ("amb", "nodate", "ok")))
+        self.revoke_all(role)
+
+    def test_zz_ctd_profiles_follow_their_own_zone(self):
+        if not hasattr(type(self), "tag"):
+            self.seed_access_data()
+        role = f"acl_scoped_{self.tag}"
+        self.revoke_all(role)
+        self.grant(role, source_instance="ctd", contract="C1", zone_key="lab")
+        code, out = self.run_as(role, "SELECT string_agg(source_profile_key, ',' ORDER BY 1) FROM explore.acl_ctd "
+                                      f"WHERE dataset_key = 'acl_ctd_{self.tag}'", "pw")
+        self.assertEqual((code, out), (0, "ctd_lab"))
+        self.revoke_all(role)
+
+    def test_zz_my_datasets_tells_hidden_from_absent_without_counts(self):
+        if not hasattr(type(self), "tag"):
+            self.seed_access_data()
+        role = f"acl_scoped_{self.tag}"
+        self.revoke_all(role)
+        self.grant(role, source_instance="ecotaxa", contract="C1", zone_key="lab")
+        code, out = self.run_as(role, "SELECT dataset_key || ':' || my_scope || ':' || (note IS NOT NULL) "
+                                      f"FROM explore.my_datasets WHERE dataset_key LIKE 'acl\\_%{self.tag}' ORDER BY 1", "pw")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out.splitlines(), [f"acl_c1_{self.tag}:partiel:true", f"acl_c2_{self.tag}:aucun:false",
+                                            f"acl_ctd_{self.tag}:aucun:false", f"acl_f_{self.tag}:aucun:false"])
+        code, out = self.run_as(role, f"SELECT scope_detail FROM explore.my_datasets WHERE dataset_key = 'acl_c2_{self.tag}'", "pw")
+        self.assertIn("masquées, pas absentes", out)
+        code, out = self.run_as(role, f"SELECT note FROM explore.my_datasets WHERE dataset_key = 'acl_c1_{self.tag}'", "pw")
+        self.assertIn("ecopart", out)
+        code, out = self.run_as("warehouse_reader", "SELECT DISTINCT my_scope FROM explore.my_datasets "
+                                f"WHERE dataset_key LIKE 'acl\\_%{self.tag}'", "reader-pw")
+        self.assertEqual((code, out), (0, "complet"))
+        self.revoke_all(role)
+
+    def test_zz_read_roles_avoid_the_merge_join_plan(self):
+        if not hasattr(type(self), "tag"):
+            self.seed_access_data()
+        # An account enrolled before the setting existed is updated by a replay.
+        self.owner(f"ALTER ROLE acl_empty_{self.tag} RESET enable_mergejoin")
+        self.assertEqual(self.run_as(f"acl_empty_{self.tag}", "SHOW enable_mergejoin", "pw"), (0, "on"))
+        subprocess.run([sys.executable, str(DEPLOY)], env=self.deploy_env, check=True, capture_output=True)
+        self.assertEqual(self.run_as(f"acl_empty_{self.tag}", "SHOW enable_mergejoin", "pw"), (0, "off"))
+        for role, password in ((f"acl_scoped_{self.tag}", "pw"), ("warehouse_reader", "reader-pw")):
+            self.assertEqual(self.run_as(role, "SHOW enable_mergejoin", password), (0, "off"))
 
     def test_zz_privilege_escalation_and_bypass_attempts_are_refused(self):
         if not hasattr(type(self), "tag"):

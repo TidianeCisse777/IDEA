@@ -22,9 +22,13 @@ OVERVIEW = (
     'dénominateurs explicites. Ne pas sommer les volumes répétés par taxon ou les '
     'concentrations FILET répétées par bin. Les fichiers sources bruts ne sont pas modifiés. '
     'Accès MCP : SELECT explore uniquement, sans écriture ni DDL, délai 30 s. Le périmètre de chaque '
-    'compte (contrats, zones, années) est dans explore.my_access; un résultat vide peut signifier un '
-    'accès limité, pas une absence de données. explore.dataset_catalog décrit toutes les versions, même '
-    'hors périmètre, et explore.fair_readiness mesure la complétude des métadonnées. '
+    'compte (contrats, zones, années) est dans explore.my_access; explore.my_datasets dit pour chaque '
+    'version si l\'accès est complet, partiel ou nul et pourquoi. Un résultat vide peut signifier un '
+    'accès limité, pas une absence de données : consulter my_datasets avant de conclure. Les vues UVP '
+    'joignent EcoTaxa et EcoPart et exigent un droit sur les deux. Avec un accès partiel, une colonne '
+    'issue d\'une jointure externe peut être NULL parce que la ligne liée est hors périmètre. '
+    'explore.dataset_catalog décrit toutes les versions, même hors périmètre, et explore.fair_readiness '
+    'mesure la complétude des métadonnées. '
     'Le navigateur sur 127.0.0.1:8090 et le MCP sont deux accès distincts. '
     'Le filtre spatial du navigateur réduit les paires déjà enregistrées, sans changer leur statut. '
     'Les confirmations restent nécessaires avant téléchargement/calcul lourd. '
@@ -69,6 +73,9 @@ def publish(conn):
             ('my_access', 'Périmètre de lecture du compte connecté: source, contrat, zone et années autorisés.',
              'Une ligne par droit actif du compte; une ligne « all data » pour un accès sans filtre.',
              'SELECT * FROM explore.my_access;'),
+            ('my_datasets', 'Accès du compte connecté à chaque version de jeu de données: complet, partiel ou aucun, la raison, et une note si une source associée manque (EcoTaxa/EcoPart pour les vues UVP).',
+             'Une ligne par version; aucune donnée scientifique et aucun comptage de lignes masquées.',
+             "SELECT dataset_key, my_scope, scope_detail, note FROM explore.my_datasets ORDER BY my_scope;"),
             ('dataset_catalog', 'Catalogue FAIR des versions de jeux de données: identifiant, licence, accès, couverture, méthode. Lisible même pour les données hors périmètre.',
              'Une ligne par version, y compris retirée.',
              'SELECT dataset_version_id, title, access_level, license, publication_status FROM explore.dataset_catalog LIMIT 20;'),

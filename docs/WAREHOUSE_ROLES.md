@@ -24,11 +24,14 @@ Un **compte** est un rôle PostgreSQL avec connexion. Les rôles de groupe n'ont
 |---|---|---|---|---|---|
 | `neolab` | oui | chargement, migrations, déploiement | tout | oui | jamais donné à une application ni à un agent |
 | `warehouse_navigator` | oui | API du navigateur (port 8090) | `warehouse` + `explore`, toutes les lignes | non | lecture seule, 30 s |
-| `warehouse_reader` | oui | installation locale, audit | `explore` seulement, toutes les lignes | non | lecture seule, 30 s, tables brutes refusées |
-| comptes personnels | oui | une personne, via DbHub | `explore`, **lignes de son périmètre** | non | lecture seule, 30 s; aucun droit par défaut |
+| `warehouse_reader` | oui | installation locale, audit | `explore` seulement, toutes les lignes | non | lecture seule, 30 s, tables brutes refusées, jointure par fusion désactivée |
+| comptes personnels | oui | une personne, via DbHub | `explore`, **lignes de son périmètre** | non | lecture seule, 30 s, jointure par fusion désactivée; aucun droit par défaut |
 | `warehouse_data_owner` | non | propriétaire des tables et vues | — | — | rend le filtre par ligne effectif |
 | `warehouse_all_access` | non | groupe « voit toutes les lignes » | — | — | membres : `neolab`, `warehouse_navigator`, `warehouse_reader`, comptes `--all-access` |
 | `warehouse_explore_reader` | non | groupe des comptes personnels | `explore` | — | pas d'accès à `warehouse` |
+
+La jointure par fusion est désactivée sur les rôles de lecture des agents pour une raison de performance
+(mesures dans le [contrôle d'accès](WAREHOUSE_ACCESS_CONTROL.md#performance)).
 
 Les rôles de lecture sont `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`, sans `CREATE` sur
 aucun schéma, et `PUBLIC` n'a aucun droit sur la base. Les groupes sont globaux au serveur PostgreSQL; les

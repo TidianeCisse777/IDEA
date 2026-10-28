@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assign versioned marine-zone metadata to FILET samples from their coordinates.
+"""Assign versioned marine-zone metadata to FILET samples or CTD profiles from their coordinates.
 
 The classification intentionally follows the EcoTaxa loader convention: prefer a
 single named non-MEOW zone, retain ambiguous overlaps, and explicitly preserve
@@ -113,13 +113,20 @@ def zone_for(lon: float | None, lat: float | None, features) -> tuple[str | None
     return "HORS_ARCTIQUE_CANADIEN", "HORS_ARCTIQUE_CANADIEN", "zones_registry.geojson", "outside"
 
 
-def assign(zones_path: Path = DEFAULT_ZONES, database_url: str | None = None) -> dict[str, int]:
+# Tables with latitude/longitude and the marine_zone_* columns. A fixed list:
+# the table name is interpolated into SQL.
+TABLES = ("filet_sample", "ctd_profile")
+
+
+def assign(zones_path: Path = DEFAULT_ZONES, database_url: str | None = None, table: str = "filet_sample") -> dict[str, int]:
+    if table not in TABLES:
+        raise ValueError(f"Table non prise en charge : {table}")
     features = load_features(zones_path)
     with connection(database_url) as conn, conn.cursor() as cur:
-        samples = cur.execute("SELECT id,latitude,longitude FROM warehouse.filet_sample ORDER BY id").fetchall()
+        samples = cur.execute(f"SELECT id,latitude,longitude FROM warehouse.{table} ORDER BY id").fetchall()
         updates = [(*zone_for(lon, lat, features), ZONE_VERSION, sample_id) for sample_id, lat, lon in samples]
         cur.executemany(
-            """UPDATE warehouse.filet_sample
+            f"""UPDATE warehouse.{table}
                SET marine_zone_key=%s, marine_zone_name=%s, marine_zone_source=%s,
                    marine_zone_version=%s, marine_zone_assignment_status=%s
                WHERE id=%s""",
@@ -135,8 +142,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--zones", type=Path, default=DEFAULT_ZONES)
     parser.add_argument("--database-url")
+    parser.add_argument("--table", choices=TABLES, default="filet_sample")
     args = parser.parse_args()
-    print(assign(args.zones, args.database_url))
+    print(assign(args.zones, args.database_url, args.table))
 
 
 if __name__ == "__main__":

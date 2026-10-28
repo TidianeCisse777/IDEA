@@ -51,8 +51,8 @@ Un résultat vide peut signifier **un accès limité**, pas une absence de donn�
 | `Identifiants absents` | refaire l'étape 1 |
 | `DbHub s'est arrêté` | mot de passe expiré ou renouvelé, hôte/port injoignables, ou TLS exigé (`sslmode`) |
 | `périmètre: aucun droit accordé` | compte créé sans droit: demander un accès à l'administrateur |
-| vues UVP vides alors que le périmètre n'est pas vide | il manque le droit sur l'autre source (EcoTaxa **et** EcoPart): voir [composer des droits](WAREHOUSE_ACCESS_CONTROL.md) |
-| `contexte métier` en échec | le contexte n'a pas été publié: l'administrateur relance le déploiement |
+| vues UVP vides alors que le périmètre n'est pas vide | il manque le droit sur l'autre source (EcoTaxa **et** EcoPart); la ligne `jeux lisibles` de `check` le signale. Voir [composer des droits](WAREHOUSE_ACCESS_CONTROL.md#composer-des-droits-sur-plusieurs-sources) |
+| `contexte métier` en échec | le contexte n'a pas été publié: l'administrateur relance le service `warehouse-context` (Docker) ou le déploiement |
 | `Node.js est requis` | installer Node.js 18+ |
 
 ### Tester avec un agent
@@ -81,11 +81,12 @@ catalogue n'expose pas de compteurs hors périmètre.
 Connexion : `WAREHOUSE_POSTGRES_HOST|PORT|DB|USER|PASSWORD` (comme le [déploiement](WAREHOUSE_DOCKER.md)).
 
 ```bash
-# Compte restreint: contrat C1, EcoTaxa, zone lab, 2018-2022, mot de passe valide 90 jours
-python scripts/warehouse_user.py create ines --source ecotaxa --contract C1 --zone lab \
+# Compte restreint: contrat C1, EcoTaxa et EcoPart (vues UVP), zone lab, 2018-2022, mot de passe valide 90 jours
+python scripts/warehouse_user.py create ines --source ecotaxa,ecopart --contract C1 --zone lab \
     --year-min 2018 --year-max 2022 --note "Entente X" --expires-days 90 --public-host warehouse.exemple.org
 
 python scripts/warehouse_user.py grant ines --source filet --contract C1   # ajouter un droit
+python scripts/warehouse_user.py grant ines --source ctd --contract C1 --zone lab --include-unknown  # inclure zones/dates inconnues
 python scripts/warehouse_user.py rotate ines                                # nouveau mot de passe
 python scripts/warehouse_user.py offboard ines                              # révoque et ferme la connexion
 python scripts/warehouse_user.py list                                       # comptes, portée, droits actifs
@@ -93,10 +94,13 @@ python scripts/warehouse_user.py create equipe_neolab --all-access          # pe
 ```
 
 - **Refus par défaut** : sans option de droit, le compte n'accède à aucune donnée.
+- `--source ecotaxa,ecopart` crée un droit par source; l'outil avertit si une seule des deux sources UVP est accordée.
+- Un droit borné par zone ou années cache les lignes de zone ou de date inconnue; `--include-unknown` les inclut.
 - Le mot de passe est généré (jamais saisi ni affiché) et écrit dans `data/warehouse_backups/users/<nom>.env`
   (ignoré par Git, droits `600`). **Remettre ce fichier par un canal sûr, puis le supprimer.**
 - `offboard` conserve l'historique des droits (`revoked_at`); `rotate` invalide l'ancien mot de passe.
-- Le déploiement publie le contexte MCP (`warehouse_context`, dictionnaire). Sans lui, la recette signale l'échec.
+- Le contexte MCP (`warehouse_context`, dictionnaire) est publié par le service Docker `warehouse-context` ou par
+  le déploiement. Sans lui, la recette signale l'échec.
 
 ### Réseau
 

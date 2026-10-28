@@ -64,6 +64,10 @@ ALTER ROLE warehouse_reader SET default_transaction_read_only = on;
 ALTER ROLE warehouse_reader SET statement_timeout = '30s';
 ALTER ROLE warehouse_navigator SET default_transaction_read_only = on;
 ALTER ROLE warehouse_navigator SET statement_timeout = '30s';
+-- Agent-facing reads: the planner misestimates explore.uvp_objects and picks a
+-- merge join that discards hundreds of millions of rows (> 90 s on 4.8 M
+-- objects); hash joins finish in 7-9 s. Measured in docs/WAREHOUSE_ACCESS_CONTROL.md.
+ALTER ROLE warehouse_reader SET enable_mergejoin = off;
 
 -- The reader sees the curated surface only; raw tables stay out of reach.
 REVOKE ALL ON SCHEMA warehouse FROM warehouse_reader;

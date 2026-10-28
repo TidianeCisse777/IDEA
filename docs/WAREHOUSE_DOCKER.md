@@ -17,10 +17,18 @@ docker compose --env-file .env.warehouse -f docker-compose.warehouse.yml up -d
 ```
 
 Le volume est persistant. Les scripts SQL (schéma, migrations, contrôle d'accès, rôles) ne
-sont exécutés qu'à la première initialisation du volume vide. Lancer ensuite une fois
-`python scripts/deploy_warehouse_postgres.py` pour publier le contexte MCP, et le rejouer
-à chaque mise à jour: il applique seulement les migrations additives. Vue d'ensemble :
-[WAREHOUSE_README.md](WAREHOUSE_README.md).
+sont exécutés qu'à la première initialisation du volume vide. Le service ponctuel
+`warehouse-context` attend que la base soit prête (contrôle `pg_isready` en TCP, qui n'aboutit
+qu'après les scripts d'initialisation) puis publie le contexte MCP. Le relancer après une
+modification du schéma :
+
+```bash
+docker compose --env-file .env.warehouse -f docker-compose.warehouse.yml run --rm warehouse-context
+```
+
+Pour mettre à jour un volume existant, rejouer `python scripts/deploy_warehouse_postgres.py` :
+il applique seulement les migrations additives, le contrôle d'accès, les rôles et le contexte.
+Vue d'ensemble : [WAREHOUSE_README.md](WAREHOUSE_README.md).
 
 ## Sauvegarde et restauration
 

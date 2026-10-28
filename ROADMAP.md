@@ -4,6 +4,32 @@
 
 **Dernière mise à jour :** 28 octobre 2026
 
+### 28 octobre 2026 — Accès des agents aux données : performance, CTD, zones inconnues, multi-sources (phases 2 et 4)
+
+- **Performance** (base de test : 4,8 M d'objets, 600 000 abondances) : un compte restreint expirait à 30 s sur
+  `explore.uvp_objects` et mettait 18,5 s sur les abondances. Causes trouvées dans les plans : politiques enfants
+  réévaluant le droit pour chaque objet, contrôle de version par ligne, et jointure par fusion mal estimée par le
+  planificateur sur `uvp_objects` (> 90 s même en superuser). Corrections : politiques ensemblistes,
+  `warehouse.readable_versions()`, `enable_mergejoin = off` pour les rôles de lecture des agents. Après : 6,8 s,
+  5,4 s et 0,55 s (restreint); 8,5 s, 7,0 s et 0,4 s (tout voir). Une variante `LATERAL` de la vue a été essayée et
+  écartée (pas plus rapide).
+- **Masqué ou absent** : vue `explore.my_datasets` (accès complet, partiel ou aucun par version, raison, source
+  associée manquante), sans comptage. Recette agent : le compte limité à EcoTaxa explique désormais ses 0 profils par
+  l'absence de droit EcoPart et sait quoi demander. Un texte inexact (dates déclarées exclues sans borne d'années)
+  repéré pendant cette recette a été corrigé.
+- **Multi-sources** : `warehouse_user.py --source ecotaxa,ecopart`, avertissement quand une seule source UVP est
+  accordée, ligne `jeux lisibles` dans `warehouse_connect.py check`.
+- **CTD** : zone propre aux profils (`docs/warehouse_ctd_zone_migration.sql`), attribuée par
+  `assign_filet_zones.py --table ctd_profile` avec le registre existant (vérifié : Baie de Baffin `assigned`,
+  point du Pacifique `outside`, profil sans coordonnées `unresolved`).
+- **Zones et dates inconnues** : option explicite par droit `include_unknown_scope` (`--include-unknown`), refus
+  par défaut conservé.
+- **Contexte MCP sous Docker** : service ponctuel `warehouse-context` après un contrôle de santé de la base. Non
+  exécuté (Docker absent ici). Contexte MCP enrichi (my_datasets, jointures externes, multi-sources).
+- Preuves : 52 tests sur PostgreSQL 16 réel, 80 tests statiques, installation portable rejouée.
+- Limites : 15 M d'objets extrapolé (parcours complet de `uvp_objects` proche de 30 s pour un compte tout voir),
+  réglage du planificateur à réévaluer si les vues changent.
+
 ### 28 octobre 2026 — Rôles, accès par périmètre, FAIR, connexion DbHub et documentation (phases 2 et 4)
 
 - Rôles clarifiés ([WAREHOUSE_ROLES.md](docs/WAREHOUSE_ROLES.md)) : `docs/warehouse_roles.sql` est la

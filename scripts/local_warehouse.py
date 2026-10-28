@@ -56,7 +56,7 @@ def initialize_database(conn, passwords):
             conn.execute('CREATE INDEX IF NOT EXISTS filet_sample_marine_zone_name_idx '
                          'ON warehouse.filet_sample (marine_zone_name)')
     # Idempotent migrations: also applied to warehouses initialized before them.
-    for name in ('warehouse_fair_migration.sql', 'warehouse_access_control.sql'):
+    for name in ('warehouse_ctd_zone_migration.sql', 'warehouse_fair_migration.sql', 'warehouse_access_control.sql'):
         conn.execute((ROOT / 'docs' / name).read_text(encoding='utf-8'))
     conn.execute('REVOKE ALL ON DATABASE neolab_warehouse FROM PUBLIC')
     conn.execute('REVOKE CREATE ON SCHEMA public FROM PUBLIC')
@@ -72,6 +72,9 @@ def initialize_database(conn, passwords):
         conn.execute(sql.SQL('GRANT warehouse_all_access TO {}').format(sql.Identifier(role)))
         conn.execute(sql.SQL('ALTER ROLE {} SET default_transaction_read_only=on').format(sql.Identifier(role)))
         conn.execute(sql.SQL("ALTER ROLE {} SET statement_timeout='30s'").format(sql.Identifier(role)))
+        if role == 'warehouse_reader':
+            # Same planner setting as docs/warehouse_roles.sql (merge join misplanned on uvp_objects).
+            conn.execute(sql.SQL('ALTER ROLE {} SET enable_mergejoin = off').format(sql.Identifier(role)))
         for schema in schemas:
             conn.execute(sql.SQL('GRANT USAGE ON SCHEMA {} TO {}').format(sql.Identifier(schema), sql.Identifier(role)))
             conn.execute(sql.SQL('GRANT SELECT ON ALL TABLES IN SCHEMA {} TO {}').format(sql.Identifier(schema), sql.Identifier(role)))
