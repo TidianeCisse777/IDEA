@@ -65,3 +65,24 @@ Le dump de référence créé le 8 octobre 2026 est
 custom PostgreSQL 16 et a été vérifié avec `pg_restore` dans le conteneur
 `neolab-warehouse-db`. Le SHA-256 est conservé dans le journal d’exécution,
 pas dans Git.
+
+## Déploiement sur un PostgreSQL existant
+
+Pour un serveur PostgreSQL 16+ déjà en place (hors Docker), une seule commande
+crée le schéma, applique les migrations (dont FAIR) et provisionne les rôles :
+
+```bash
+WAREHOUSE_POSTGRES_HOST=... WAREHOUSE_POSTGRES_PASSWORD=... \
+WAREHOUSE_READER_PASSWORD=... WAREHOUSE_NAVIGATOR_PASSWORD=... \
+python scripts/deploy_warehouse_postgres.py --check
+```
+
+Le script est rejouable : une base existante ne reçoit que les migrations
+additives et les rôles. `--dry-run` liste les étapes, `--check` rapporte les
+critères FAIR manquants (code de sortie 2 s'il en manque). La base doit exister et
+`psql` être disponible; PostGIS est requis seulement par le navigateur spatial.
+Détails : [rôles](WAREHOUSE_ROLES.md), [exigences FAIR](WAREHOUSE_FAIR_REQUIREMENTS.md).
+
+Le fichier `.env.warehouse` contient maintenant aussi `WAREHOUSE_READER_PASSWORD`
+et `WAREHOUSE_NAVIGATOR_PASSWORD`. Les rôles ne sont créés qu'à la première
+initialisation du volume; sur un volume existant, relancer le script ci-dessus.
