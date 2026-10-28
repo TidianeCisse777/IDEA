@@ -76,6 +76,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File <chemin-absolu-du-lanceu
 Redémarrer la session Codex pour charger le nouveau serveur et découvrir ses
 outils, conformément à la [documentation MCP Codex](https://developers.openai.com/codex/mcp).
 
+Pour brancher DbHub avec un compte personnel (Codex, Claude) plutôt que `warehouse_reader`, voir le
+[guide de connexion](WAREHOUSE_CONNECT.md); les rôles et le filtrage par périmètre sont décrits dans
+[WAREHOUSE_ROLES.md](WAREHOUSE_ROLES.md) et [WAREHOUSE_ACCESS_CONTROL.md](WAREHOUSE_ACCESS_CONTROL.md).
+
 ## Tests ciblés
 
 ```powershell

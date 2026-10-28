@@ -1,56 +1,45 @@
 # Rôles du warehouse
 
-Source de vérité SQL : [`warehouse_roles.sql`](warehouse_roles.sql). Contrat testé
-par `tests/test_warehouse_roles_fair.py` (statique, et sur PostgreSQL réel avec
-`WAREHOUSE_TEST_LIVE=1`).
+Source de vérité SQL : [`warehouse_roles.sql`](warehouse_roles.sql) et
+[`warehouse_access_control.sql`](warehouse_access_control.sql). Contrat testé par
+`tests/test_warehouse_roles_fair.py` (statique, et sur PostgreSQL réel avec `WAREHOUSE_TEST_LIVE=1`).
+Vue d'ensemble : [WAREHOUSE_README.md](WAREHOUSE_README.md).
 
 ## Trois couches, à ne pas confondre
 
 | Couche | Rôles | Où c'est défini |
 |---|---|---|
 | Application (Open WebUI) | `pending`, `user`, `admin` | `DEFAULT_USER_ROLE` (défaut `pending`) et `ENABLE_SIGNUP` dans `docker-compose.yml`; l'inscription est ouverte par défaut (`true`), à passer à `false` avant d'exposer le service |
-| Base PostgreSQL du warehouse | `neolab`, `warehouse_navigator`, `warehouse_reader` | `docs/warehouse_roles.sql` |
+| Base PostgreSQL du warehouse | voir ci-dessous | `docs/warehouse_roles.sql`, `docs/warehouse_access_control.sql` |
 | Services annexes (autres bases) | `idea_langgraph`, `langfuse`, `litellm` | `langgraph/db/`, `langfuse/`, `litellm/` |
 
-**DbHub n'est pas un rôle.** C'est la passerelle MCP qui se connecte à PostgreSQL
-avec le rôle `warehouse_reader` (`dbhub/warehouse.toml`). Ses droits sont ceux de ce
-rôle, rien de plus.
+**DbHub n'est pas un rôle.** C'est la passerelle MCP : elle se connecte à PostgreSQL avec le compte de la
+personne (ou `warehouse_reader` pour l'installation locale) et n'a pas d'autres droits que ce compte.
 
-## Rôles PostgreSQL du warehouse
+## Rôles de la base du warehouse
 
-| Rôle | Utilisé par | Lit | Écrit | Limites |
-|---|---|---|---|---|
-| `neolab` | chargement, migrations, déploiement | tout | oui (propriétaire) | jamais donné à une application ni à un agent |
-| `warehouse_navigator` | API du navigateur (port 8090) | `warehouse` + `explore` | non | transaction lecture seule, 30 s |
-| `warehouse_reader` | DbHub, agents, audit | `explore` seulement | non | lecture seule, 30 s, tables brutes refusées |
+Un **compte** est un rôle PostgreSQL avec connexion. Les rôles de groupe n'ont pas de connexion.
 
-Rôles techniques sans connexion : `warehouse_data_owner` (propriétaire des tables et vues,
-nécessaire pour que le filtre s'applique), `warehouse_all_access` (voit toutes les lignes;
-`neolab`, `warehouse_navigator` et `warehouse_reader` en sont membres) et
-`warehouse_explore_reader` (lecture de `explore`, réservé aux rôles restreints).
+| Rôle | Connexion | Utilisé par | Lit | Écrit | Limites |
+|---|---|---|---|---|---|
+| `neolab` | oui | chargement, migrations, déploiement | tout | oui | jamais donné à une application ni à un agent |
+| `warehouse_navigator` | oui | API du navigateur (port 8090) | `warehouse` + `explore`, toutes les lignes | non | lecture seule, 30 s |
+| `warehouse_reader` | oui | installation locale, audit | `explore` seulement, toutes les lignes | non | lecture seule, 30 s, tables brutes refusées |
+| comptes personnels | oui | une personne, via DbHub | `explore`, **lignes de son périmètre** | non | lecture seule, 30 s; aucun droit par défaut |
+| `warehouse_data_owner` | non | propriétaire des tables et vues | — | — | rend le filtre par ligne effectif |
+| `warehouse_all_access` | non | groupe « voit toutes les lignes » | — | — | membres : `neolab`, `warehouse_navigator`, `warehouse_reader`, comptes `--all-access` |
+| `warehouse_explore_reader` | non | groupe des comptes personnels | `explore` | — | pas d'accès à `warehouse` |
 
-**Rôles restreints.** Un rôle supplémentaire (par exemple une équipe ou un partenaire) ne lit que
-certains contrats, zones et années : voir [contrôle d'accès](WAREHOUSE_ACCESS_CONTROL.md). Création des comptes et branchement de DbHub : [guide de connexion](WAREHOUSE_CONNECT.md).
-Sans droit explicite il ne voit aucune ligne.
+Les rôles de lecture sont `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`, sans `CREATE` sur
+aucun schéma, et `PUBLIC` n'a aucun droit sur la base. Les groupes sont globaux au serveur PostgreSQL; les
+droits d'un compte (`warehouse.access_grant`) sont propres à chaque base.
 
-Les deux rôles de lecture sont `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION
-NOBYPASSRLS`, sans `CREATE` sur aucun schéma, et `PUBLIC` n'a aucun droit sur la base.
-
-## Ce qui était incohérent et a été corrigé
-
-- **Docker ne créait aucun rôle de lecture.** Le compose n'initialisait que `neolab` ;
-  `warehouse_reader` et `warehouse_navigator` n'existaient que via le script Python du
-  poste Windows. Un déploiement Docker ou PostgreSQL neuf n'avait donc pas d'accès
-  lecture seule, contrairement à ce que disait la documentation.
-- **Le navigateur tournait avec le rôle propriétaire** (`neolab`) en Docker. Il utilise
-  maintenant `warehouse_navigator`.
-- **Les vues créées après le provisionnement étaient illisibles** pour les rôles de
-  lecture (`GRANT ... ON ALL TABLES` ne couvre que l'existant). Des `DEFAULT PRIVILEGES`
-  couvrent désormais les futurs objets du propriétaire.
-- Le compose n'appliquait pas la migration EcoPart ; il l'applique.
+Créer un compte et lui accorder un périmètre : [guide de connexion](WAREHOUSE_CONNECT.md) et
+[contrôle d'accès](WAREHOUSE_ACCESS_CONTROL.md).
 
 ## Secrets
 
-Mots de passe fournis par l'environnement (`WAREHOUSE_POSTGRES_PASSWORD`,
-`WAREHOUSE_READER_PASSWORD`, `WAREHOUSE_NAVIGATOR_PASSWORD`), jamais dans un fichier
-versionné ni sur une ligne de commande. Rejouer le script fait pivoter les mots de passe.
+Mots de passe fournis par l'environnement (`WAREHOUSE_POSTGRES_PASSWORD`, `WAREHOUSE_READER_PASSWORD`,
+`WAREHOUSE_NAVIGATOR_PASSWORD`), jamais dans un fichier versionné ni sur une ligne de commande. Rejouer le
+déploiement fait pivoter les mots de passe des deux rôles de service. Les mots de passe des comptes personnels
+sont générés par `scripts/warehouse_user.py` et ne sont écrits que dans le fichier remis à la personne.

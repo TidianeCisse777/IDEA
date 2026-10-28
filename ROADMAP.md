@@ -4,25 +4,15 @@
 
 **Dernière mise à jour :** 28 octobre 2026
 
-### 28 octobre 2026 — Documentation d'accès et de découverte du warehouse (phase 4)
-
-- Point d'entrée unique [WAREHOUSE_README.md](docs/WAREHOUSE_README.md) : guide par besoin, parcours de
-  déploiement à la connexion d'un compte, ordre de découverte des données, variables d'environnement,
-  sécurité et tests. Modèle de variables `example.warehouse.env`, lien depuis `README.md`.
-- Corrections de la doc Docker : trois mots de passe requis (et non un), publication du contexte MCP à
-  lancer après le premier démarrage.
-- Vérifié : liens relatifs, aide des trois scripts, tests du warehouse. Limite : le démarrage
-  `docker compose` n'a pas été exécuté (Docker absent de l'environnement de travail).
-
-### 28 octobre 2026 — Rôles, accès par périmètre, préparation FAIR et connexion DbHub (phases 2 et 4)
+### 28 octobre 2026 — Rôles, accès par périmètre, FAIR, connexion DbHub et documentation (phases 2 et 4)
 
 - Rôles clarifiés ([WAREHOUSE_ROLES.md](docs/WAREHOUSE_ROLES.md)) : `docs/warehouse_roles.sql` est la
   source unique. Écarts corrigés : Docker ne créait aucun rôle de lecture, le navigateur utilisait le rôle
   propriétaire, les vues créées après provisionnement étaient illisibles, la migration EcoPart manquait au compose.
 - Préparation FAIR ([exigences](docs/WAREHOUSE_FAIR_REQUIREMENTS.md)) : migration additive, identifiant
   persistant unique, contrainte de publication, vues `explore.dataset_catalog`, `fair_readiness` et
-  `fair_column_coverage`. **Le warehouse n'est pas FAIR** : 39 fiches en brouillon, aucun identifiant ni
-  licence; dépôt, licence, niveaux d'accès, vocabulaires et sauvegarde restent à décider (PGD §8).
+  `fair_column_coverage`. **Le warehouse n'est pas FAIR** : fiches en brouillon (39 sur l'instance locale au 8 octobre), aucun
+  identifiant ni licence; dépôt, licence, niveaux d'accès, vocabulaires et sauvegarde restent à décider (PGD §8).
 - Accès par source, contrat, zone et année ([WAREHOUSE_ACCESS_CONTROL.md](docs/WAREHOUSE_ACCESS_CONTROL.md)) :
   sécurité par ligne forcée sur 23 tables, refus par défaut, propriétaire non-superuser dédié. Limites :
   CTD sans zone, performance non mesurée sur 15 M d'objets, toute vue `explore` créée ensuite doit être
@@ -33,8 +23,11 @@
 - Preuves : 41 tests sur PostgreSQL 16 réel (propriétaire superuser et non-superuser), recette avec le
   vrai DbHub 1.5.0 (mauvais mot de passe refusé, rotation, révocation) et `claude mcp list` connecté.
   Échec relevé : les tests `test_populate_*` ne s'exécutent pas sans `pytest` (préexistant).
-- Non vérifié : PostGIS et le navigateur spatial, Codex, Claude Desktop, Windows pour les nouveaux scripts,
-  TLS distant. Phases non clôturées. Poussée vers GitHub bloquée (403) au moment de cette entrée.
+- Documentation : point d'entrée [WAREHOUSE_README.md](docs/WAREHOUSE_README.md), `example.warehouse.env`,
+  guide Docker corrigé (trois mots de passe, publication du contexte MCP), dictionnaire MCP régénéré, renvois
+  entre guides. Liens relatifs vérifiés.
+- Non vérifié : `docker compose up`, PostGIS et le navigateur spatial, Codex, Claude Desktop, Windows
+  pour les nouveaux scripts, TLS distant. Phases non clôturées.
 
 ### 21 octobre 2026 — Cartographie et bibliothèques océanographiques dans le MCP
 

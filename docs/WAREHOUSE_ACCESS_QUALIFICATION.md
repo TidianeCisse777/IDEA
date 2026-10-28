@@ -46,7 +46,7 @@ ils ne constituent pas un inventaire de graphiques effectivement produits.
 ## Connexion reproductible en lecture seule
 
 Prérequis : Python 3.10+, `psycopg[binary]`, PostgreSQL démarré et rôle
-`warehouse_reader` provisionné selon la procédure Docker. Fournir via
+`warehouse_reader` provisionné par `scripts/deploy_warehouse_postgres.py` ([rôles](WAREHOUSE_ROLES.md)). Fournir via
 l'environnement `WAREHOUSE_READER_PASSWORD`, et au besoin
 `WAREHOUSE_READER_HOST`, `WAREHOUSE_READER_PORT`, `WAREHOUSE_READER_DB`.
 Ne pas utiliser le mot de passe du rôle d'ingestion. Aucun secret n'est passé

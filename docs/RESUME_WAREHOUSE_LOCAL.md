@@ -82,7 +82,7 @@ sur `explore.uvp_projects` réussis.
 |---|---|---|
 | `neolab` | Initialisation et administration locale | Propriétaire/superutilisateur local, réservé aux opérations de maintenance |
 | `warehouse_navigator` | API de l'interface | SELECT sur `warehouse` et `explore`, transactions en lecture seule |
-| `warehouse_reader` | DbHub / Codex | SELECT sur `explore`, accès aux tables brutes refusé, transactions en lecture seule |
+| `warehouse_reader` | DbHub / Codex (installation locale; comptes personnels: voir [rôles](WAREHOUSE_ROLES.md)) | SELECT sur `explore`, accès aux tables brutes refusé, transactions en lecture seule |
 
 Les deux comptes applicatifs n'ont ni privilège superutilisateur, création
 de base ou de rôle, réplication ou contournement RLS; ni CREATE/TEMP sur la

@@ -4,6 +4,10 @@ Base PostgreSQL qui centralise EcoTaxa, EcoPart, FILET et CTD, avec un accès en
 un catalogue de métadonnées et un branchement DbHub pour Codex et Claude. Ce document relie les guides
 et donne le parcours complet; le détail est dans chaque guide.
 
+Vocabulaire : une **version de jeu de données** (`dataset_version`) est un chargement identifié d'une source;
+un **compte** est un rôle PostgreSQL avec connexion; son **périmètre** est l'ensemble des lignes que ses droits
+couvrent (source, contrat, zone, années); le **contexte MCP** est l'ensemble des fiches lues par DbHub.
+
 ## Quel guide lire ?
 
 | Je veux… | Guide |

@@ -12,7 +12,7 @@ Légende : ✅ en place et testé · 🟡 structure en place, contenu à produir
 | ID | Exigence | Mise en œuvre | Statut |
 |---|---|---|---|
 | F1 | Identifiant persistant unique | `dataset_metadata.persistent_identifier`, index unique partiel; obligatoire pour `published` | 🟡 aucun identifiant émis; dépôt à choisir (DMP §8.2) |
-| F2 | Métadonnées riches | `dataset_metadata` (titre, description, créateurs, couverture, méthode, licence) | 🟡 39 fiches `draft` à descriptions provisoires |
+| F2 | Métadonnées riches | `dataset_metadata` (titre, description, créateurs, couverture, méthode, licence) | 🟡 fiches `draft` à descriptions provisoires (39 sur l'instance locale au 8 octobre 2026, [PGD](WAREHOUSE_DMP_DRAFT.md)) |
 | F3 | Métadonnées citent l'identifiant | `explore.dataset_catalog` expose `dataset_version_id` et `persistent_identifier` | ✅ |
 | F4 | Indexées et interrogeables | `explore.dataset_catalog`, `keywords_json` | 🟡 mots-clés vides; indexation externe liée au dépôt ⛔ |
 
