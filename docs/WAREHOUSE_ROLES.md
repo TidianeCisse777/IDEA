@@ -33,6 +33,12 @@ Un **compte** est un rôle PostgreSQL avec connexion. Les rôles de groupe n'ont
 La jointure par fusion est désactivée sur les rôles de lecture des agents pour une raison de performance
 (mesures dans le [contrôle d'accès](WAREHOUSE_ACCESS_CONTROL.md#performance)).
 
+**Plusieurs bases sur un même serveur.** Les groupes et les deux rôles de service sont communs au serveur. Si un
+autre propriétaire non-superuser déploie une seconde base, un administrateur doit d'abord lui déléguer
+`warehouse_data_owner`, `warehouse_all_access`, `warehouse_explore_reader`, `warehouse_reader` et
+`warehouse_navigator` avec `WITH ADMIN OPTION`; sinon le déploiement s'arrête sur un refus explicite.
+Le propriétaire qui déploie n'est jamais mis en lecture seule : sa session de déploiement force la lecture-écriture.
+
 Les rôles de lecture sont `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`, sans `CREATE` sur
 aucun schéma, et `PUBLIC` n'a aucun droit sur la base. Les groupes sont globaux au serveur PostgreSQL; les
 droits d'un compte (`warehouse.access_grant`) sont propres à chaque base.

@@ -147,15 +147,30 @@ END
 $$;
 REVOKE ALL ON FUNCTION warehouse.enroll_access_role(name) FROM PUBLIC;
 
+-- The deploying owner must stay read-write. A previous version of the loop
+-- below could set read-only defaults on a non-superuser owner, because
+-- PostgreSQL 16 makes the creator of a role an (admin) member of it: undo that.
+DO $$
+BEGIN
+    EXECUTE format('ALTER ROLE %I RESET default_transaction_read_only', current_user);
+    EXECUTE format('ALTER ROLE %I RESET statement_timeout', current_user);
+    EXECUTE format('ALTER ROLE %I RESET enable_mergejoin', current_user);
+END
+$$;
+
 -- Accounts enrolled before a settings change get it on the next deploy too.
+-- Only scoped readers: never the deploying owner, a member of
+-- warehouse_all_access, or a superuser (admin-only memberships included).
 DO $$
 DECLARE
     member record;
 BEGIN
     FOR member IN
-        SELECT r.rolname FROM pg_auth_members a
+        SELECT DISTINCT r.rolname FROM pg_auth_members a
         JOIN pg_roles g ON g.oid = a.roleid AND g.rolname = 'warehouse_explore_reader'
-        JOIN pg_roles r ON r.oid = a.member AND r.rolcanlogin
+        JOIN pg_roles r ON r.oid = a.member
+        WHERE r.rolcanlogin AND NOT r.rolsuper AND r.rolname <> current_user
+          AND NOT pg_has_role(r.oid, 'warehouse_all_access', 'member')
     LOOP
         BEGIN
             EXECUTE format('ALTER ROLE %I SET default_transaction_read_only = on', member.rolname);
@@ -278,6 +293,45 @@ $$;
 ALTER FUNCTION warehouse.is_unrestricted() OWNER TO warehouse_data_owner;
 ALTER FUNCTION warehouse.row_allowed(bigint, text, text, integer, boolean) OWNER TO warehouse_data_owner;
 ALTER FUNCTION warehouse.readable_versions(boolean) OWNER TO warehouse_data_owner;
+
+-- New explore views are handed to the data owner as soon as they are created, so
+-- a view written later by a superuser loader cannot bypass row security. Event
+-- triggers need a superuser: elsewhere, explore.access_audit and a deploy replay
+-- remain the safeguard. A failed hand-over never blocks the view's creation.
+CREATE OR REPLACE FUNCTION warehouse.adopt_new_explore_views()
+RETURNS event_trigger LANGUAGE plpgsql
+AS $$
+DECLARE
+    created record;
+BEGIN
+    FOR created IN
+        SELECT c.objid FROM pg_event_trigger_ddl_commands() c
+        WHERE c.object_type = 'view' AND c.schema_name = 'explore'
+    LOOP
+        IF (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid = created.objid) <> 'warehouse_data_owner' THEN
+            BEGIN
+                EXECUTE format('ALTER VIEW %s OWNER TO warehouse_data_owner', created.objid::regclass);
+            EXCEPTION WHEN insufficient_privilege THEN
+                RAISE WARNING 'view % not handed to warehouse_data_owner: it bypasses row security until the next deploy',
+                    created.objid::regclass;
+            END;
+        END IF;
+    END LOOP;
+END
+$$;
+
+DO $$
+BEGIN
+    IF (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) THEN
+        DROP EVENT TRIGGER IF EXISTS warehouse_adopt_explore_views;
+        CREATE EVENT TRIGGER warehouse_adopt_explore_views ON ddl_command_end
+            WHEN TAG IN ('CREATE VIEW')
+            EXECUTE FUNCTION warehouse.adopt_new_explore_views();
+    ELSE
+        RAISE NOTICE 'event trigger not installed (needs a superuser): rely on explore.access_audit and deploy replays';
+    END IF;
+END
+$$;
 
 -- What the calling role may read, so a user can see its own scope.
 CREATE OR REPLACE VIEW explore.my_access AS

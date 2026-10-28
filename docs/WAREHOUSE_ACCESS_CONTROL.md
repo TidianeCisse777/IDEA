@@ -117,10 +117,11 @@ Trois corrections :
   une RLS naïve ne filtrerait rien. Les données appartiennent donc à `warehouse_data_owner`
   (sans login ni superuser), la RLS est forcée, et les politiques lisent `session_user`
   (le rôle de connexion), jamais `current_user`.
-- **Une vue créée plus tard par le chargeur contourne le filtre** tant qu'elle n'appartient pas à
-  `warehouse_data_owner`. `explore.access_audit` la signale ; rejouer
-  `scripts/deploy_warehouse_postgres.py` lui transfère la propriété. `--check` renvoie le code 3
-  s'il reste un écart. À faire après chaque nouvelle vue `explore`.
+- **Une vue créée plus tard par le chargeur** contournerait le filtre si elle n'appartenait pas à
+  `warehouse_data_owner`. Quand le déploiement tourne en superuser (cas Docker), un déclencheur
+  d'événement (`warehouse_adopt_explore_views`) la transfère **dès sa création**. Sans superuser (hébergeur
+  géré), le déploiement l'annonce; `explore.access_audit` signale alors la vue et rejouer
+  `scripts/deploy_warehouse_postgres.py` lui transfère la propriété (`--check` renvoie le code 3 s'il reste un écart).
 - Une table ajoutée sans politique est aussi signalée par `access_audit`.
 
 ## Limites connues

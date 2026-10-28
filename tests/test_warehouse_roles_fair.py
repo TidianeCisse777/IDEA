@@ -115,6 +115,11 @@ class AccessControlContractTests(unittest.TestCase):
         self.assertIn("condition: service_healthy", service)
         self.assertIn("pg_isready -h 127.0.0.1", COMPOSE)
 
+    def test_new_explore_views_are_adopted_at_creation_when_possible(self):
+        self.assertIn("CREATE EVENT TRIGGER warehouse_adopt_explore_views ON ddl_command_end", ACCESS)
+        self.assertIn("WHEN TAG IN ('CREATE VIEW')", ACCESS)
+        self.assertIn("EXCEPTION WHEN insufficient_privilege", ACCESS.split("adopt_new_explore_views()")[1])
+
     def test_agent_read_roles_disable_merge_joins(self):
         self.assertIn("ALTER ROLE warehouse_reader SET enable_mergejoin = off", ROLES)
         self.assertIn("SET enable_mergejoin = off", ACCESS)
@@ -383,16 +388,23 @@ class LivePostgresTests(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertIn("warehouse_all_access", out)
 
-    def test_zz_audit_flags_a_leaking_view_until_a_replay_fixes_it(self):
+    def test_zz_a_view_created_later_never_bypasses_row_security(self):
         if not hasattr(type(self), "tag"):
             self.seed_access_data()
-        self.owner("CREATE VIEW explore.acl_leak AS SELECT sample_id FROM warehouse.ecotaxa_sample")
-        code, out = self.owner("SELECT object_name FROM explore.access_audit")
-        if os.environ.get("PGUSER") and self.owner("SELECT rolsuper FROM pg_roles WHERE rolname = current_user")[1] == "t":
-            self.assertIn("acl_leak", out)
-        subprocess.run([sys.executable, str(DEPLOY)], env=self.deploy_env, check=True, capture_output=True)
-        self.assertEqual(self.owner("SELECT count(*) FROM explore.access_audit"), (0, "0"))
-        self.owner("DROP VIEW explore.acl_leak")
+        superuser = self.owner("SELECT rolsuper FROM pg_roles WHERE rolname = current_user")[1] == "t"
+        self.owner("CREATE VIEW explore.acl_later AS SELECT sample_id, dataset_version_id FROM warehouse.ecotaxa_sample")
+        owner_now = self.owner("SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid = 'explore.acl_later'::regclass")[1]
+        if superuser:
+            # The event trigger hands the view over at creation: filtered immediately, nothing to audit.
+            self.assertEqual(owner_now, "warehouse_data_owner")
+            self.assertEqual(self.owner("SELECT count(*) FROM explore.access_audit"), (0, "0"))
+            self.assertEqual(self.run_as(f"acl_empty_{self.tag}", "SELECT count(*) FROM explore.acl_later", "pw"), (0, "0"))
+        else:
+            # Without an event trigger the audit flags it until a deploy replay adopts it.
+            self.assertIn("acl_later", self.owner("SELECT object_name FROM explore.access_audit")[1])
+            subprocess.run([sys.executable, str(DEPLOY)], env=self.deploy_env, check=True, capture_output=True)
+            self.assertEqual(self.owner("SELECT count(*) FROM explore.access_audit"), (0, "0"))
+        self.owner("DROP VIEW explore.acl_later")
 
     def revoke_all(self, role):
         self.owner(f"UPDATE warehouse.access_grant SET revoked_at = now() WHERE grantee = '{role}' AND revoked_at IS NULL")
@@ -478,6 +490,75 @@ class LivePostgresTests(unittest.TestCase):
     def test_zz_no_protected_table_is_left_without_row_security(self):
         code, out = self.owner("SELECT count(*) FROM explore.access_audit WHERE problem = 'table without row security'")
         self.assertEqual((code, out), (0, "0"))
+
+
+@unittest.skipUnless(os.environ.get("WAREHOUSE_TEST_LIVE") == "1", "WAREHOUSE_TEST_LIVE=1 requis")
+class LiveNonSuperuserOwnerTests(unittest.TestCase):
+    """Managed-hosting case: the owner has CREATEROLE but is not a superuser."""
+
+    @classmethod
+    def setUpClass(cls):
+        tag = uuid.uuid4().hex[:6]
+        cls.owner_role, cls.db, cls.reader = f"nsowner_{tag}", f"ns_test_{tag}", f"nsread_{tag}"
+        cls.admin_env = dict(os.environ)
+        cls.admin("postgres", f"CREATE ROLE {cls.owner_role} LOGIN PASSWORD 'o' CREATEDB CREATEROLE NOSUPERUSER")
+        # Group and service roles are cluster-wide and may already exist: an administrator delegates them.
+        for group in ("warehouse_data_owner", "warehouse_all_access", "warehouse_explore_reader",
+                      "warehouse_reader", "warehouse_navigator"):
+            cls.admin("postgres", f"DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{group}') THEN "
+                                  f"GRANT {group} TO {cls.owner_role} WITH ADMIN OPTION; END IF; END $$")
+        cls.admin("postgres", f"CREATE DATABASE {cls.db} OWNER {cls.owner_role}")
+        cls.env = dict(os.environ, WAREHOUSE_POSTGRES_HOST=os.environ.get("PGHOST", "127.0.0.1"),
+                       WAREHOUSE_POSTGRES_PORT=os.environ.get("PGPORT", "5432"), WAREHOUSE_POSTGRES_DB=cls.db,
+                       WAREHOUSE_POSTGRES_USER=cls.owner_role, WAREHOUSE_POSTGRES_PASSWORD="o",
+                       WAREHOUSE_READER_PASSWORD="reader-pw", WAREHOUSE_NAVIGATOR_PASSWORD="navigator-pw")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.admin(cls.db, f"DROP OWNED BY {cls.reader}", check=False)
+        cls.admin("postgres", f"DROP DATABASE IF EXISTS {cls.db} WITH (FORCE)")
+        cls.admin("postgres", f"DROP ROLE IF EXISTS {cls.reader}", check=False)
+        cls.admin("postgres", f"DROP OWNED BY {cls.owner_role}", check=False)
+        cls.admin("postgres", f"DROP ROLE IF EXISTS {cls.owner_role}", check=False)
+
+    @classmethod
+    def admin(cls, db, sql, check=True):
+        return subprocess.run(["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db, "-c", sql],
+                              env=cls.admin_env, check=check, capture_output=True, text=True)
+
+    def deploy(self):
+        return subprocess.run([sys.executable, str(DEPLOY)], env=self.env, capture_output=True, text=True)
+
+    def owner_settings(self):
+        return self.admin("postgres", f"SELECT coalesce(array_to_string(s.setconfig, ' '), '') FROM pg_roles r "
+                                      f"LEFT JOIN pg_db_role_setting s ON s.setrole = r.oid WHERE r.rolname = '{self.owner_role}'")
+
+    def test_replays_never_make_the_owner_read_only(self):
+        first = self.deploy()
+        self.assertEqual(first.returncode, 0, first.stderr[-400:])
+        env = dict(self.admin_env, PGUSER=self.owner_role)
+        subprocess.run(["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", self.db, "-c",
+                        f"CREATE ROLE {self.reader} LOGIN PASSWORD 'pw'", "-c",
+                        f"SELECT warehouse.enroll_access_role('{self.reader}')"], env=env, check=True, capture_output=True)
+        # Simulate the faulty earlier version, then check that a replay repairs it.
+        self.admin("postgres", f"ALTER ROLE {self.owner_role} SET default_transaction_read_only = on")
+        second = self.deploy()
+        self.assertEqual(second.returncode, 0, second.stderr[-400:])
+        self.assertIn("event trigger not installed", second.stderr)
+        settings = subprocess.run(["psql", "-X", "-At", "-d", "postgres", "-c",
+                                   f"SELECT coalesce(array_to_string(s.setconfig, ' '), '') FROM pg_roles r "
+                                   f"LEFT JOIN pg_db_role_setting s ON s.setrole = r.oid AND s.setdatabase = 0 "
+                                   f"WHERE r.rolname = '{self.owner_role}'"], env=self.admin_env,
+                                  capture_output=True, text=True).stdout
+        self.assertNotIn("default_transaction_read_only", settings)
+        write = subprocess.run(["psql", "-X", "-At", "-d", self.db, "-c",
+                                "INSERT INTO warehouse.dataset_version (source_instance, dataset_key, version_key, "
+                                "file_manifest_uri, sha256) VALUES ('ecotaxa','w','v1','u','w') RETURNING 1"],
+                               env=env, capture_output=True, text=True)
+        self.assertEqual((write.returncode, write.stdout.splitlines()[:1]), (0, ["1"]), write.stderr)
+        reader = subprocess.run(["psql", "-X", "-At", "-d", self.db, "-U", self.reader, "-c", "SHOW enable_mergejoin"],
+                                env=env, capture_output=True, text=True)
+        self.assertEqual(reader.stdout.strip(), "off", reader.stderr)
 
 
 if __name__ == "__main__":

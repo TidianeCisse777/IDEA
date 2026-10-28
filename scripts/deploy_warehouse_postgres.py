@@ -36,6 +36,8 @@ def connection_env():
     if not password:
         raise SystemExit('WAREHOUSE_POSTGRES_PASSWORD est requis (rôle propriétaire).')
     env['PGPASSWORD'] = password
+    # The deploying session always writes, whatever defaults the owner role carries.
+    env['PGOPTIONS'] = '-c default_transaction_read_only=off -c statement_timeout=0'
     return env
 
 

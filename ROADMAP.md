@@ -4,6 +4,18 @@
 
 **Dernière mise à jour :** 28 octobre 2026
 
+### 28 octobre 2026 — Sécurité : vues adoptées à la création, propriétaire non-superuser (phases 2 et 4)
+
+- Déclencheur d'événement `warehouse_adopt_explore_views` : toute nouvelle vue `explore` est transférée au
+  propriétaire des données dès sa création (déploiement en superuser). Sans superuser, avis explicite, audit et rejeu.
+- **Défaut corrigé, présent dans les commits `b4e1675` et `ac6204b`** : sous PostgreSQL 16, le créateur d'un rôle en
+  devient membre administrateur; la boucle de mise à jour des comptes restreints a donc pu mettre en lecture seule un
+  propriétaire non-superuser au rejeu suivant. Seuls les hébergements sans superuser étaient concernés. La boucle ne
+  vise plus que les comptes restreints, la session de déploiement force la lecture-écriture et le rejeu répare le
+  propriétaire. Test de non-régression avec un propriétaire non-superuser.
+- Plusieurs bases sur un serveur : délégation des groupes et des rôles de service documentée (`WITH ADMIN OPTION`).
+- Preuves : 86 tests (dont 53 sur base réelle) verts deux fois, sans rôle ni base résiduels.
+
 ### 28 octobre 2026 — Connexion : diagnostics, expiration, TLS, installation hors ligne (phase 4)
 
 - `warehouse_connect.py check` donne la cause d'un échec à partir des messages de DbHub (jamais affichés tels
