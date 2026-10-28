@@ -4,6 +4,21 @@
 
 **Dernière mise à jour :** 28 octobre 2026
 
+### 28 octobre 2026 — Connexion : diagnostics, expiration, TLS, installation hors ligne (phase 4)
+
+- `warehouse_connect.py check` donne la cause d'un échec à partir des messages de DbHub (jamais affichés tels
+  quels) : mot de passe refusé, TLS exigé, certificat non vérifiable, serveur injoignable, hôte inconnu, délai
+  réseau. Chaque cas a été provoqué et vérifié sur PostgreSQL 16 avec DbHub 1.5.0.
+- Expiration : date écrite dans le fichier d'identifiants, alerte 14 jours avant et après expiration;
+  `rotate` conserve ou renouvelle la validité et refuse de réactiver un compte expiré sans `--expires-days`.
+- TLS testé en local (certificat autosigné, `hostssl`) : `require` chiffre, `verify-full` exige le certificat
+  d'autorité, désormais accepté (`WAREHOUSE_DB_SSLROOTCERT`, `init --sslrootcert`).
+- `install-dbhub` installe la version épinglée dans `data/tooling/dbhub` pour les postes sans npm. Un défaut de
+  chemin d'installation trouvé au test (un niveau de trop, masqué par une installation existante) a été corrigé
+  et vérifié à vide.
+- Preuves : 84 tests (dont 52 sur base réelle) verts deux fois. Non vérifié : serveur distant réel, Codex,
+  Claude Desktop, Windows.
+
 ### 28 octobre 2026 — Accès des agents aux données : performance, CTD, zones inconnues, multi-sources (phases 2 et 4)
 
 - **Performance** (base de test : 4,8 M d'objets, 600 000 abondances) : un compte restreint expirait à 30 s sur

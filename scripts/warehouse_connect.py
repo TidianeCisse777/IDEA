@@ -27,7 +27,9 @@ SERVER_NAME = 'neolab-warehouse'
 DBHUB_PACKAGE = '@bytebase/dbhub@1.5.0'
 LOCAL_DBHUB = ROOT / 'data/tooling/dbhub/node_modules/@bytebase/dbhub/dist/index.js'
 KEYS = ('WAREHOUSE_DB_HOST', 'WAREHOUSE_DB_PORT', 'WAREHOUSE_DB_NAME',
-        'WAREHOUSE_DB_USER', 'WAREHOUSE_DB_PASSWORD', 'WAREHOUSE_DB_SSLMODE')
+        'WAREHOUSE_DB_USER', 'WAREHOUSE_DB_PASSWORD', 'WAREHOUSE_DB_SSLMODE',
+        'WAREHOUSE_DB_SSLROOTCERT', 'WAREHOUSE_DB_EXPIRES')
+EXPIRY_NOTICE_DAYS = 14
 DEFAULTS = {'WAREHOUSE_DB_PORT': '5432', 'WAREHOUSE_DB_NAME': 'neolab_warehouse',
             'WAREHOUSE_DB_SSLMODE': 'require'}
 
@@ -67,10 +69,58 @@ def load_settings(environ=None):
 
 
 def build_dsn(values):
-    return 'postgres://%s:%s@%s:%s/%s?sslmode=%s' % (
+    dsn = 'postgres://%s:%s@%s:%s/%s?sslmode=%s' % (
         quote(values['WAREHOUSE_DB_USER'], safe=''), quote(values['WAREHOUSE_DB_PASSWORD'], safe=''),
         values['WAREHOUSE_DB_HOST'], values['WAREHOUSE_DB_PORT'],
         quote(values['WAREHOUSE_DB_NAME'], safe=''), quote(values['WAREHOUSE_DB_SSLMODE'], safe=''))
+    if values.get('WAREHOUSE_DB_SSLROOTCERT'):
+        # Certificate authority of the server: required to verify its identity (verify-full).
+        dsn += '&sslrootcert=' + quote(values['WAREHOUSE_DB_SSLROOTCERT'], safe='')
+    return dsn
+
+
+# DbHub's connection errors, mapped to the action the person can take. Matched
+# on its stderr, which is never printed as is (it can echo the DSN).
+DIAGNOSES = (
+    ('password authentication failed', 'identifiants refusés: mot de passe faux, renouvelé (rotate) ou expiré. '
+                                       'Demander un nouveau fichier à l\'administrateur.'),
+    ('no encryption', 'le serveur exige une connexion chiffrée: WAREHOUSE_DB_SSLMODE=require.'),
+    ('rejects connection', 'le serveur refuse ce poste ou ce compte (pg_hba): contacter l\'administrateur.'),
+    ('does not support ssl', 'le serveur ne propose pas TLS: WAREHOUSE_DB_SSLMODE=disable, uniquement en local ou via tunnel SSH.'),
+    ('certificate', 'certificat du serveur non vérifiable: indiquer son certificat d\'autorité '
+                    '(WAREHOUSE_DB_SSLROOTCERT) ou utiliser WAREHOUSE_DB_SSLMODE=require.'),
+    ('econnrefused', 'serveur injoignable sur cet hôte et ce port: service arrêté, port fermé ou tunnel SSH absent.'),
+    ('enotfound', 'nom d\'hôte inconnu: vérifier WAREHOUSE_DB_HOST.'),
+    ('etimedout', 'délai réseau dépassé: pare-feu, VPN ou tunnel requis.'),
+    ('timeout', 'délai réseau dépassé: pare-feu, VPN ou tunnel requis.'),
+    ('does not exist', 'base ou compte inexistant: vérifier WAREHOUSE_DB_NAME et le compte.'),
+)
+
+
+def diagnose(stderr_text):
+    lowered = stderr_text.lower()
+    for marker, message in DIAGNOSES:
+        if marker in lowered:
+            return message
+    return 'DbHub s\'est arrêté sans cause reconnue (connexion refusée, identifiants ou réseau).'
+
+
+def expiry_status(values, today=None):
+    """Message about the password's validity, from the date in the credentials file."""
+    raw = values.get('WAREHOUSE_DB_EXPIRES')
+    if not raw:
+        return None
+    from datetime import date
+    try:
+        expires = date.fromisoformat(raw)
+    except ValueError:
+        return None
+    days = (expires - (today or date.today())).days
+    if days < 0:
+        return 'Mot de passe expiré le %s: demander `rotate` à l\'administrateur.' % raw
+    if days <= EXPIRY_NOTICE_DAYS:
+        return 'Mot de passe valide jusqu\'au %s (%d jour(s)): prévoir son renouvellement.' % (raw, days)
+    return 'Mot de passe valide jusqu\'au %s.' % raw
 
 
 def dbhub_command():
@@ -82,8 +132,28 @@ def dbhub_command():
         return [shutil.which('node') or 'node', str(LOCAL_DBHUB), *base]
     npx = shutil.which('npx') or shutil.which('npx.cmd')
     if not npx:
-        raise SystemExit('Node.js est requis (https://nodejs.org) pour lancer DbHub.')
+        raise SystemExit('Node.js 18+ est requis (https://nodejs.org) pour lancer DbHub.')
     return [npx, '-y', DBHUB_PACKAGE, *base]
+
+
+def dbhub_origin():
+    if os.environ.get('WAREHOUSE_DBHUB_COMMAND'):
+        return 'commande personnalisée'
+    return 'installation locale' if LOCAL_DBHUB.exists() else 'npx (téléchargé au premier lancement)'
+
+
+def install_dbhub(_args):
+    """Install the pinned DbHub next to the repo so later starts need no network."""
+    npm = shutil.which('npm') or shutil.which('npm.cmd')
+    if not npm:
+        raise SystemExit('Node.js 18+ (avec npm) est requis: https://nodejs.org')
+    prefix = LOCAL_DBHUB.parents[4]  # data/tooling/dbhub
+    prefix.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run([npm, 'install', '--no-audit', '--no-fund', '--prefix', str(prefix), DBHUB_PACKAGE])
+    if result.returncode or not LOCAL_DBHUB.exists():
+        raise SystemExit('Installation de DbHub échouée (réseau npm requis une fois).')
+    print('DbHub %s installé dans %s: les lancements suivants n\'ont plus besoin du réseau.' % (DBHUB_PACKAGE, prefix))
+    return 0
 
 
 def server_environment(values):
@@ -107,9 +177,11 @@ def init(args):
     else:
         values = {'WAREHOUSE_DB_HOST': args.host, 'WAREHOUSE_DB_PORT': str(args.port),
                   'WAREHOUSE_DB_NAME': args.database, 'WAREHOUSE_DB_USER': args.user,
-                  'WAREHOUSE_DB_SSLMODE': args.sslmode,
+                  'WAREHOUSE_DB_SSLMODE': args.sslmode, 'WAREHOUSE_DB_SSLROOTCERT': args.sslrootcert,
                   'WAREHOUSE_DB_PASSWORD': os.environ.get('WAREHOUSE_DB_PASSWORD') or getpass.getpass('Mot de passe: ')}
     values = {**DEFAULTS, **{k: v for k, v in values.items() if k in KEYS and v}}
+    if args.from_file and args.sslrootcert:
+        values['WAREHOUSE_DB_SSLROOTCERT'] = args.sslrootcert
     missing = [k for k in ('WAREHOUSE_DB_HOST', 'WAREHOUSE_DB_USER', 'WAREHOUSE_DB_PASSWORD') if not values.get(k)]
     if missing:
         raise SystemExit('Valeurs manquantes: ' + ', '.join(missing))
@@ -158,9 +230,22 @@ class McpSession:
     """Client MCP minimal sur le processus DbHub (une réponse par id)."""
 
     def __init__(self, command, env):
+        import threading
         self.process = subprocess.Popen(command, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                        stderr=subprocess.DEVNULL, text=True, encoding='utf-8')
+                                        stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace')
         self.next_id = 0
+        # Kept for diagnosis only, never printed: DbHub may echo the connection string.
+        self.stderr_lines = []
+        self.reader = threading.Thread(target=self._drain_stderr, daemon=True)
+        self.reader.start()
+
+    def _drain_stderr(self):
+        for line in self.process.stderr:
+            self.stderr_lines.append(line)
+
+    def stderr_text(self):
+        self.reader.join(timeout=2)
+        return ''.join(self.stderr_lines)
 
     def request(self, method, params):
         self.next_id += 1
@@ -202,10 +287,14 @@ class McpSession:
 
 def check(_args):
     values = load_settings()
-    print('Compte %s sur %s:%s/%s' % (values['WAREHOUSE_DB_USER'], values['WAREHOUSE_DB_HOST'],
-                                       values['WAREHOUSE_DB_PORT'], values['WAREHOUSE_DB_NAME']))
+    print('Compte %s sur %s:%s/%s (TLS: %s; DbHub: %s)' % (
+        values['WAREHOUSE_DB_USER'], values['WAREHOUSE_DB_HOST'], values['WAREHOUSE_DB_PORT'],
+        values['WAREHOUSE_DB_NAME'], values['WAREHOUSE_DB_SSLMODE'], dbhub_origin()))
+    expiry = expiry_status(values)
     session = McpSession(dbhub_command(), server_environment(values))
     steps = []
+    if expiry:
+        steps.append(('validité du mot de passe', 'expiré' not in expiry, expiry))
     try:
         session.request('initialize', {'protocolVersion': '2025-03-26', 'capabilities': {},
                                        'clientInfo': {'name': 'neolab-check', 'version': '1'}})
@@ -228,7 +317,10 @@ def check(_args):
         context = session.request('tools/call', {'name': 'warehouse_context', 'arguments': {'topic': 'overview'}})
         steps.append(('contexte métier (warehouse_context)', not context.get('isError'), 'fiche overview lue'))
     except Exception as error:  # noqa: BLE001 - toute erreur est un échec de recette, sans détail secret
-        steps.append(('connexion', False, str(error)))
+        if session.process.poll() is not None or 'arrêté' in str(error):
+            steps.append(('connexion', False, diagnose(session.stderr_text())))
+        else:
+            steps.append(('requête', False, str(error)))
     finally:
         session.close()
     for label, ok, detail in steps:
@@ -248,10 +340,12 @@ def main(argv=None):
     p.add_argument('--port', type=int, default=5432)
     p.add_argument('--database', default='neolab_warehouse')
     p.add_argument('--user')
-    p.add_argument('--sslmode', default='require')
+    p.add_argument('--sslmode', default='require', choices=('disable', 'prefer', 'require', 'verify-ca', 'verify-full'))
+    p.add_argument('--sslrootcert', help='certificat d\'autorité du serveur (pour verify-ca / verify-full)')
     p.set_defaults(handler=init)
     sub.add_parser('check', help='recette complète: connexion, rôle, périmètre, catalogue').set_defaults(handler=check)
     sub.add_parser('run', help='lancer le serveur MCP (commande enregistrée dans le client)').set_defaults(handler=run)
+    sub.add_parser('install-dbhub', help='installer DbHub localement (une fois, réseau npm requis)').set_defaults(handler=install_dbhub)
     p = sub.add_parser('config', help='afficher la commande ou le fragment de configuration du client')
     p.add_argument('client', choices=('codex', 'claude-code', 'claude-desktop', 'json'))
     p.set_defaults(handler=config)

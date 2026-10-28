@@ -68,7 +68,11 @@ def role_exists(env, name):
     return psql(env, "SELECT 1 FROM pg_roles WHERE rolname = :'name';", {'name': name}, tuples=True) == '1'
 
 
-def write_bundle(env, name, password, out_dir, public_host, sslmode):
+def expiry_from_days(days):
+    return datetime.now(timezone.utc) + timedelta(days=days) if days else None
+
+
+def write_bundle(env, name, password, out_dir, public_host, sslmode, expires=None):
     host = public_host or os.environ.get('WAREHOUSE_PUBLIC_HOST') or env['PGHOST']
     mode = sslmode or ('disable' if host in LOCAL_HOSTS else 'require')
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -77,6 +81,10 @@ def write_bundle(env, name, password, out_dir, public_host, sslmode):
                'WAREHOUSE_DB_HOST=%s\nWAREHOUSE_DB_PORT=%s\nWAREHOUSE_DB_NAME=%s\nWAREHOUSE_DB_USER=%s\n'
                'WAREHOUSE_DB_PASSWORD=%s\nWAREHOUSE_DB_SSLMODE=%s\n'
                % (name, host, os.environ.get('WAREHOUSE_PUBLIC_PORT', env['PGPORT']), env['PGDATABASE'], name, password, mode))
+    if expires:
+        content += 'WAREHOUSE_DB_EXPIRES=%s\n' % expires
+    content += ('# Pour vérifier l\'identité du serveur (verify-full), ajouter le chemin local de son certificat\n'
+                '# d\'autorité (fichier public remis par l\'administrateur) : WAREHOUSE_DB_SSLROOTCERT=...\n')
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
         handle.write(content)
@@ -138,8 +146,8 @@ def create(args):
     if role_exists(env, args.name):
         raise SystemExit('Le rôle existe déjà: utiliser `rotate` pour un nouveau mot de passe, `grant` pour des droits.')
     password = secrets.token_urlsafe(24)
-    expires = ("VALID UNTIL '%s'" % (datetime.now(timezone.utc) + timedelta(days=args.expires_days)).strftime('%Y-%m-%d %H:%M:%S+00')
-               if args.expires_days else '')
+    expiry_date = expiry_from_days(args.expires_days)
+    expires = "VALID UNTIL '%s'" % expiry_date.strftime('%Y-%m-%d %H:%M:%S+00') if expiry_date else ''
     enroll = ("GRANT warehouse_all_access TO :\"name\"; GRANT warehouse_explore_reader TO :\"name\"; "
               "ALTER ROLE :\"name\" SET default_transaction_read_only = on; "
               "ALTER ROLE :\"name\" SET statement_timeout = '30s'; "
@@ -150,7 +158,8 @@ def create(args):
     if wants_grant(args) and not args.all_access:
         script += grants_sql(args)
     psql(env, script + 'COMMIT;\n', grant_variables(args))
-    path = write_bundle(env, args.name, password, Path(args.out_dir), args.public_host, args.sslmode)
+    path = write_bundle(env, args.name, password, Path(args.out_dir), args.public_host, args.sslmode,
+                        expiry_date.date().isoformat() if expiry_date else None)
     print('Compte %s créé (%s).' % (args.name, 'accès à toutes les données' if args.all_access else
                                     'périmètre restreint' if wants_grant(args) else 'AUCUN droit: refus par défaut'))
     print('Fichier d\'identifiants: %s (lecture réservée au propriétaire).' % path)
@@ -183,9 +192,22 @@ def rotate(args):
     if not role_exists(env, args.name):
         raise SystemExit('Rôle inconnu.')
     password = secrets.token_urlsafe(24)
-    psql(env, "ALTER ROLE :\"name\" LOGIN PASSWORD '%s';\n" % password, {'name': args.name})
-    path = write_bundle(env, args.name, password, Path(args.out_dir), args.public_host, args.sslmode)
-    print('Nouveau mot de passe pour %s: %s (l\'ancien est invalide).' % (args.name, path))
+    expiry_date = expiry_from_days(args.expires_days)
+    if expiry_date:
+        validity = "VALID UNTIL '%s'" % expiry_date.strftime('%Y-%m-%d %H:%M:%S+00')
+        expires = expiry_date.date().isoformat()
+    else:
+        # Keep the account's current validity and report it in the new file.
+        validity = ''
+        current = psql(env, "SELECT coalesce(rolvaliduntil::date::text, '') FROM pg_roles WHERE rolname = :'name';",
+                       {'name': args.name}, tuples=True)
+        expires = current if current and current != 'infinity' else None
+        if expires and expires < datetime.now(timezone.utc).date().isoformat():
+            raise SystemExit('Compte expiré le %s: préciser --expires-days pour sa nouvelle validité.' % expires)
+    psql(env, "ALTER ROLE :\"name\" LOGIN PASSWORD '%s' %s;\n" % (password, validity), {'name': args.name})
+    path = write_bundle(env, args.name, password, Path(args.out_dir), args.public_host, args.sslmode, expires)
+    print('Nouveau mot de passe pour %s: %s (l\'ancien est invalide%s).' % (
+        args.name, path, '; valide jusqu\'au %s' % expires if expires else ''))
     return 0
 
 
@@ -232,7 +254,7 @@ def add_grant_options(parser):
 def add_bundle_options(parser):
     parser.add_argument('--out-dir', default=str(DEFAULT_OUT), help='dossier des fichiers d\'identifiants (hors Git)')
     parser.add_argument('--public-host', help='adresse que la personne utilisera pour joindre la base')
-    parser.add_argument('--sslmode', choices=('disable', 'prefer', 'require'), help='défaut: require hors local')
+    parser.add_argument('--sslmode', choices=('disable', 'prefer', 'require', 'verify-ca', 'verify-full'), help='défaut: require hors local')
 
 
 def main(argv=None):
@@ -251,6 +273,7 @@ def main(argv=None):
     p.set_defaults(handler=grant)
     p = sub.add_parser('rotate', help='nouveau mot de passe et nouveau fichier')
     p.add_argument('name')
+    p.add_argument('--expires-days', type=int, help='nouvelle validité en jours (sinon, la validité actuelle est conservée)')
     add_bundle_options(p)
     p.set_defaults(handler=rotate)
     p = sub.add_parser('offboard', help='révoquer les droits et fermer la connexion')

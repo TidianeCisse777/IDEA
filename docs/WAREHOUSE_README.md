@@ -76,6 +76,7 @@ Modèle : [`example.warehouse.env`](../example.warehouse.env).
 | `WAREHOUSE_NAVIGATOR_PORT` | port de l'interface de navigation (8090) |
 | `WAREHOUSE_PUBLIC_HOST`, `WAREHOUSE_PUBLIC_PORT` | adresse inscrite dans les fichiers d'identifiants |
 | `WAREHOUSE_DB_HOST` `_PORT` `_NAME` `_USER` `_PASSWORD` `_SSLMODE` | côté utilisateur, lus dans son fichier d'identifiants |
+| `WAREHOUSE_DB_SSLROOTCERT`, `WAREHOUSE_DB_EXPIRES` | certificat d'autorité du serveur (`verify-full`) et date d'expiration du mot de passe |
 | `NEOLAB_WAREHOUSE_CREDENTIALS` | chemin du fichier d'identifiants de l'utilisateur (défaut hors dépôt) |
 | `WAREHOUSE_TEST_LIVE=1` | active les tests sur PostgreSQL réel (avec `PGHOST` `PGPORT` `PGUSER` `PGPASSWORD`) |
 
@@ -100,6 +101,6 @@ Validé sur PostgreSQL 16 avec le vrai DbHub 1.5.0 (comptes, filtrage, rotation,
 Performance mesurée sur 4,8 M d'objets (requêtes d'un compte restreint entre 0,4 et 6,8 s,
 [détail](WAREHOUSE_ACCESS_CONTROL.md#performance)).
 **Non validé** : le démarrage `docker compose` lui-même (dont le service `warehouse-context`), PostGIS et le
-navigateur spatial, Codex, Claude Desktop, Windows pour les scripts d'administration et de connexion, TLS distant,
-le volume réel de 15 M d'objets (extrapolé).
+navigateur spatial, Codex, Claude Desktop, Windows pour les scripts d'administration et de connexion, un serveur
+distant réel (TLS vérifié en local seulement), le volume réel de 15 M d'objets (extrapolé).
 Le warehouse n'est **pas FAIR** : identifiant persistant, licence, niveaux d'accès et vocabulaires restent à décider.

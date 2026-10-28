@@ -96,6 +96,35 @@ class ClientConfigurationTests(unittest.TestCase):
         self.assertEqual(toml.count("readonly = true"), 2)  # execute_sql et warehouse_context
         self.assertIn("explore.my_access", toml)
 
+    def test_connection_failures_are_explained_from_real_dbhub_messages(self):
+        # Messages captured from DbHub 1.5.0 against PostgreSQL 16 (password masked by DbHub).
+        cases = {
+            'Failed to connect to PostgreSQL database: error: password authentication failed for user "ines"': "identifiants refusés",
+            'error: pg_hba.conf rejects connection for host "127.0.0.1", user "ines", database "e2e", no encryption': "connexion chiffrée",
+            "Failed to connect to PostgreSQL database: Error: self-signed certificate": "certificat",
+            "Error: connect ECONNREFUSED 127.0.0.1:59999": "injoignable",
+            "Error: getaddrinfo ENOTFOUND hote-inexistant.invalid": "hôte inconnu",
+            "something else entirely": "sans cause reconnue",
+        }
+        for stderr, expected in cases.items():
+            self.assertIn(expected, connect.diagnose(stderr), stderr)
+
+    def test_password_expiry_is_reported_before_and_after(self):
+        from datetime import date
+        today = date(2026, 10, 28)
+        self.assertIsNone(connect.expiry_status({}, today))
+        self.assertIn("expiré le 2026-10-01", connect.expiry_status({"WAREHOUSE_DB_EXPIRES": "2026-10-01"}, today))
+        self.assertIn("5 jour(s)", connect.expiry_status({"WAREHOUSE_DB_EXPIRES": "2026-11-02"}, today))
+        self.assertNotIn("renouvellement", connect.expiry_status({"WAREHOUSE_DB_EXPIRES": "2027-06-01"}, today))
+
+    def test_server_identity_can_be_verified_with_a_ca_file(self):
+        values = dict(VALUES, WAREHOUSE_DB_SSLMODE="verify-full", WAREHOUSE_DB_SSLROOTCERT="/etc/ssl/neolab ca.crt")
+        self.assertTrue(connect.build_dsn(values).endswith("sslmode=verify-full&sslrootcert=%2Fetc%2Fssl%2Fneolab%20ca.crt"))
+        self.assertNotIn("sslrootcert", connect.build_dsn(VALUES))
+
+    def test_local_install_goes_where_the_launcher_looks(self):
+        self.assertEqual(connect.LOCAL_DBHUB.parents[4], ROOT / "data" / "tooling" / "dbhub")
+
     def test_the_dbhub_version_is_pinned(self):
         self.assertRegex(connect.DBHUB_PACKAGE, r"@\d+\.\d+\.\d+$")
 
@@ -146,6 +175,9 @@ class AdminProvisioningTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(remote.stat().st_mode), 0o600)
         local = users.write_bundle(env, "ines", "pw", tmp, None, None)
         self.assertIn("WAREHOUSE_DB_SSLMODE=disable", local.read_text(encoding="utf-8"))
+        self.assertNotIn("WAREHOUSE_DB_EXPIRES", local.read_text(encoding="utf-8"))
+        dated = users.write_bundle(env, "ines", "pw", tmp, None, None, "2027-01-31")
+        self.assertIn("WAREHOUSE_DB_EXPIRES=2027-01-31", dated.read_text(encoding="utf-8"))
 
 
 def dbhub_available():
@@ -206,7 +238,8 @@ class LiveConnectionTests(unittest.TestCase):
 
     def test_zz_provision_connect_check_rotate_and_offboard(self):
         out_dir = self.tmp / "bundles"
-        created = self.run_script("warehouse_user.py", "create", self.user, "--contract", "C1", "--out-dir", str(out_dir))
+        created = self.run_script("warehouse_user.py", "create", self.user, "--contract", "C1", "--expires-days", "10",
+                                  "--out-dir", str(out_dir))
         self.assertEqual(created.returncode, 0, created.stderr)
         bundle = out_dir / f"{self.user}.env"
         password = [l for l in bundle.read_text().splitlines() if l.startswith("WAREHOUSE_DB_PASSWORD=")][0].split("=", 1)[1]
@@ -217,12 +250,22 @@ class LiveConnectionTests(unittest.TestCase):
         self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
         self.assertIn(f"{self.user}", check.stdout)
         self.assertIn("C1", check.stdout)
+        self.assertIn("valide jusqu'au", check.stdout)
         self.assertNotIn(password, check.stdout + check.stderr)
         # The scope really limits what the account reads, through the same MCP path.
         self.assertEqual(self.sql("SELECT count(*) FROM warehouse.access_grant WHERE grantee = '%s' AND revoked_at IS NULL" % self.user), "1")
         wrong = self.run_script("warehouse_connect.py", "check", env=self.client_env(WAREHOUSE_DB_PASSWORD="mauvais"))
         self.assertEqual(wrong.returncode, 1)
+        self.assertIn("identifiants refusés", wrong.stdout)
         self.assertNotIn("mauvais", wrong.stdout + wrong.stderr)
+        # An expired account is not silently extended by a rotation.
+        self.sql("ALTER ROLE %s VALID UNTIL '2020-01-01'" % self.user)
+        refused = self.run_script("warehouse_user.py", "rotate", self.user, "--out-dir", str(out_dir))
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("--expires-days", refused.stderr)
+        renewed = self.run_script("warehouse_user.py", "rotate", self.user, "--expires-days", "30", "--out-dir", str(out_dir))
+        self.assertEqual(renewed.returncode, 0, renewed.stderr)
+        self.assertIn("WAREHOUSE_DB_EXPIRES=", bundle.read_text())
         # Rotation invalidates the old password.
         rotated = self.run_script("warehouse_user.py", "rotate", self.user, "--out-dir", str(out_dir))
         self.assertEqual(rotated.returncode, 0, rotated.stderr)
