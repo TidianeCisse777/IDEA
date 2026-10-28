@@ -26,6 +26,10 @@
 - Documentation : point d'entrée [WAREHOUSE_README.md](docs/WAREHOUSE_README.md), `example.warehouse.env`,
   guide Docker corrigé (trois mots de passe, publication du contexte MCP), dictionnaire MCP régénéré, renvois
   entre guides. Liens relatifs vérifiés.
+- Recette avec agents (Claude Code non interactif, vrai DbHub, deux comptes) : périmètre, catalogue et filtrage
+  corrects, écriture refusée, limites signalées. Règle découverte et documentée : une vue multi-sources exige
+  un droit par source (EcoTaxa et EcoPart pour les vues UVP). Suppression de la branche
+  `claude/warehouse-fair-roles` refusée par la passerelle git (403), à faire dans GitHub.
 - Non vérifié : `docker compose up`, PostGIS et le navigateur spatial, Codex, Claude Desktop, Windows
   pour les nouveaux scripts, TLS distant. Phases non clôturées.
 

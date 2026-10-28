@@ -48,6 +48,21 @@ UPDATE warehouse.access_grant SET revoked_at = now() WHERE id = 12;
 Un droit peut viser un groupe de rôles : `grantee` accepte tout rôle dont la connexion est membre.
 Chaque utilisateur voit son périmètre avec `SELECT * FROM explore.my_access;`.
 
+## Composer des droits sur plusieurs sources
+
+Une vue qui joint plusieurs sources ne renvoie une ligne que si **chaque** côté est lisible. Les vues UVP
+(`explore.uvp_samples`, `uvp_objects`…) partent d'un profil EcoPart et le joignent par jointure interne à son
+échantillon EcoTaxa : un compte limité à `ecotaxa` voit 0 ligne dans ces vues, comme un compte limité à
+`ecopart`. Il faut un droit par source concernée, avec le même contrat si les deux versions le partagent :
+
+```sql
+INSERT INTO warehouse.access_grant (grantee, source_instance, contract, zone_key, year_min, year_max, note) VALUES
+ ('role_a', 'ecotaxa', 'C1', 'lab', 2018, 2022, 'Entente X'),
+ ('role_a', 'ecopart', 'C1', 'lab', 2018, 2022, 'Entente X (profils)');
+```
+
+Un résultat vide dans ces vues n'est donc pas une preuve d'absence de données : vérifier `explore.my_access`.
+
 ## Pièges traités
 
 - **PostgreSQL ignore la RLS pour un superuser et pour le propriétaire d'une table**, et une

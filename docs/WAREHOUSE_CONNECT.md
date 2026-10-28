@@ -51,8 +51,28 @@ Un résultat vide peut signifier **un accès limité**, pas une absence de donn�
 | `Identifiants absents` | refaire l'étape 1 |
 | `DbHub s'est arrêté` | mot de passe expiré ou renouvelé, hôte/port injoignables, ou TLS exigé (`sslmode`) |
 | `périmètre: aucun droit accordé` | compte créé sans droit: demander un accès à l'administrateur |
+| vues UVP vides alors que le périmètre n'est pas vide | il manque le droit sur l'autre source (EcoTaxa **et** EcoPart): voir [composer des droits](WAREHOUSE_ACCESS_CONTROL.md) |
 | `contexte métier` en échec | le contexte n'a pas été publié: l'administrateur relance le déploiement |
 | `Node.js est requis` | installer Node.js 18+ |
+
+### Tester avec un agent
+
+Avec Claude Code installé, un agent peut utiliser le serveur sans rien configurer d'autre que le fichier
+d'identifiants. Le fragment `config json` donne la configuration; l'agent suit seul le parcours de découverte
+(`warehouse_context`, `explore.my_access`, `explore.dataset_catalog`).
+
+```bash
+python scripts/warehouse_connect.py config json > mcp.json      # puis ajouter "env" si le fichier d'identifiants est ailleurs
+claude -p "Quel est mon périmètre d'accès et combien de profils UVP je vois ?" \
+  --mcp-config mcp.json --strict-mcp-config --allowedTools "mcp__neolab-warehouse"
+```
+
+Recette réalisée le 28 octobre 2026 sur une base de test (10 profils UVP, contrats C1 et C2, 2 comptes) :
+le compte restreint (C1, zone `lab`, 2018–2022) a obtenu 2 profils nommés correctement, a vu les 4 jeux du
+catalogue dont 2 hors périmètre, et son essai d'écriture a été refusé. Le compte sans droit a obtenu 0 profil,
+a compris qu'il n'avait aucun droit (`my_access` vide) et a indiqué quoi demander à l'administrateur. Les deux ont
+signalé qu'ils ne pouvaient pas distinguer des données masquées de données absentes, ce qui est voulu : le
+catalogue n'expose pas de compteurs hors périmètre.
 
 ## Pour l'administrateur
 
