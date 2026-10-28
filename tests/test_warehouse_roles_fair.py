@@ -351,6 +351,25 @@ class LivePostgresTests(unittest.TestCase):
         self.assertEqual(self.owner("SELECT count(*) FROM explore.access_audit"), (0, "0"))
         self.owner("DROP VIEW explore.acl_leak")
 
+    def test_zz_privilege_escalation_and_bypass_attempts_are_refused(self):
+        if not hasattr(type(self), "tag"):
+            self.seed_access_data()
+        role = f"acl_scoped_{self.tag}"
+        attempts = (
+            "SET ROLE warehouse_data_owner",
+            "SET ROLE warehouse_all_access",
+            "SET SESSION AUTHORIZATION " + os.environ.get("PGUSER", "neolab"),
+            "SET row_security = off; SELECT count(*) FROM explore.acl_samples",
+            "INSERT INTO warehouse.access_grant (grantee, contract) VALUES ('%s', 'C2')" % role,
+            "CREATE TEMP TABLE leak AS SELECT * FROM warehouse.ecotaxa_sample",
+            "SELECT pg_read_file('/etc/passwd')",
+            "COPY (SELECT 1) TO PROGRAM 'id'",
+            "SELECT count(*) FROM warehouse.ecotaxa_object",
+        )
+        for sql in attempts:
+            code, out = self.run_as(role, sql, "pw")
+            self.assertNotEqual(code, 0, sql)
+
     def test_zz_no_protected_table_is_left_without_row_security(self):
         code, out = self.owner("SELECT count(*) FROM explore.access_audit WHERE problem = 'table without row security'")
         self.assertEqual((code, out), (0, "0"))

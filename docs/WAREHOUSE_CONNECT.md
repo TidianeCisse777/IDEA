@@ -70,7 +70,9 @@ claude -p "Quel est mon périmètre d'accès et combien de profils UVP je vois ?
 Recette réalisée le 28 octobre 2026 sur une base de test (10 profils UVP, contrats C1 et C2, 2 comptes) :
 le compte restreint (C1, zone `lab`, 2018–2022) a obtenu 2 profils nommés correctement, a vu les 4 jeux du
 catalogue dont 2 hors périmètre, et son essai d'écriture a été refusé. Le compte sans droit a obtenu 0 profil,
-a compris qu'il n'avait aucun droit (`my_access` vide) et a indiqué quoi demander à l'administrateur. Les deux ont
+a compris qu'il n'avait aucun droit (`my_access` vide) et a indiqué quoi demander à l'administrateur. Une seconde recette sur des
+valeurs : le compte restreint a retrouvé les 4 abondances moyennes attendues (270,00 / 647,50 / 328,33 / 793,33 ind/m³),
+3 bins, 200 m, et 12 lignes visibles sur 60 en base. Les deux ont
 signalé qu'ils ne pouvaient pas distinguer des données masquées de données absentes, ce qui est voulu : le
 catalogue n'expose pas de compteurs hors périmètre.
 

@@ -84,6 +84,11 @@ Un résultat vide dans ces vues n'est donc pas une preuve d'absence de données 
   d'accès est celui de la version du jeu de données.
 - **Fuites par jointure externe** : une vue qui joint un parent visible à un enfant masqué montre
   l'enfant à `NULL`; aucune valeur masquée n'apparaît, mais la ligne parent reste visible.
+- **Fuites de métadonnées (aucune ligne de données)** : les statistiques de PostgreSQL sont lisibles par tout
+  rôle. `pg_stat_user_tables.n_live_tup` donne le nombre **total** de lignes d'une table, hors périmètre compris,
+  et `EXPLAIN` laisse voir une estimation de lignes. Les noms des tables et colonnes sont visibles. Aucun contenu
+  ni valeur n'est accessible. Ces vues système ne peuvent pas être restreintes pour un seul rôle sans modifier le
+  catalogue du serveur; si les effectifs globaux sont sensibles, utiliser une base dédiée aux comptes concernés.
 - **Performance** : mesurée seulement sur des volumes de test. Les rôles « tout voir » court-circuitent
   le filtre; l'effet sur 15 millions d'objets pour un rôle restreint n'est pas mesuré.
 - Les rôles de groupe sont **globaux au serveur PostgreSQL**; les droits (`access_grant`) sont propres à chaque base.

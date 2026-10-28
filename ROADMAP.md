@@ -30,6 +30,12 @@
   corrects, écriture refusée, limites signalées. Règle découverte et documentée : une vue multi-sources exige
   un droit par source (EcoTaxa et EcoPart pour les vues UVP). Suppression de la branche
   `claude/warehouse-fair-roles` refusée par la passerelle git (403), à faire dans GitHub.
+- Recette sur valeurs avec un agent (données fictives) : abondances par taxon recalculées par l'agent, égales à la
+  vérité terrain (4 valeurs, 12 lignes visibles sur 60). Contrôle d'évasion fait directement en SQL avec le compte
+  restreint : 18 tentatives (tables brutes, `SET ROLE`, `row_security = off`, écriture des droits, fichier serveur,
+  `COPY PROGRAM`…) refusées par la base; ajouté aux tests. Fuites de métadonnées sans donnée relevées et
+  documentées : effectifs globaux (`pg_stat`), estimations `EXPLAIN`, noms de tables. Un agent a refusé de mener
+  lui-même la mission d'évasion; le contrôle a été fait par le développeur.
 - Non vérifié : `docker compose up`, PostGIS et le navigateur spatial, Codex, Claude Desktop, Windows
   pour les nouveaux scripts, TLS distant. Phases non clôturées.
 
