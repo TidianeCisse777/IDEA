@@ -1,0 +1,34 @@
+# Configuration DbHub pour un compte personnel (Codex, Claude, tout client MCP).
+# Le DSN est construit par scripts/warehouse_connect.py à partir du fichier
+# d'identifiants local; aucun secret n'est écrit ici ni passé en argument.
+[[sources]]
+id = "neolab"
+description = "Warehouse NeoLab en lecture seule. Votre périmètre dépend de votre compte: lire explore.my_access, puis warehouse_context(topic=overview)."
+dsn = "${WAREHOUSE_DSN}"
+search_path = "explore"
+query_timeout = 30
+connection_timeout = 5
+
+[[tools]]
+name = "execute_sql"
+source = "neolab"
+readonly = true
+max_rows = 1000
+
+[[tools]]
+name = "search_objects"
+source = "neolab"
+
+[[tools]]
+name = "warehouse_context"
+source = "neolab"
+description = "Lire en premier topic=overview pour le contexte métier NeoLab, puis topic=nom_de_vue pour grain, clés, limites et exemple SQL. Votre périmètre de lecture (contrats, zones, années) est dans explore.my_access; les jeux de données décrits, même hors de votre périmètre, sont dans explore.dataset_catalog; la complétude FAIR dans explore.fair_readiness. Avant un graphique, lire topic=graphs. topic=all donne toutes les fiches. Un catalogue existant ne prouve pas la présence de données, et un résultat vide peut signifier un accès limité."
+readonly = true
+max_rows = 100
+statement = "SELECT topic,purpose,grain,relations,caveats,sql_example FROM explore.warehouse_context WHERE topic=COALESCE($1::text,'overview') OR $1::text='all' ORDER BY topic"
+
+[[tools.parameters]]
+name = "topic"
+type = "string"
+description = "overview (défaut), graphs (règles de graphiques), all, ou nom de vue sans préfixe explore."
+required = false

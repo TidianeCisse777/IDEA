@@ -72,6 +72,18 @@ def deploy(env, dry_run):
             psql(env, '-c', 'CREATE EXTENSION IF NOT EXISTS postgis')
 
 
+def publish_context(env):
+    """Publier les fiches MCP (warehouse_context, dictionnaire) sans toucher au dépôt."""
+    result = subprocess.run([sys.executable, str(ROOT / 'scripts' / 'publish_warehouse_context.py'), '--no-doc'],
+                            env=env, text=True, capture_output=True)
+    if result.returncode:
+        print('Contexte MCP non publié (installer psycopg[binary], puis relancer): '
+              + (result.stderr.strip().splitlines() or ['erreur inconnue'])[-1][:200])
+        return False
+    print(result.stdout.strip())
+    return True
+
+
 def check(env):
     rows = query(env, "SELECT dataset_version_id, source_instance||'/'||dataset_key||'/'||version_key, "
                       "coalesce(array_to_string(missing_criteria, ','), '') "
@@ -98,6 +110,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     env = connection_env()
     deploy(env, args.dry_run)
+    if not args.dry_run:
+        publish_context(env)
     return check(env) if args.check and not args.dry_run else 0
 
 

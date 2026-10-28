@@ -30,7 +30,7 @@ nécessaire pour que le filtre s'applique), `warehouse_all_access` (voit toutes 
 `warehouse_explore_reader` (lecture de `explore`, réservé aux rôles restreints).
 
 **Rôles restreints.** Un rôle supplémentaire (par exemple une équipe ou un partenaire) ne lit que
-certains contrats, zones et années : voir [contrôle d'accès](WAREHOUSE_ACCESS_CONTROL.md).
+certains contrats, zones et années : voir [contrôle d'accès](WAREHOUSE_ACCESS_CONTROL.md). Création des comptes et branchement de DbHub : [guide de connexion](WAREHOUSE_CONNECT.md).
 Sans droit explicite il ne voit aucune ligne.
 
 Les deux rôles de lecture sont `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION

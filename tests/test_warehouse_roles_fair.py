@@ -133,7 +133,15 @@ class LivePostgresTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        # Roles are cluster-wide: release what they own here, then drop them.
+        tag = getattr(cls, "tag", None)
+        if tag:
+            for name in ("scoped", "empty"):
+                cls.admin(cls.db, f"DROP OWNED BY acl_{name}_{tag}")
         cls.admin("postgres", f"DROP DATABASE IF EXISTS {cls.db} WITH (FORCE)")
+        if tag:
+            for name in ("scoped", "empty"):
+                cls.admin("postgres", f"DROP ROLE IF EXISTS acl_{name}_{tag}")
 
     @classmethod
     def admin(cls, db, sql):

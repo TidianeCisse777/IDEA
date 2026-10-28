@@ -81,7 +81,7 @@ Le script est rejouable : une base existante ne reçoit que les migrations
 additives et les rôles. `--dry-run` liste les étapes, `--check` rapporte les
 critères FAIR manquants (code de sortie 2 s'il en manque). La base doit exister et
 `psql` être disponible; PostGIS est requis seulement par le navigateur spatial.
-Détails : [rôles](WAREHOUSE_ROLES.md), [exigences FAIR](WAREHOUSE_FAIR_REQUIREMENTS.md).
+Le script publie aussi le contexte MCP (nécessite `psycopg[binary]`). Détails : [rôles](WAREHOUSE_ROLES.md), [exigences FAIR](WAREHOUSE_FAIR_REQUIREMENTS.md), [brancher DbHub](WAREHOUSE_CONNECT.md).
 
 Le fichier `.env.warehouse` contient maintenant aussi `WAREHOUSE_READER_PASSWORD`
 et `WAREHOUSE_NAVIGATOR_PASSWORD`. Les rôles ne sont créés qu'à la première

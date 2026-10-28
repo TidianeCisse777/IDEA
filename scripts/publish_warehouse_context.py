@@ -21,7 +21,10 @@ OVERVIEW = (
     'de ligne sont différents. Garder source, versions, politiques d’annotation, stades et '
     'dénominateurs explicites. Ne pas sommer les volumes répétés par taxon ou les '
     'concentrations FILET répétées par bin. Les fichiers sources bruts ne sont pas modifiés. '
-    'Rôle MCP warehouse_reader : SELECT explore uniquement, sans écriture ni DDL, délai 30 s. '
+    'Accès MCP : SELECT explore uniquement, sans écriture ni DDL, délai 30 s. Le périmètre de chaque '
+    'compte (contrats, zones, années) est dans explore.my_access; un résultat vide peut signifier un '
+    'accès limité, pas une absence de données. explore.dataset_catalog décrit toutes les versions, même '
+    'hors périmètre, et explore.fair_readiness mesure la complétude des métadonnées. '
     'Le navigateur sur 127.0.0.1:8090 et le MCP sont deux accès distincts. '
     'Le filtre spatial du navigateur réduit les paires déjà enregistrées, sans changer leur statut. '
     'Les confirmations restent nécessaires avant téléchargement/calcul lourd. '
@@ -63,6 +66,15 @@ def publish(conn):
             ('dataset_versions', 'Inventaire vivant des versions enregistrées, sans URI de fichier local.',
              'Une version identifiée par source_instance, dataset_key et version_key.',
              'SELECT * FROM explore.dataset_versions LIMIT 20;'),
+            ('my_access', 'Périmètre de lecture du compte connecté: source, contrat, zone et années autorisés.',
+             'Une ligne par droit actif du compte; une ligne « all data » pour un accès sans filtre.',
+             'SELECT * FROM explore.my_access;'),
+            ('dataset_catalog', 'Catalogue FAIR des versions de jeux de données: identifiant, licence, accès, couverture, méthode. Lisible même pour les données hors périmètre.',
+             'Une ligne par version, y compris retirée.',
+             'SELECT dataset_version_id, title, access_level, license, publication_status FROM explore.dataset_catalog LIMIT 20;'),
+            ('fair_readiness', 'Complétude FAIR des métadonnées par version (critères manquants listés).',
+             'Une ligne par version; mesure le catalogue, pas la validité scientifique.',
+             'SELECT dataset_key, version_key, missing_criteria FROM explore.fair_readiness;'),
             ('warehouse_dictionary', 'Colonnes réelles, types SQL, commentaires métier et définition SQL des vues.',
              'Une colonne de vue explore; répète sa définition SQL par colonne.',
              "SELECT * FROM explore.warehouse_dictionary WHERE view_name='uvp_objects';"),
@@ -104,7 +116,7 @@ def publish(conn):
             for column, description in cols.items():
                 conn.execute(sql.SQL('COMMENT ON COLUMN explore.{}.{} IS {}').format(
                     sql.Identifier(name), sql.Identifier(column), sql.Literal(description)))
-        for role in ('warehouse_reader', 'warehouse_navigator'):
+        for role in ('warehouse_reader', 'warehouse_navigator', 'warehouse_explore_reader'):
             if conn.execute('SELECT 1 FROM pg_roles WHERE rolname=%s', (role,)).fetchone():
                 conn.execute(sql.SQL('GRANT SELECT ON explore.warehouse_context,explore.warehouse_dictionary,explore.dataset_versions TO {}').format(sql.Identifier(role)))
     return scientific, descriptions
@@ -131,12 +143,25 @@ def markdown(columns, descriptions):
     return '\n'.join(lines)
 
 
-if __name__ == '__main__':
+def connect(psycopg):
+    """Variables du déploiement si présentes, sinon l'installation Windows portable."""
     import json
-    import psycopg
+    import os
+    if os.environ.get('WAREHOUSE_POSTGRES_PASSWORD'):
+        return psycopg.connect(host=os.environ.get('WAREHOUSE_POSTGRES_HOST', '127.0.0.1'),
+                               port=int(os.environ.get('WAREHOUSE_POSTGRES_PORT', '55432')),
+                               dbname=os.environ.get('WAREHOUSE_POSTGRES_DB', 'neolab_warehouse'),
+                               user=os.environ.get('WAREHOUSE_POSTGRES_USER', 'neolab'),
+                               password=os.environ['WAREHOUSE_POSTGRES_PASSWORD'])
     passwords = json.loads((ROOT / 'data/local_warehouse/credentials.json').read_text(encoding='utf-8'))
-    with psycopg.connect(host='127.0.0.1', port=55432, dbname='neolab_warehouse',
-                         user='neolab', password=passwords['owner']) as conn:
+    return psycopg.connect(host='127.0.0.1', port=55432, dbname='neolab_warehouse',
+                           user='neolab', password=passwords['owner'])
+
+
+if __name__ == '__main__':
+    import psycopg
+    with connect(psycopg) as conn:
         columns, descriptions = publish(conn)
-    (ROOT / 'docs/WAREHOUSE_MCP_DICTIONARY.md').write_text(markdown(columns, descriptions), encoding='utf-8')
+    if '--no-doc' not in sys.argv:
+        (ROOT / 'docs/WAREHOUSE_MCP_DICTIONARY.md').write_text(markdown(columns, descriptions), encoding='utf-8')
     print(f'Contexte publié : {len(VIEWS)} vues et {len(descriptions)} colonnes scientifiques documentées.')
