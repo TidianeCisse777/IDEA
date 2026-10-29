@@ -10,15 +10,29 @@ from dotenv import load_dotenv
 BASE='https://ecotaxa.obs-vlfr.fr/api'; PAGE=5000
 
 def psql(db, sql, stdin=None):
-    r=subprocess.run(['psql','-X','-v','ON_ERROR_STOP=1','-At','-F','\t',db,'-c',sql],input=stdin,text=True,capture_output=True)
+    # A list runs as successive -c in one session: psql refuses COPY FROM STDIN
+    # inside a single multi-statement -c ("unexpected COPY_IN result").
+    commands=[part for item in ([sql] if isinstance(sql,str) else sql) for part in ('-c',item)]
+    r=subprocess.run(['psql','-X','-v','ON_ERROR_STOP=1','-At','-F','\t',db,*commands],input=stdin,text=True,capture_output=True)
     if r.returncode: raise RuntimeError(r.stderr.strip() or r.stdout.strip())
     return r.stdout
+
+def default_database():
+    '''Same connection as the other warehouse scripts: WAREHOUSE_DATABASE_URL, or the
+    WAREHOUSE_POSTGRES_* variables (password through PGPASSWORD, never in argv).'''
+    if os.getenv('WAREHOUSE_DATABASE_URL'):
+        return os.environ['WAREHOUSE_DATABASE_URL']
+    if os.getenv('WAREHOUSE_POSTGRES_PASSWORD'):
+        os.environ.setdefault('PGPASSWORD', os.environ['WAREHOUSE_POSTGRES_PASSWORD'])
+    return 'host=%s port=%s dbname=%s user=%s' % (
+        os.getenv('WAREHOUSE_POSTGRES_HOST', 'localhost'), os.getenv('WAREHOUSE_POSTGRES_PORT', '55432'),
+        os.getenv('WAREHOUSE_POSTGRES_DB', 'neolab_warehouse'), os.getenv('WAREHOUSE_POSTGRES_USER', 'neolab'))
 
 def login():
     s=requests.Session(); r=s.post(BASE+'/login',json={'username':os.environ['ECOTAXA_USERNAME'],'password':os.environ['ECOTAXA_PASSWORD']},timeout=30); r.raise_for_status(); p=r.json(); t=p.get('token') if isinstance(p,dict) else p; s.headers['Authorization']=f'Bearer {t}'; return s
 
 def load_project(args,s,pid):
-    db=args.database_url or 'postgresql://localhost/postgres'; total=int(psql(db,f'SELECT object_count::bigint FROM warehouse.ecotaxa_project WHERE project_id={pid}').strip() or 0)
+    db=args.database_url or default_database(); total=int(psql(db,f'SELECT object_count::bigint FROM warehouse.ecotaxa_project WHERE project_id={pid}').strip() or 0)
     mapping={line.split('\t')[0]:int(line.split('\t')[1]) for line in psql(db,f"SELECT sample_id,id FROM warehouse.ecotaxa_sample WHERE project_id={pid}").splitlines() if '\t' in line}
     if not mapping: print(f'[objects] projet {pid}: aucun sample parent, ignoré'); return 0
     fields='obj.orig_id,obj.objdate,obj.depth_min,obj.depth_max,obj.latitude,obj.longitude,txo.display_name'
@@ -41,7 +55,7 @@ def load_project(args,s,pid):
               if i>=len(ids) or i>=len(samples) or str(samples[i]) not in mapping: continue
               vals=[mapping[str(samples[i])],str(ids[i]),str(acqs[i]) if i<len(acqs) else None,None,None,row[6] if len(row)>6 else None,None,row[1] if len(row)>1 else None,row[2] if len(row)>2 else None,row[3] if len(row)>3 else None,row[4] if len(row)>4 else None,row[5] if len(row)>5 else None]
               w.writerow(['\\N' if v is None or v=='' else v for v in vals])
-          sql="""CREATE TEMP TABLE stage_ecotaxa_object(sample_id bigint,object_id text,acquisition_id text,process_id text,category_id text,category_name text,annotation_status text,object_datetime timestamptz,depth_min_m double precision,depth_max_m double precision,object_lat double precision,object_lon double precision) ON COMMIT DROP; COPY stage_ecotaxa_object FROM STDIN WITH (FORMAT csv,DELIMITER E'\\t',NULL '\\N'); INSERT INTO warehouse.ecotaxa_object(sample_id,object_id,acquisition_id,process_id,category_id,category_name,annotation_status,object_datetime,depth_min_m,depth_max_m,object_lat,object_lon) SELECT sample_id,object_id,acquisition_id,process_id,category_id,category_name,annotation_status,object_datetime,depth_min_m,depth_max_m,object_lat,object_lon FROM stage_ecotaxa_object ON CONFLICT (sample_id,object_id) DO UPDATE SET acquisition_id=EXCLUDED.acquisition_id,category_name=EXCLUDED.category_name,object_datetime=EXCLUDED.object_datetime,depth_min_m=EXCLUDED.depth_min_m,depth_max_m=EXCLUDED.depth_max_m,object_lat=EXCLUDED.object_lat,object_lon=EXCLUDED.object_lon;"""
+          sql=["""CREATE TEMP TABLE stage_ecotaxa_object(sample_id bigint,object_id text,acquisition_id text,process_id text,category_id text,category_name text,annotation_status text,object_datetime timestamptz,depth_min_m double precision,depth_max_m double precision,object_lat double precision,object_lon double precision)""", """COPY stage_ecotaxa_object FROM STDIN WITH (FORMAT csv,DELIMITER E'\\t',NULL '\\N')""", """INSERT INTO warehouse.ecotaxa_object(sample_id,object_id,acquisition_id,process_id,category_id,category_name,annotation_status,object_datetime,depth_min_m,depth_max_m,object_lat,object_lon) SELECT sample_id,object_id,acquisition_id,process_id,category_id,category_name,annotation_status,object_datetime,depth_min_m,depth_max_m,object_lat,object_lon FROM stage_ecotaxa_object ON CONFLICT (sample_id,object_id) DO UPDATE SET acquisition_id=EXCLUDED.acquisition_id,category_name=EXCLUDED.category_name,object_datetime=EXCLUDED.object_datetime,depth_min_m=EXCLUDED.depth_min_m,depth_max_m=EXCLUDED.depth_max_m,object_lat=EXCLUDED.object_lat,object_lon=EXCLUDED.object_lon"""]
           psql(db,sql,stdin=buf.getvalue()); loaded += len(ids); offset += len(ids); states[str(pid)]=offset; state.parent.mkdir(parents=True,exist_ok=True); state.write_text(json.dumps(states,indent=2))
           print(f'[objects] projet {pid}: {min(offset,total)}/{total} objets',flush=True)
     if loaded or offset>=total:
@@ -51,7 +65,7 @@ def load_project(args,s,pid):
 def main():
     ap=argparse.ArgumentParser(); ap.add_argument('--project-id',type=int); ap.add_argument('--all-projects',action='store_true'); ap.add_argument('--database-url'); ap.add_argument('--state-file',default='data/warehouse_staging/ecotaxa_objects_state.json'); args=ap.parse_args()
     if bool(args.project_id)==bool(args.all_projects): raise SystemExit('indiquer exactement --project-id ou --all-projects')
-    root=Path(__file__).resolve().parents[1]; load_dotenv(root/'.env',override=True); s=login(); db=args.database_url or 'postgresql://localhost/postgres'; ids=[args.project_id]
+    root=Path(__file__).resolve().parents[1]; load_dotenv(root/'.env',override=True); load_dotenv(root/'.env.warehouse'); s=login(); db=args.database_url or default_database(); ids=[args.project_id]
     if args.all_projects: ids=[int(x) for x in psql(db,'SELECT project_id FROM warehouse.ecotaxa_project ORDER BY project_id').split()]
     total=0
     for n,pid in enumerate(ids,1): print(f'[objects] progression projets {n}/{len(ids)}',flush=True); total+=load_project(args,s,pid)

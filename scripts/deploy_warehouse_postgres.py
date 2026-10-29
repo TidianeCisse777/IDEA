@@ -98,11 +98,24 @@ def deploy(env, dry_run):
     if not dry_run:
         psql(env, '-1', '-v', 'release=' + release_version(), '-v', 'method=deploy-script',
              '-v', 'migrations=' + json.dumps(release_manifest()), '-f', str(DOCS / RELEASE_FILE))
-    if fresh and not dry_run:
-        if query(env, "SELECT count(*) FROM pg_available_extensions WHERE name = 'postgis'") == '0':
-            print('PostGIS indisponible: le navigateur spatial sera limité; le schéma reste utilisable.')
-        else:
-            psql(env, '-c', 'CREATE EXTENSION IF NOT EXISTS postgis')
+    if not dry_run:
+        ensure_postgis(env)
+
+
+def ensure_postgis(env):
+    """PostGIS serves the navigator's spatial filter only; the schema does not need it."""
+    if query(env, "SELECT count(*) FROM pg_extension WHERE extname = 'postgis'") != '0':
+        return
+    if query(env, "SELECT count(*) FROM pg_available_extensions WHERE name = 'postgis'") == '0':
+        print('PostGIS non installé sur ce serveur: le filtre spatial du navigateur sera indisponible; '
+              'le schéma, les accès et DbHub ne sont pas concernés.')
+        return
+    # PostGIS is not a trusted extension: a non-superuser owner cannot create it.
+    result = subprocess.run(['psql', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-c', 'CREATE EXTENSION IF NOT EXISTS postgis'],
+                            env=env, text=True, capture_output=True)
+    if result.returncode:
+        print('PostGIS disponible mais non activé (superuser requis). Demander à l\'administrateur du serveur: '
+              'CREATE EXTENSION postgis; dans la base %s. Le reste du déploiement est appliqué.' % env['PGDATABASE'])
 
 
 def publish_context(env):
@@ -173,6 +186,9 @@ def readiness(env):
     checks.append(('contrats FILET cohérents avec la version', not mixed, 'aucun écart' if not mixed else
                    'analyses sous un autre contrat que leur version: ' + mixed[:200]
                    + ' (charger une version par contrat ou renseigner access_contract)', False))
+    postgis = exists("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'postgis')")
+    checks.append(('PostGIS (filtre spatial du navigateur)', postgis, 'actif' if postgis
+                   else 'absent: CREATE EXTENSION postgis; par un superuser (le reste fonctionne sans)', False))
     trigger = exists("SELECT EXISTS (SELECT 1 FROM pg_event_trigger WHERE evtname = 'warehouse_adopt_explore_views')")
     checks.append(('adoption automatique des nouvelles vues', trigger, 'déclencheur actif' if trigger
                    else 'absent (déploiement sans superuser): rejouer après toute nouvelle vue explore', False))

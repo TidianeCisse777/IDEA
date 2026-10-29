@@ -9,6 +9,7 @@ Credentials are read from the local .env; never written to the manifest.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import hashlib
 import io
@@ -296,6 +297,22 @@ class Client:
         raise TimeoutError(f"Export non terminé: {state['task']}")
 
 
+@contextlib.contextmanager
+def staged_copy(conn, table: str, columns: str):
+    """COPY into a temporary table, then INSERT into ``warehouse.<table>``.
+
+    PostgreSQL refuses COPY FROM on a table under row-level security unless the
+    loader bypasses it (superuser). The INSERT goes through the policies, which
+    let the owner (member of warehouse_all_access) write.
+    """
+    stage = f"stage_{table}"
+    conn.execute(f"CREATE TEMP TABLE {stage} AS SELECT {columns} FROM warehouse.{table} WITH NO DATA")
+    with conn.cursor().copy(f"COPY {stage} ({columns}) FROM STDIN") as copy:
+        yield copy
+    conn.execute(f"INSERT INTO warehouse.{table} ({columns}) SELECT {columns} FROM {stage}")
+    conn.execute(f"DROP TABLE {stage}")
+
+
 def connection() -> psycopg.Connection:
     load_dotenv(ROOT / ".env")
     load_dotenv(ROOT / ".env.warehouse")
@@ -304,10 +321,10 @@ def connection() -> psycopg.Connection:
             os.environ["WAREHOUSE_DATABASE_URL"], row_factory=dict_row
         )
     return psycopg.connect(
-        host="localhost",
-        port=55432,
-        user="neolab",
-        dbname="neolab_warehouse",
+        host=os.getenv("WAREHOUSE_POSTGRES_HOST", "localhost"),
+        port=int(os.getenv("WAREHOUSE_POSTGRES_PORT", "55432")),
+        user=os.getenv("WAREHOUSE_POSTGRES_USER", "neolab"),
+        dbname=os.getenv("WAREHOUSE_POSTGRES_DB", "neolab_warehouse"),
         password=os.getenv("WAREHOUSE_POSTGRES_PASSWORD"),
         row_factory=dict_row,
     )
@@ -517,8 +534,8 @@ def load_project(
         members, duplicate_members = archive_tables(path)
         auxiliary_count = 0
         with (
-            conn.cursor().copy("""COPY warehouse.ecopart_auxiliary_row
-            (dataset_version_id,member_name,row_number,content_kind,profile_name,source_row_json) FROM STDIN""") as copy
+            staged_copy(conn, "ecopart_auxiliary_row",
+                        "dataset_version_id,member_name,row_number,content_kind,profile_name,source_row_json") as copy
         ):
             for name, data in members.items():
                 kind = (
@@ -578,8 +595,7 @@ def load_project(
                 ),
             ).fetchone()["id"]
         with (
-            conn.cursor().copy("""COPY warehouse.uvp_bin
-                (profile_id,source_bin_key,depth_min_m,depth_max_m,sampled_volume_l) FROM STDIN""") as copy
+            staged_copy(conn, "uvp_bin", "profile_id,source_bin_key,depth_min_m,depth_max_m,sampled_volume_l") as copy
         ):
             for row in rows:
                 copy.write_row(
@@ -597,9 +613,7 @@ def load_project(
             (version,),
         ).fetchall()
         bin_ids = {(b["profile_id"], b["depth_min_m"]): b["id"] for b in bins}
-        with conn.cursor().copy(
-            "COPY warehouse.ecopart_bin_source (bin_id,source_depth_m,source_row_json) FROM STDIN"
-        ) as copy:
+        with staged_copy(conn, "ecopart_bin_source", "bin_id,source_depth_m,source_row_json") as copy:
             for row in rows:
                 copy.write_row(
                     (
@@ -610,8 +624,8 @@ def load_project(
                 )
         n_particles = 0
         with (
-            conn.cursor().copy("""COPY warehouse.uvp_particle
-            (bin_id,size_class_key,size_min_um,size_max_um,size_definition,supplied_concentration,concentration_unit) FROM STDIN""") as copy
+            staged_copy(conn, "uvp_particle", "bin_id,size_class_key,size_min_um,size_max_um,size_definition,"
+                        "supplied_concentration,concentration_unit") as copy
         ):
             for row in rows:
                 for value in particle_values(row["raw"]):
@@ -619,9 +633,7 @@ def load_project(
                         (bin_ids[profile_ids[row["profile"]], row["depth_min"]], *value)
                     )
                     n_particles += 1
-        with conn.cursor().copy(
-            "COPY warehouse.uvp_ecotaxa (uvp_profile_id,ecotaxa_sample_id,source_evidence) FROM STDIN"
-        ) as copy:
+        with staged_copy(conn, "uvp_ecotaxa", "uvp_profile_id,ecotaxa_sample_id,source_evidence") as copy:
             for link in links:
                 proof = {
                     "project_resolution": evidence[

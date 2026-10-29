@@ -13,7 +13,10 @@ VARS={'PRES':('pression / profondeur','dbar'),'TE90':('température','degC'),'PS
 def psql(db,sql,stdin=None):
  env=os.environ.copy();
  if os.getenv('WAREHOUSE_POSTGRES_PASSWORD'): env['PGPASSWORD']=os.getenv('WAREHOUSE_POSTGRES_PASSWORD')
- r=subprocess.run(['psql','-X','-v','ON_ERROR_STOP=1','-At','-F','\t',db,'-c',sql],input=stdin,text=True,capture_output=True,env=env)
+ # A list runs as successive -c in one session: psql refuses COPY FROM STDIN
+ # inside a single multi-statement -c ("unexpected COPY_IN result").
+ commands=[part for item in ([sql] if isinstance(sql,str) else sql) for part in ('-c',item)]
+ r=subprocess.run(['psql','-X','-v','ON_ERROR_STOP=1','-At','-F','\t',db,*commands],input=stdin,text=True,capture_output=True,env=env)
  if r.returncode: raise RuntimeError(r.stderr.strip() or r.stdout.strip())
  return r.stdout
 
@@ -95,7 +98,7 @@ def main():
      val=row.get(code); 
      if pd.isna(val): continue
      w.writerow([pid,f'{filename}:{idx}:{code}',str(idx),('\\N' if pd.isna(pressure) else pressure),('\\N' if code!='PRES' or pd.isna(pressure) else pressure),code,VARS[code][0],code,str(float(val)),VARS[code][1],'\\N'])
-  sql="""CREATE TEMP TABLE stage_ctd(profile_id bigint,source_row_key text,scan_key text,depth_m double precision,pressure_dbar double precision,variable_key text,variable_definition text,sensor_channel text,value double precision,unit text,qc text) ON COMMIT DROP; COPY stage_ctd FROM STDIN WITH (FORMAT csv,DELIMITER E'\\t',NULL '\\N'); INSERT INTO warehouse.ctd_measurement(profile_id,source_row_key,scan_key,depth_m,pressure_dbar,variable_key,variable_definition,sensor_channel,value,unit,qc) SELECT profile_id,source_row_key,scan_key,depth_m,pressure_dbar,variable_key,variable_definition,sensor_channel,value,unit,qc FROM stage_ctd ON CONFLICT(profile_id,source_row_key) DO UPDATE SET value=EXCLUDED.value,depth_m=EXCLUDED.depth_m,pressure_dbar=EXCLUDED.pressure_dbar;"""
+  sql=["""CREATE TEMP TABLE stage_ctd(profile_id bigint,source_row_key text,scan_key text,depth_m double precision,pressure_dbar double precision,variable_key text,variable_definition text,sensor_channel text,value double precision,unit text,qc text)""", """COPY stage_ctd FROM STDIN WITH (FORMAT csv,DELIMITER E'\\t',NULL '\\N')""", """INSERT INTO warehouse.ctd_measurement(profile_id,source_row_key,scan_key,depth_m,pressure_dbar,variable_key,variable_definition,sensor_channel,value,unit,qc) SELECT profile_id,source_row_key,scan_key,depth_m,pressure_dbar,variable_key,variable_definition,sensor_channel,value,unit,qc FROM stage_ctd ON CONFLICT(profile_id,source_row_key) DO UPDATE SET value=EXCLUDED.value,depth_m=EXCLUDED.depth_m,pressure_dbar=EXCLUDED.pressure_dbar"""]
   psql(db,sql,stdin=buf.getvalue()); total_profiles+=len(profiles); total_rows+=len(frame); print(f'[ctd] {min(start+len(batch),len(names))}/{len(names)} profils, {len(frame)} mesures lignes',flush=True)
  # Join EcoTaxa samples to CTD profiles by exact normalized filename.
  for sample in samples:

@@ -46,6 +46,13 @@ class RolesContractTests(unittest.TestCase):
         self.assertIn("warehouse_navigator", navigator)
         self.assertNotIn("WAREHOUSE_POSTGRES_USER:-neolab", navigator)
 
+    def test_compose_publishes_ports_on_the_local_machine_only_by_default(self):
+        import yaml
+        services = yaml.safe_load(COMPOSE)["services"]
+        for name in ("neolab-warehouse-db", "warehouse-navigator"):
+            for port in services[name]["ports"]:
+                self.assertTrue(port.startswith("${WAREHOUSE_BIND_ADDRESS:-127.0.0.1}:"), (name, port))
+
     def test_compose_initializes_every_ddl_then_roles_in_order(self):
         order = [m for m in re.findall(r"/docker-entrypoint-initdb\.d/(\d+_[\w.]+)", COMPOSE)]
         self.assertEqual(order, sorted(order))
@@ -570,7 +577,7 @@ class LiveNonSuperuserOwnerTests(unittest.TestCase):
     def test_replays_never_make_the_owner_read_only(self):
         first = self.deploy()
         self.assertEqual(first.returncode, 0, first.stderr[-400:])
-        env = dict(self.admin_env, PGUSER=self.owner_role)
+        env = dict(self.admin_env, PGUSER=self.owner_role, PGPASSWORD="o")
         subprocess.run(["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", self.db, "-c",
                         f"CREATE ROLE {self.reader} LOGIN PASSWORD 'pw'", "-c",
                         f"SELECT warehouse.enroll_access_role('{self.reader}')"], env=env, check=True, capture_output=True)
@@ -591,7 +598,7 @@ class LiveNonSuperuserOwnerTests(unittest.TestCase):
                                env=env, capture_output=True, text=True)
         self.assertEqual((write.returncode, write.stdout.splitlines()[:1]), (0, ["1"]), write.stderr)
         reader = subprocess.run(["psql", "-X", "-At", "-d", self.db, "-U", self.reader, "-c", "SHOW enable_mergejoin"],
-                                env=env, capture_output=True, text=True)
+                                env=dict(env, PGPASSWORD="pw"), capture_output=True, text=True)
         self.assertEqual(reader.stdout.strip(), "off", reader.stderr)
 
 
@@ -657,8 +664,8 @@ class LiveDockerInitSimulationTests(unittest.TestCase):
                                  "FROM explore.warehouse_release"], env=env, capture_output=True, text=True).stdout.strip()
         self.assertEqual(method, f"docker-init:{len(initdb) - 1 + 2}")
         navigator = subprocess.run(["psql", "-X", "-At", "-d", db, "-U", "warehouse_navigator", "-c",
-                                    "SELECT count(*) >= 0 FROM warehouse.dataset_version"], env=env,
-                                   capture_output=True, text=True)
+                                    "SELECT count(*) >= 0 FROM warehouse.dataset_version"],
+                                   env=dict(env, PGPASSWORD="navigator-pw"), capture_output=True, text=True)
         self.assertEqual(navigator.stdout.strip(), "t", navigator.stderr)
 
 

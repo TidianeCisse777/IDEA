@@ -55,7 +55,9 @@ Créer d'abord le compte administrateur, puis passer `ENABLE_SIGNUP=false`.
 ## Mettre à jour et revenir en arrière
 
 1. Sauvegarder : `pg_dump -Fc` (voir [Déploiement](WAREHOUSE_DOCKER.md#sauvegarde-et-restauration)).
-2. Récupérer la nouvelle version du dépôt, puis `python scripts/deploy_warehouse_postgres.py --check`.
+2. Récupérer la nouvelle version du dépôt, puis `python scripts/deploy_warehouse_postgres.py --check`
+   **avec le même `.env.warehouse`** que les conteneurs : le rejeu remet les mots de passe des rôles de service, et
+   un autre mot de passe couperait le navigateur et `warehouse_reader` (vérifié).
    Les migrations sont additives et rejouables; une base existante n'est jamais réécrite.
 3. Comparer `explore.warehouse_release` avant et après (version, empreintes).
 4. Retour arrière : restaurer la sauvegarde. Les migrations n'ont pas de script inverse.
@@ -86,16 +88,21 @@ Pour publier une nouvelle version : modifier `\set release` dans `warehouse_rele
 ## Validé et non validé
 
 **Validé ici** sur PostgreSQL 16 :
-- 92 tests, dont 23 qui interrogent une base réelle (propriétaire superuser et non-superuser, initialisation
-  Docker simulée);
+- 123 tests, dont 27 qui interrogent une base réelle (propriétaire superuser et non-superuser, initialisation
+  Docker simulée, chaîne des chargeurs), tous verts contre le PostgreSQL de l'image Docker comme contre un serveur
+  local;
 - initialisation Docker rejouée sans Docker, dans l'ordre exact du compose, jusqu'à `PRÊT`;
 - performance sur 4,8 millions d'objets;
 - recette avec un agent Claude Code via le vrai DbHub;
 - TLS en local (`require`, `verify-full` avec certificat d'autorité);
 - diagnostics de connexion provoqués et vérifiés.
 
+- **`docker compose up` réel** (image `postgis/postgis:16-3.4`, PostgreSQL 16.4, PostGIS 3.4.3) : initialisation sans
+  erreur, contexte publié par `warehouse-context`, `--verify` → `PRÊT`, navigateur et filtre spatial PostGIS,
+  ports limités à `127.0.0.1`, compte personnel connecté par DbHub; les 120 tests repassés contre cette base;
+- **chaîne de chargement** exécutée sur la v1 avec des API simulées ([détail](WAREHOUSE_LOADING.md)).
+
 **Non validé** :
-- `docker compose up` réel (image PostGIS, service `warehouse-context`), PostGIS et le navigateur spatial;
 - Codex et Claude Desktop, Windows pour les scripts de compte et de connexion;
 - un serveur distant avec un certificat d'une vraie autorité;
 - 15 millions d'objets (extrapolé);

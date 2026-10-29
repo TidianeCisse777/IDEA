@@ -120,7 +120,8 @@ python scripts/warehouse_user.py create equipe_neolab --all-access          # pe
 
 Ne pas publier le port PostgreSQL sur Internet. Pour un accès distant, deux options :
 
-- **Tunnel SSH** (`ssh -L 55432:localhost:55432 serveur`), puis `--public-host 127.0.0.1`.
+- **Tunnel SSH** (`ssh -L 55432:localhost:55432 serveur`), puis `--public-host 127.0.0.1`. C'est le mode par
+  défaut du compose : la base n'écoute que sur `127.0.0.1` (`WAREHOUSE_BIND_ADDRESS`).
 - **TLS côté serveur** : `ssl = on` avec un certificat, et `hostssl` (plutôt que `host`) dans `pg_hba.conf` pour
   refuser les connexions non chiffrées. Côté utilisateur :
 

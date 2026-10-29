@@ -158,3 +158,35 @@ COMMENT ON VIEW explore.fair_readiness IS
     'Complétude FAIR des métadonnées par version (F1 F2 F4 A1 I1 I3 R1 R2 R3). Mesure le catalogue, pas la validité scientifique; missing_criteria liste ce qui manque.';
 COMMENT ON VIEW explore.fair_column_coverage IS
     'Part des colonnes du schéma warehouse décrites dans column_metadata, avec unité et URI de terme standard. Une ligne par table.';
+
+-- Versions loaded after the first deploy get a draft catalog entry on the next
+-- deploy, so they can carry a contract (access) and be described (FAIR). Same
+-- placeholders as warehouse_metadata_migration.sql; existing entries are kept.
+INSERT INTO warehouse.dataset_metadata (
+    dataset_version_id, title, description, source_method,
+    schema_version, access_level, publication_status, metadata_json
+)
+SELECT
+    v.id,
+    format('%s dataset %s (%s)', v.source_instance, v.dataset_key, v.version_key),
+    format('Version %s/%s enregistree dans le warehouse; description scientifique a completer.', v.source_instance, v.dataset_key),
+    v.source_instance,
+    'warehouse-v1',
+    'internal',
+    'draft',
+    jsonb_build_object('seeded_from', 'warehouse.dataset_version', 'description_pending', true)
+FROM warehouse.dataset_version v
+ON CONFLICT (dataset_version_id) DO NOTHING;
+
+INSERT INTO warehouse.dataset_file (
+    dataset_version_id, logical_name, source_uri, sha256, source_role, metadata_json
+)
+SELECT
+    v.id,
+    format('%s/%s/%s', v.source_instance, v.dataset_key, v.version_key),
+    v.file_manifest_uri,
+    v.sha256,
+    CASE WHEN v.source_instance = 'derived' THEN 'derived' ELSE 'source' END,
+    jsonb_build_object('seeded_from', 'warehouse.dataset_version')
+FROM warehouse.dataset_version v
+ON CONFLICT (dataset_version_id, logical_name, sha256) DO NOTHING;

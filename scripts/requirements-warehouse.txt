@@ -1,0 +1,12 @@
+# Every warehouse script: loaders (EcoTaxa, EcoPart, Amundsen CTD, FILET),
+# deployment, accounts, DbHub connection. Separate from the agent runtime.
+#   python -m pip install -r scripts/requirements-warehouse.txt
+# Node.js 18+ is also required for DbHub, and the psql client for deployment.
+beautifulsoup4==4.15.0
+pandas==3.0.5
+psycopg[binary]==3.3.6
+python-dotenv==1.2.3
+requests==2.34.2
+shapely==2.2.0
+# Optional: OS keychain for `warehouse_connect.py init --keyring`.
+# keyring

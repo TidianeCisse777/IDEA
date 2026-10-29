@@ -222,6 +222,26 @@ def offboard(args):
     return 0
 
 
+def contract(args):
+    """Set the access contract of loaded dataset versions (the dimension grants match on)."""
+    env = admin_env()
+    updated = psql(env, """
+UPDATE warehouse.dataset_metadata m SET access_contract = NULLIF(:'contract', ''), updated_at = now()
+FROM warehouse.dataset_version v
+WHERE v.id = m.dataset_version_id AND v.dataset_key = :'key'
+  AND (:'source' = '' OR v.source_instance = :'source')
+  AND (:'version' = '' OR v.version_key = :'version')
+RETURNING v.source_instance || '/' || v.dataset_key || '/' || v.version_key;""",
+                   {'contract': args.contract, 'key': args.dataset_key, 'source': args.source or '',
+                    'version': args.version_key or ''}, tuples=True)
+    rows = [line for line in updated.splitlines() if line]
+    if not rows:
+        raise SystemExit('Aucune version trouvée pour ce jeu (le déploiement crée la fiche des versions chargées: '
+                         'rejouer scripts/deploy_warehouse_postgres.py après un chargement).')
+    print('Contrat %s posé sur %d version(s): %s' % (args.contract or '(aucun)', len(rows), ', '.join(rows)))
+    return 0
+
+
 def list_accounts(_args):
     env = admin_env()
     print(psql(env, """
@@ -280,6 +300,12 @@ def main(argv=None):
     p.add_argument('name')
     p.set_defaults(handler=offboard)
     sub.add_parser('list', help='comptes, portée et droits actifs').set_defaults(handler=list_accounts)
+    p = sub.add_parser('contract', help='poser le contrat d\'accès sur les versions d\'un jeu de données chargé')
+    p.add_argument('--dataset-key', required=True, help='clé du jeu (ex. identifiant de projet EcoTaxa)')
+    p.add_argument('--contract', required=True, help='contrat; chaîne vide pour le retirer')
+    p.add_argument('--source', help='ecotaxa, ecopart, filet, amundsen_ctd… (si la clé est ambiguë)')
+    p.add_argument('--version-key', help='version précise (sinon toutes les versions de ce jeu)')
+    p.set_defaults(handler=contract)
     args = parser.parse_args(argv)
     if getattr(args, 'all_access', False) and wants_grant(args):
         parser.error('--all-access ne se combine pas avec des limites de droit')

@@ -340,8 +340,9 @@ def check(_args):
             for row in scope) or 'aucun droit accordé: aucune donnée lisible'))
         readable = session.sql('SELECT my_scope, count(*) AS n FROM explore.my_datasets GROUP BY 1 ORDER BY 1')
         notes = session.sql('SELECT DISTINCT note FROM explore.my_datasets WHERE note IS NOT NULL')
-        steps.append(('jeux lisibles (explore.my_datasets)', True, ', '.join(
-            '%s: %s' % (row['my_scope'], row['n']) for row in readable) + ''.join('. ' + row['note'] for row in notes)))
+        steps.append(('jeux lisibles (explore.my_datasets)', True, (', '.join(
+            '%s: %s' % (row['my_scope'], row['n']) for row in readable) or 'aucune version chargée dans la base')
+            + ''.join('. ' + row['note'] for row in notes)))
         catalog = session.sql('SELECT count(*) AS n FROM explore.dataset_catalog')[0]['n']
         steps.append(('catalogue (explore.dataset_catalog)', True, '%s version(s) décrite(s)' % catalog))
         context = session.request('tools/call', {'name': 'warehouse_context', 'arguments': {'topic': 'overview'}})

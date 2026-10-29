@@ -80,8 +80,19 @@ def fetch(url: str, destination: Path) -> Path:
     return destination
 
 
-def psql(database_url: str, statement: str, *, stdin: str | None = None) -> str:
-    command = ["psql", "-X", "-v", "ON_ERROR_STOP=1", "-At", database_url, "-c", statement]
+
+def staged_copy_sql(table: str, columns: str) -> list[str]:
+    """COPY via a temporary table: COPY FROM is refused on tables under row-level
+    security for a non-superuser loader; the INSERT goes through the policies."""
+    return [f"CREATE TEMP TABLE stage_{table} AS SELECT {columns} FROM warehouse.{table} WITH NO DATA",
+            f"COPY stage_{table} FROM STDIN WITH (FORMAT text)",
+            f"INSERT INTO warehouse.{table} ({columns}) SELECT {columns} FROM stage_{table}"]
+
+def psql(database_url: str, statement: str | list[str], *, stdin: str | None = None) -> str:
+    # A list runs as successive -c in one session: psql refuses COPY FROM STDIN
+    # inside a single multi-statement -c ("unexpected COPY_IN result").
+    commands = [part for item in ([statement] if isinstance(statement, str) else statement) for part in ("-c", item)]
+    command = ["psql", "-X", "-v", "ON_ERROR_STOP=1", "-At", database_url, *commands]
     result = subprocess.run(command, input=stdin, text=True, capture_output=True)
     if result.returncode:
         raise RuntimeError(result.stderr.strip() or result.stdout.strip())
@@ -174,10 +185,7 @@ def load_ecopart(database_url: str, path: Path, *, project_id: int, ecotaxa_proj
             f"{profile_id}\t{csv_escape(source_key)}\t{row['Depth [m]'] - 2.5:g}\t"
             f"{row['Depth [m]'] + 2.5:g}\t" + r"\N" + f"\t{row['Sampled volume [L]']!r}"
         )
-    copy_sql = (
-        "COPY warehouse.uvp_bin(profile_id,source_bin_key,depth_min_m,depth_max_m," 
-        "pressure_dbar,sampled_volume_l) FROM STDIN WITH (FORMAT text)"
-    )
+    copy_sql = staged_copy_sql("uvp_bin", "profile_id,source_bin_key,depth_min_m,depth_max_m,pressure_dbar,sampled_volume_l")
     progress(f"EcoPart : chargement de {len(bin_rows)} bins")
     psql(database_url, copy_sql, stdin="\n".join(bin_rows) + "\n")
     return {"dataset_version_id": version_id, "profiles": len(profile_ids), "bins": len(frame)}
@@ -260,10 +268,8 @@ def load_ctd(database_url: str, path: Path, *, dataset_key: str) -> dict:
             )
     if rows:
         progress(f"CTD : chargement de {len(rows)} mesures")
-        copy_sql = (
-            "COPY warehouse.ctd_measurement(profile_id,source_row_key,scan_key,depth_m,pressure_dbar,"
-            "variable_key,variable_definition,sensor_channel,value,unit) FROM STDIN WITH (FORMAT text)"
-        )
+        copy_sql = staged_copy_sql("ctd_measurement", "profile_id,source_row_key,scan_key,depth_m,pressure_dbar,"
+                                   "variable_key,variable_definition,sensor_channel,value,unit")
         psql(database_url, copy_sql, stdin="\n".join(rows) + "\n")
     return {"dataset_version_id": version_id, "profiles": len(profile_ids), "measurements": len(rows)}
 

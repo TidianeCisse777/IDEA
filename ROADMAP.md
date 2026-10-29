@@ -4,6 +4,27 @@
 
 **Dernière mise à jour :** 29 octobre 2026
 
+### 29 octobre 2026 — Chargeurs et infrastructure vérifiés avant le premier chargement réel (phases 2 et 4)
+
+- Chargement réel reporté : identifiants EcoTaxa et exports FILET absents de l'environnement, conteneur temporaire.
+- Chaîne complète des chargeurs (échantillons et objets EcoTaxa, EcoPart, CTD Amundsen, zones CTD, FILET,
+  appariements FILET–UVP) exécutée sans modification sur une v1, avec EcoTaxa et l'ERDDAP simulés et les fichiers
+  de test, puis contrôle de la qualité et des droits (`tests/test_loaders_v1.py`).
+- Défauts bloquants trouvés et corrigés : `COPY` direct vers des tables protégées (refusé pour un propriétaire
+  non-superuser), `COPY FROM STDIN` dans un `psql -c` à plusieurs instructions (refusé par psql 16 : chargeurs
+  d'objets et de CTD cassés quel que soit le rôle), base `postgres` utilisée par défaut par les chargeurs EcoTaxa,
+  hôte et port ignorés par EcoPart, `shapely` et `pandas` non déclarés, versions chargées sans fiche de catalogue
+  (donc sans contrat possible), déploiement en échec quand PostGIS est installé mais que le propriétaire n'est pas
+  superuser.
+- Ajouts : `scripts/load_warehouse.py` (vérification préalable, ordre, arrêt au premier échec, rejeu, audit),
+  `scripts/requirements-warehouse.txt`, `warehouse_user.py contract`, [guide de chargement](docs/WAREHOUSE_LOADING.md).
+- **`docker compose up` réel validé** (Docker disponible, contrairement à ce qui avait été supposé) : image PostGIS
+  16.4/3.4.3, initialisation sans erreur, contexte publié, `--verify` → `PRÊT`, navigateur et filtre spatial, DbHub
+  avec un compte personnel. 123 tests verts contre cette base. Ports de la base et du navigateur désormais limités à
+  `127.0.0.1` (ils étaient ouverts sur toutes les interfaces). Constaté : rejouer le déploiement avec d'autres mots de
+  passe coupe le navigateur; procédure précisée.
+- Non vérifié : vraies API, volume réel, contenu des exports FILET.
+
 ### 29 octobre 2026 — Warehouse 1.0.0 : version stable prête à déployer (phases 2 et 4)
 
 - [Note de version](docs/WAREHOUSE_RELEASE_V1.md) : contenu, procédure, vérification, décisions et risques acceptés.

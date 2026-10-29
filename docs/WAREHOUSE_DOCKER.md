@@ -28,6 +28,11 @@ docker compose --env-file .env.warehouse -f docker-compose.warehouse.yml run --r
 
 Pour mettre à jour un volume existant, rejouer `python scripts/deploy_warehouse_postgres.py` :
 il applique seulement les migrations additives, le contrôle d'accès, les rôles et le contexte.
+Les ports de la base et du navigateur n'écoutent que sur `127.0.0.1` (`WAREHOUSE_BIND_ADDRESS`). Le navigateur
+n'a pas d'authentification propre : ne pas l'ouvrir au réseau. Pour la base, préférer un tunnel SSH.
+Sur un serveur où le propriétaire n'est pas superuser, PostGIS doit être activé par un administrateur
+(`CREATE EXTENSION postgis;`); le déploiement le signale sans échouer.
+
 Le dernier script d'initialisation enregistre la version et l'empreinte des fichiers montés
 (`explore.warehouse_release`). Vérifier ensuite sans rien modifier :
 `python scripts/deploy_warehouse_postgres.py --verify` (dernière ligne `PRÊT`).

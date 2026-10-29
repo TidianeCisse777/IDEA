@@ -13,6 +13,7 @@ couvrent (source, contrat, zone, années); le **contexte MCP** est l'ensemble de
 | Je veux… | Guide |
 |---|---|
 | **la version stable v1** : contenu, procédure, vérification, décisions, risques | [Version 1.0.0](WAREHOUSE_RELEASE_V1.md) |
+| **charger les données réelles** (EcoTaxa, EcoPart, CTD, FILET) | [Chargement](WAREHOUSE_LOADING.md) |
 | comprendre ce que contient la base | [Architecture](WAREHOUSE_ARCHITECTURE.md), [diagramme de classes](WAREHOUSE_CLASS_DIAGRAM.md), [dictionnaire MCP](WAREHOUSE_MCP_DICTIONARY.md) |
 | **déployer** sur Docker ou sur un PostgreSQL existant | [Déploiement](WAREHOUSE_DOCKER.md) et la section ci-dessous |
 | comprendre **qui peut faire quoi** | [Rôles](WAREHOUSE_ROLES.md) |

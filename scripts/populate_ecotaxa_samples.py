@@ -15,9 +15,23 @@ def sql(value):
     return "'" + str(value).replace("'", "''") + "'"
 
 def psql(db, statement, stdin=None):
-    r = subprocess.run(["psql", "-X", "-v", "ON_ERROR_STOP=1", "-At", db, "-c", statement], input=stdin, text=True, capture_output=True)
+    # A list runs as successive -c in one session: psql refuses COPY FROM STDIN
+    # inside a single multi-statement -c ("unexpected COPY_IN result").
+    commands = [part for item in ([statement] if isinstance(statement, str) else statement) for part in ("-c", item)]
+    r = subprocess.run(["psql", "-X", "-v", "ON_ERROR_STOP=1", "-At", db, *commands], input=stdin, text=True, capture_output=True)
     if r.returncode: raise RuntimeError(r.stderr.strip() or r.stdout.strip())
     return r.stdout.strip()
+
+def default_database():
+    """Same connection as the other warehouse scripts: WAREHOUSE_DATABASE_URL, or the
+    WAREHOUSE_POSTGRES_* variables (password through PGPASSWORD, never in argv)."""
+    if os.getenv("WAREHOUSE_DATABASE_URL"):
+        return os.environ["WAREHOUSE_DATABASE_URL"]
+    if os.getenv("WAREHOUSE_POSTGRES_PASSWORD"):
+        os.environ.setdefault("PGPASSWORD", os.environ["WAREHOUSE_POSTGRES_PASSWORD"])
+    return "host=%s port=%s dbname=%s user=%s" % (
+        os.getenv("WAREHOUSE_POSTGRES_HOST", "localhost"), os.getenv("WAREHOUSE_POSTGRES_PORT", "55432"),
+        os.getenv("WAREHOUSE_POSTGRES_DB", "neolab_warehouse"), os.getenv("WAREHOUSE_POSTGRES_USER", "neolab"))
 
 def zone_for(lon, lat, features):
     if lon is None or lat is None: return (None, None, None, "unresolved")
@@ -38,7 +52,7 @@ def login():
     s.headers["Authorization"] = f"Bearer {token}"; return s
 
 def load_project(args, session, project_id, zones):
-    db = args.database_url or os.getenv("WAREHOUSE_DATABASE_URL") or "postgresql://localhost/postgres"
+    db = args.database_url or default_database()
     print(f"[ecotaxa] projet {project_id}: métadonnées", flush=True)
     project = session.get(f"{BASE}/projects/{project_id}", timeout=30); project.raise_for_status(); project = project.json()
     response = session.get(BASE + "/samples/search", params={"project_ids": str(project_id), "id_pattern": "*"}, timeout=30); response.raise_for_status()
@@ -69,14 +83,19 @@ def load_project(args, session, project_id, zones):
         free = sample.get("free_columns") or {}; zkey,zname,zsource,zstatus = zone_for(sample.get("longitude"), sample.get("latitude"), zones)
         values = [version_id,project_id,sample.get("sampleid"),sample.get("orig_id") or sample.get("sampleid"),free.get("stationid"),free.get("cruise"),free.get("profileid"),free.get("ctdrosettefilename"),sample.get("latitude"),sample.get("longitude"),zkey,zname,zsource,"registry-v1",zstatus,json.dumps(free,ensure_ascii=False)]
         writer.writerow(["\\N" if v is None or v == "" else v for v in values])
-    psql(db, "COPY warehouse.ecotaxa_sample(dataset_version_id,project_id,sample_id,sample_orig_id,station_id,cruise_id,profile_id,ctd_rosette_filename,lat_avg,lon_avg,marine_zone_key,marine_zone_name,marine_zone_source,marine_zone_version,marine_zone_assignment_status,free_fields_json) FROM STDIN WITH (FORMAT csv, DELIMITER E'\\t', NULL '\\N')", stdin=copy_data.getvalue())
+    # COPY is refused on tables under row-level security for a non-superuser
+    # loader: copy into a temporary table, then INSERT (checked by the policy).
+    columns = "dataset_version_id,project_id,sample_id,sample_orig_id,station_id,cruise_id,profile_id,ctd_rosette_filename,lat_avg,lon_avg,marine_zone_key,marine_zone_name,marine_zone_source,marine_zone_version,marine_zone_assignment_status,free_fields_json"
+    psql(db, [f"CREATE TEMP TABLE stage_ecotaxa_sample AS SELECT {columns} FROM warehouse.ecotaxa_sample WITH NO DATA",
+              "COPY stage_ecotaxa_sample FROM STDIN WITH (FORMAT csv, DELIMITER E'\\t', NULL '\\N')",
+              f"INSERT INTO warehouse.ecotaxa_sample({columns}) SELECT {columns} FROM stage_ecotaxa_sample"], stdin=copy_data.getvalue())
     print(f"[ecotaxa] projet {project_id}: chargé ({len(samples)} samples, version {version_id})", flush=True)
     return len(samples)
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--project-id", type=int); ap.add_argument("--all-projects", action="store_true"); ap.add_argument("--database-url"); ap.add_argument("--zones", default="shared_data/geo/zones_registry.geojson"); args = ap.parse_args()
     if bool(args.project_id) == bool(args.all_projects): raise SystemExit("indiquer exactement --project-id ou --all-projects")
-    root = Path(__file__).resolve().parents[1]; load_dotenv(root / ".env", override=True)
+    root = Path(__file__).resolve().parents[1]; load_dotenv(root / ".env", override=True); load_dotenv(root / ".env.warehouse")
     raw_zones = json.loads((root / args.zones).read_text(encoding="utf-8"))["features"]
     zones = [(f["properties"].get("canonical"), f["properties"].get("source"), shape(f["geometry"])) for f in raw_zones]
     session = login()
