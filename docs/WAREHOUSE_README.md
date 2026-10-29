@@ -12,6 +12,7 @@ couvrent (source, contrat, zone, années); le **contexte MCP** est l'ensemble de
 
 | Je veux… | Guide |
 |---|---|
+| **la version stable v1** : contenu, procédure, vérification, décisions, risques | [Version 1.0.0](WAREHOUSE_RELEASE_V1.md) |
 | comprendre ce que contient la base | [Architecture](WAREHOUSE_ARCHITECTURE.md), [diagramme de classes](WAREHOUSE_CLASS_DIAGRAM.md), [dictionnaire MCP](WAREHOUSE_MCP_DICTIONARY.md) |
 | **déployer** sur Docker ou sur un PostgreSQL existant | [Déploiement](WAREHOUSE_DOCKER.md) et la section ci-dessous |
 | comprendre **qui peut faire quoi** | [Rôles](WAREHOUSE_ROLES.md) |
@@ -51,7 +52,9 @@ Avec Docker, le service ponctuel `warehouse-context` publie le contexte MCP dès
 relancer après une modification du schéma : `docker compose ... run --rm warehouse-context`.
 Le script de déploiement est **rejouable** : une base existante ne reçoit que les migrations additives,
 le contrôle d'accès, les rôles et le contexte. À rejouer après toute nouvelle vue `explore`.
-Codes de sortie de `--check` : `0` conforme, `2` critères FAIR manquants, `3` écart du contrôle d'accès.
+`--check` déploie puis produit le rapport de préparation; `--verify` produit le rapport sans rien modifier.
+Codes de sortie : `0` prêt, `2` prêt mais métadonnées FAIR incomplètes, `3` non prêt (ligne `ÉCHEC`).
+La version déployée et l'empreinte de ses migrations se lisent dans `explore.warehouse_release`.
 
 ## Rendre la base trouvable
 
@@ -78,6 +81,7 @@ Modèle : [`example.warehouse.env`](../example.warehouse.env).
 | `WAREHOUSE_DB_HOST` `_PORT` `_NAME` `_USER` `_PASSWORD` `_SSLMODE` | côté utilisateur, lus dans son fichier d'identifiants |
 | `WAREHOUSE_DB_SSLROOTCERT`, `WAREHOUSE_DB_EXPIRES` | certificat d'autorité du serveur (`verify-full`) et date d'expiration du mot de passe |
 | `NEOLAB_WAREHOUSE_CREDENTIALS` | chemin du fichier d'identifiants de l'utilisateur (défaut hors dépôt) |
+| `WAREHOUSE_DB_PASSWORD_STORE=keyring` | posé par `init --keyring` : mot de passe dans le trousseau du système, pas dans le fichier |
 | `WAREHOUSE_TEST_LIVE=1` | active les tests sur PostgreSQL réel (avec `PGHOST` `PGPORT` `PGUSER` `PGPASSWORD`) |
 
 ## Sécurité en bref
@@ -97,10 +101,8 @@ WAREHOUSE_TEST_LIVE=1 PGHOST=... PGPORT=... PGUSER=... PGPASSWORD=... \
 
 ## État de validation
 
-Validé sur PostgreSQL 16 avec le vrai DbHub 1.5.0 (comptes, filtrage, rotation, révocation) et `claude mcp list`.
-Performance mesurée sur 4,8 M d'objets (requêtes d'un compte restreint entre 0,4 et 6,8 s,
-[détail](WAREHOUSE_ACCESS_CONTROL.md#performance)).
-**Non validé** : le démarrage `docker compose` lui-même (dont le service `warehouse-context`), PostGIS et le
-navigateur spatial, Codex, Claude Desktop, Windows pour les scripts d'administration et de connexion, un serveur
-distant réel (TLS vérifié en local seulement), le volume réel de 15 M d'objets (extrapolé).
-Le warehouse n'est **pas FAIR** : identifiant persistant, licence, niveaux d'accès et vocabulaires restent à décider.
+Voir la [note de version 1.0.0](WAREHOUSE_RELEASE_V1.md#validé-et-non-validé) : ce qui est validé (PostgreSQL 16,
+initialisation Docker simulée jusqu'à `PRÊT`, DbHub 1.5.0, agent Claude Code, TLS local, 4,8 M d'objets) et ce qui
+reste à cocher au premier déploiement réel (`docker compose up`, PostGIS, Codex, Claude Desktop, Windows, serveur
+distant, données réelles). Le warehouse n'est **pas FAIR** : identifiant persistant, licence, niveaux d'accès et
+vocabulaires restent à décider.

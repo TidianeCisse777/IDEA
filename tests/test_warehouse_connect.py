@@ -56,6 +56,26 @@ class ClientConfigurationTests(unittest.TestCase):
         path.write_text("# commentaire\n" + "".join(f"{k}={v}\n" for k, v in VALUES.items()), encoding="utf-8")
         return path
 
+    def test_keyring_keeps_the_password_out_of_the_file(self):
+        import types
+        vault = {}
+        fake = types.SimpleNamespace(set_password=lambda s, a, p: vault.__setitem__((s, a), p),
+                                     get_password=lambda s, a: vault.get((s, a)))
+        sys.modules["keyring"] = fake
+        self.addCleanup(sys.modules.pop, "keyring", None)
+        self.assertEqual(connect.main(["init", "--from-file", str(self.bundle()), "--keyring"]), 0)
+        text = connect.credentials_path().read_text(encoding="utf-8")
+        self.assertNotIn(SECRET, text)
+        self.assertIn("WAREHOUSE_DB_PASSWORD_STORE=keyring", text)
+        self.assertEqual(connect.load_settings({})["WAREHOUSE_DB_PASSWORD"], SECRET)
+        vault.clear()
+        with self.assertRaises(SystemExit) as raised:
+            connect.load_settings({})
+        self.assertIn("trousseau", str(raised.exception))
+        # A plain init afterwards goes back to the private file.
+        connect.main(["init", "--from-file", str(self.bundle())])
+        self.assertNotIn("PASSWORD_STORE", connect.credentials_path().read_text(encoding="utf-8"))
+
     def test_dsn_encodes_reserved_characters_in_the_password(self):
         dsn = connect.build_dsn(VALUES)
         self.assertNotIn(SECRET, dsn)

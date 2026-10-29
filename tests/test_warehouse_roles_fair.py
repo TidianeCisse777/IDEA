@@ -138,6 +138,40 @@ class AccessControlContractTests(unittest.TestCase):
         self.assertLess(names.index("006_warehouse_access"), names.index("007_warehouse_roles"))
 
 
+class ReleaseContractTests(unittest.TestCase):
+    def deploy_module(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("deploy_warehouse_postgres", DEPLOY)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_release_number_has_a_single_source(self):
+        module = self.deploy_module()
+        self.assertRegex(module.release_version(), r"^\d+\.\d+\.\d+$")
+        self.assertNotIn(module.release_version(), DEPLOY.read_text(encoding="utf-8"))
+        self.assertIn(module.release_version(), (DOCS / "WAREHOUSE_RELEASE_V1.md").read_text(encoding="utf-8"))
+
+    def test_manifest_hashes_every_release_file(self):
+        import hashlib
+        manifest = self.deploy_module().release_manifest()
+        names = [entry["file"] for entry in manifest]
+        self.assertEqual(names[-2:], ["warehouse_roles.sql", "warehouse_release.sql"])
+        for entry in manifest:
+            self.assertEqual(entry["sha256"], hashlib.sha256((DOCS / entry["file"]).read_bytes()).hexdigest())
+
+    def test_docker_init_records_the_release_after_roles(self):
+        self.assertIn("warehouse_release.sql:/opt/warehouse/warehouse_release.sql", COMPOSE)
+        hook = (ROOT / "docker" / "warehouse_init_roles.sh").read_text(encoding="utf-8")
+        self.assertLess(hook.index("warehouse_roles.sql"), hook.index("-f /opt/warehouse/warehouse_release.sql"))
+        self.assertIn("method=docker-init", hook)
+
+    def test_verify_mode_changes_nothing(self):
+        source = DEPLOY.read_text(encoding="utf-8")
+        verify = source.split("if args.verify:")[1].split("deploy(env")[0]
+        self.assertIn("return check(env)", verify)
+
+
 class DeployScriptTests(unittest.TestCase):
     def test_owner_password_is_required_and_never_on_argv(self):
         env = {k: v for k, v in os.environ.items() if not k.startswith(("WAREHOUSE_", "PG"))}
@@ -559,6 +593,73 @@ class LiveNonSuperuserOwnerTests(unittest.TestCase):
         reader = subprocess.run(["psql", "-X", "-At", "-d", self.db, "-U", self.reader, "-c", "SHOW enable_mergejoin"],
                                 env=env, capture_output=True, text=True)
         self.assertEqual(reader.stdout.strip(), "off", reader.stderr)
+
+
+@unittest.skipUnless(os.environ.get("WAREHOUSE_TEST_LIVE") == "1", "WAREHOUSE_TEST_LIVE=1 requis")
+class LiveDockerInitSimulationTests(unittest.TestCase):
+    """Replays docker-compose.warehouse.yml's first init without Docker: same files,
+    same container names and order, same hook, then the warehouse-context service."""
+
+    def test_compose_first_init_ends_ready(self):
+        import shutil
+        import tempfile
+        import yaml
+        compose = yaml.safe_load((ROOT / "docker-compose.warehouse.yml").read_text(encoding="utf-8"))
+        db_service = compose["services"]["neolab-warehouse-db"]
+        mounts = {}
+        for volume in db_service["volumes"]:
+            source, target = volume.split(":")[:2]
+            if source.startswith("./"):
+                mounts[target] = ROOT / source[2:]
+        initdb = sorted(t for t in mounts if t.startswith("/docker-entrypoint-initdb.d/"))
+        self.assertTrue(initdb[-1].endswith(".sh"), "the roles and release hook runs last")
+        db = "docker_sim_" + uuid.uuid4().hex[:8]
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        container = {"/docker-entrypoint-initdb.d": tmp / "initdb", "/opt/warehouse": tmp / "opt"}
+        for directory in container.values():
+            directory.mkdir()
+        for target, source in mounts.items():
+            for prefix, local in container.items():
+                if target.startswith(prefix + "/"):
+                    (local / target[len(prefix) + 1:]).symlink_to(source)
+        env = dict(os.environ, POSTGRES_USER=os.environ.get("PGUSER", "neolab"), POSTGRES_DB=db,
+                   WAREHOUSE_READER_PASSWORD="reader-pw", WAREHOUSE_NAVIGATOR_PASSWORD="navigator-pw")
+        subprocess.run(["psql", "-X", "-q", "-d", "postgres", "-c", f"CREATE DATABASE {db}"], env=env, check=True)
+        self.addCleanup(subprocess.run, ["psql", "-X", "-q", "-d", "postgres", "-c",
+                                         f"DROP DATABASE IF EXISTS {db} WITH (FORCE)"], env=env, capture_output=True)
+        for target in initdb:
+            name = target.rsplit("/", 1)[1]
+            if name.endswith(".sql"):
+                # As the image entrypoint does: one psql per file, stop on error.
+                run = subprocess.run(["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-U", env["POSTGRES_USER"],
+                                      "-d", db, "-f", str(container["/docker-entrypoint-initdb.d"] / name)],
+                                     env=env, capture_output=True, text=True)
+            else:
+                script = mounts[target].read_text(encoding="utf-8")
+                for prefix, local in container.items():
+                    script = script.replace(prefix, str(local))
+                run = subprocess.run(["sh", "-c", script], env=env, capture_output=True, text=True)
+            self.assertEqual(run.returncode, 0, f"{name}: {run.stderr[-500:]}")
+        service = compose["services"]["warehouse-context"]
+        self.assertIn("publish_warehouse_context.py", " ".join(service["command"]))
+        publish_env = dict(env, WAREHOUSE_POSTGRES_HOST=os.environ.get("PGHOST", "127.0.0.1"),
+                           WAREHOUSE_POSTGRES_PORT=os.environ.get("PGPORT", "5432"), WAREHOUSE_POSTGRES_DB=db,
+                           WAREHOUSE_POSTGRES_USER=env["POSTGRES_USER"],
+                           WAREHOUSE_POSTGRES_PASSWORD=os.environ.get("PGPASSWORD", "unused"))
+        published = subprocess.run([sys.executable, str(ROOT / "scripts/publish_warehouse_context.py"), "--no-doc"],
+                                   env=publish_env, capture_output=True, text=True)
+        self.assertEqual(published.returncode, 0, published.stderr[-500:])
+        verify = subprocess.run([sys.executable, str(DEPLOY), "--verify"], env=publish_env, capture_output=True, text=True)
+        self.assertIn(verify.returncode, (0, 2), verify.stdout + verify.stderr[-500:])
+        self.assertIn("PRÊT", verify.stdout)
+        method = subprocess.run(["psql", "-X", "-At", "-d", db, "-c", "SELECT method || ':' || migration_count "
+                                 "FROM explore.warehouse_release"], env=env, capture_output=True, text=True).stdout.strip()
+        self.assertEqual(method, f"docker-init:{len(initdb) - 1 + 2}")
+        navigator = subprocess.run(["psql", "-X", "-At", "-d", db, "-U", "warehouse_navigator", "-c",
+                                    "SELECT count(*) >= 0 FROM warehouse.dataset_version"], env=env,
+                                   capture_output=True, text=True)
+        self.assertEqual(navigator.stdout.strip(), "t", navigator.stderr)
 
 
 if __name__ == "__main__":

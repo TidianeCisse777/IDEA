@@ -2,7 +2,25 @@
 
 **Période proposée :** du 14 septembre au 30 novembre 2026
 
-**Dernière mise à jour :** 28 octobre 2026
+**Dernière mise à jour :** 29 octobre 2026
+
+### 29 octobre 2026 — Warehouse 1.0.0 : version stable prête à déployer (phases 2 et 4)
+
+- [Note de version](docs/WAREHOUSE_RELEASE_V1.md) : contenu, procédure, vérification, décisions et risques acceptés.
+- Version enregistrée dans la base à chaque déploiement (`warehouse.release_history`, `explore.warehouse_release`) avec
+  le SHA-256 de chaque migration, par le script comme par l'initialisation Docker. Numéro défini une seule fois
+  (`docs/warehouse_release.sql`).
+- `deploy_warehouse_postgres.py --verify` : rapport de préparation sans modification (version, rôles, réglages,
+  propriétaire en lecture-écriture, base fermée à PUBLIC, filtre sans contournement, sécurité forcée, contexte MCP,
+  vues de découverte; notes sur l'adoption des vues et les contrats FILET). Verdict `PRÊT` / `NON PRÊT`.
+- Défaut trouvé et corrigé : au premier déploiement, la vue de version, adoptée par le propriétaire des données, ne
+  pouvait pas lire sa table encore détenue par le déployeur; et une requête en échec du rapport était muette.
+- Initialisation Docker rejouée sans Docker, dans l'ordre et avec les noms du compose : `PRÊT`.
+- Décisions : contrat d'accès par version (versions FILET aux contrats mélangés signalées), effectifs `pg_stat`
+  acceptés (base dédiée si sensible), mot de passe local en fichier privé ou trousseau du système (`--keyring`).
+- Correction d'honnêteté : les entrées précédentes comptaient comme « sur base réelle » tous les tests lancés avec la
+  base active. Décompte exact : 92 tests, dont 23 interrogent une base réelle.
+- Non validé : `docker compose up` réel, PostGIS, Codex, Claude Desktop, Windows, serveur distant, données réelles.
 
 ### 28 octobre 2026 — Sécurité : vues adoptées à la création, propriétaire non-superuser (phases 2 et 4)
 
@@ -14,7 +32,7 @@
   vise plus que les comptes restreints, la session de déploiement force la lecture-écriture et le rejeu répare le
   propriétaire. Test de non-régression avec un propriétaire non-superuser.
 - Plusieurs bases sur un serveur : délégation des groupes et des rôles de service documentée (`WITH ADMIN OPTION`).
-- Preuves : 86 tests (dont 53 sur base réelle) verts deux fois, sans rôle ni base résiduels.
+- Preuves : 86 tests exécutés avec une base réelle active, verts deux fois, sans rôle ni base résiduels.
 
 ### 28 octobre 2026 — Connexion : diagnostics, expiration, TLS, installation hors ligne (phase 4)
 
@@ -28,7 +46,7 @@
 - `install-dbhub` installe la version épinglée dans `data/tooling/dbhub` pour les postes sans npm. Un défaut de
   chemin d'installation trouvé au test (un niveau de trop, masqué par une installation existante) a été corrigé
   et vérifié à vide.
-- Preuves : 84 tests (dont 52 sur base réelle) verts deux fois. Non vérifié : serveur distant réel, Codex,
+- Preuves : 84 tests exécutés avec une base réelle active, verts deux fois. Non vérifié : serveur distant réel, Codex,
   Claude Desktop, Windows.
 
 ### 28 octobre 2026 — Accès des agents aux données : performance, CTD, zones inconnues, multi-sources (phases 2 et 4)
@@ -53,7 +71,7 @@
   par défaut conservé.
 - **Contexte MCP sous Docker** : service ponctuel `warehouse-context` après un contrôle de santé de la base. Non
   exécuté (Docker absent ici). Contexte MCP enrichi (my_datasets, jointures externes, multi-sources).
-- Preuves : 52 tests sur PostgreSQL 16 réel, 80 tests statiques, installation portable rejouée.
+- Preuves : 52 tests exécutés avec PostgreSQL 16 réel actif (80 au total), installation portable rejouée.
 - Limites : 15 M d'objets extrapolé (parcours complet de `uvp_objects` proche de 30 s pour un compte tout voir),
   réglage du planificateur à réévaluer si les vues changent.
 
@@ -73,7 +91,7 @@
 - Déploiement `scripts/deploy_warehouse_postgres.py` rejouable; comptes via `scripts/warehouse_user.py`;
   branchement via `scripts/warehouse_connect.py` ([guide](docs/WAREHOUSE_CONNECT.md)). Le déploiement
   publie maintenant le contexte MCP, absent hors installation Windows.
-- Preuves : 41 tests sur PostgreSQL 16 réel (propriétaire superuser et non-superuser), recette avec le
+- Preuves : 41 tests exécutés avec PostgreSQL 16 réel actif (propriétaire superuser et non-superuser), recette avec le
   vrai DbHub 1.5.0 (mauvais mot de passe refusé, rotation, révocation) et `claude mcp list` connecté.
   Échec relevé : les tests `test_populate_*` ne s'exécutent pas sans `pytest` (préexistant).
 - Documentation : point d'entrée [WAREHOUSE_README.md](docs/WAREHOUSE_README.md), `example.warehouse.env`,

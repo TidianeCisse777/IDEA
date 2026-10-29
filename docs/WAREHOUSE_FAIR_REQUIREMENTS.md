@@ -38,7 +38,7 @@ Légende : ✅ en place et testé · 🟡 structure en place, contenu à produir
 | ID | Exigence | Mise en œuvre | Statut |
 |---|---|---|---|
 | R1.1 | Licence claire | `license`, `license_uri`; contrainte `dataset_metadata_publish_gate` | ⛔ licence à décider (DMP §8.3) |
-| R1.2 | Provenance | `dataset_file` (SHA-256, URI logique), `validation_run`, `software_version`, `methodology` | ✅ structure; contenu 🟡 |
+| R1.2 | Provenance | `dataset_file` (SHA-256, URI logique), `validation_run`, `software_version`, `methodology`; version du schéma et SHA-256 des migrations de chaque déploiement (`explore.warehouse_release`) | ✅ structure; contenu 🟡 |
 | R1.3 | Standards de la communauté | `metadata_standard`; correspondance Darwin Core / DataCite à écrire | ⛔ |
 
 La contrainte `dataset_metadata_publish_gate` interdit de passer une version à

@@ -28,7 +28,8 @@ DBHUB_PACKAGE = '@bytebase/dbhub@1.5.0'
 LOCAL_DBHUB = ROOT / 'data/tooling/dbhub/node_modules/@bytebase/dbhub/dist/index.js'
 KEYS = ('WAREHOUSE_DB_HOST', 'WAREHOUSE_DB_PORT', 'WAREHOUSE_DB_NAME',
         'WAREHOUSE_DB_USER', 'WAREHOUSE_DB_PASSWORD', 'WAREHOUSE_DB_SSLMODE',
-        'WAREHOUSE_DB_SSLROOTCERT', 'WAREHOUSE_DB_EXPIRES')
+        'WAREHOUSE_DB_SSLROOTCERT', 'WAREHOUSE_DB_EXPIRES', 'WAREHOUSE_DB_PASSWORD_STORE')
+KEYRING_SERVICE = 'neolab-warehouse'
 EXPIRY_NOTICE_DAYS = 14
 DEFAULTS = {'WAREHOUSE_DB_PORT': '5432', 'WAREHOUSE_DB_NAME': 'neolab_warehouse',
             'WAREHOUSE_DB_SSLMODE': 'require'}
@@ -53,6 +54,20 @@ def parse_env(text):
     return values
 
 
+def keyring_account(values):
+    return '%s@%s:%s/%s' % (values['WAREHOUSE_DB_USER'], values['WAREHOUSE_DB_HOST'],
+                            values.get('WAREHOUSE_DB_PORT', DEFAULTS['WAREHOUSE_DB_PORT']),
+                            values.get('WAREHOUSE_DB_NAME', DEFAULTS['WAREHOUSE_DB_NAME']))
+
+
+def keyring_module():
+    try:
+        import keyring
+    except ImportError:
+        raise SystemExit('Le trousseau du système demande le module Python keyring: pip install keyring')
+    return keyring
+
+
 def load_settings(environ=None):
     """Variables d'environnement d'abord, puis le fichier local, puis les défauts."""
     environ = os.environ if environ is None else environ
@@ -61,6 +76,12 @@ def load_settings(environ=None):
     if path.exists():
         values.update({k: v for k, v in parse_env(path.read_text(encoding='utf-8')).items() if k in KEYS})
     values.update({k: environ[k] for k in KEYS if environ.get(k)})
+    if values.get('WAREHOUSE_DB_PASSWORD_STORE') == 'keyring' and not values.get('WAREHOUSE_DB_PASSWORD') \
+            and values.get('WAREHOUSE_DB_USER') and values.get('WAREHOUSE_DB_HOST'):
+        secret = keyring_module().get_password(KEYRING_SERVICE, keyring_account(values))
+        if not secret:
+            raise SystemExit('Mot de passe absent du trousseau du système: refaire init --keyring.')
+        values['WAREHOUSE_DB_PASSWORD'] = secret
     missing = [k for k in ('WAREHOUSE_DB_HOST', 'WAREHOUSE_DB_USER', 'WAREHOUSE_DB_PASSWORD') if not values.get(k)]
     if missing:
         raise SystemExit('Identifiants absents (%s). Lancer: python scripts/warehouse_connect.py init '
@@ -185,9 +206,18 @@ def init(args):
     missing = [k for k in ('WAREHOUSE_DB_HOST', 'WAREHOUSE_DB_USER', 'WAREHOUSE_DB_PASSWORD') if not values.get(k)]
     if missing:
         raise SystemExit('Valeurs manquantes: ' + ', '.join(missing))
+    stored = dict(values)
+    if args.keyring:
+        # The password goes to the OS keychain; the file keeps only non-secret settings.
+        keyring_module().set_password(KEYRING_SERVICE, keyring_account(values), values['WAREHOUSE_DB_PASSWORD'])
+        stored.pop('WAREHOUSE_DB_PASSWORD')
+        stored['WAREHOUSE_DB_PASSWORD_STORE'] = 'keyring'
+    else:
+        stored.pop('WAREHOUSE_DB_PASSWORD_STORE', None)
     path = credentials_path()
-    write_private(path, ''.join('%s=%s\n' % (k, values[k]) for k in KEYS if values.get(k)))
-    print('Identifiants enregistrés: %s (compte %s). Ils ne sont pas dans le dépôt.' % (path, values['WAREHOUSE_DB_USER']))
+    write_private(path, ''.join('%s=%s\n' % (k, stored[k]) for k in KEYS if stored.get(k)))
+    print('Identifiants enregistrés: %s (compte %s%s). Ils ne sont pas dans le dépôt.' % (
+        path, values['WAREHOUSE_DB_USER'], '; mot de passe dans le trousseau du système' if args.keyring else ''))
     print('Suite: python scripts/warehouse_connect.py check')
     return 0
 
@@ -342,6 +372,8 @@ def main(argv=None):
     p.add_argument('--user')
     p.add_argument('--sslmode', default='require', choices=('disable', 'prefer', 'require', 'verify-ca', 'verify-full'))
     p.add_argument('--sslrootcert', help='certificat d\'autorité du serveur (pour verify-ca / verify-full)')
+    p.add_argument('--keyring', action='store_true',
+                   help='ranger le mot de passe dans le trousseau du système (module keyring) plutôt que dans le fichier')
     p.set_defaults(handler=init)
     sub.add_parser('check', help='recette complète: connexion, rôle, périmètre, catalogue').set_defaults(handler=check)
     sub.add_parser('run', help='lancer le serveur MCP (commande enregistrée dans le client)').set_defaults(handler=run)

@@ -14,6 +14,7 @@ réseau au serveur PostgreSQL.
 ```bash
 # 1. Enregistrer le fichier remis par l'administrateur (puis le supprimer)
 python scripts/warehouse_connect.py init --from-file mon_compte.env
+#    (option --keyring: mot de passe dans le trousseau du système, avec `pip install keyring`)
 
 # 2. Vérifier: connexion, compte, périmètre, catalogue, contexte métier
 python scripts/warehouse_connect.py check
@@ -141,4 +142,6 @@ Le certificat d'autorité est un fichier public : l'administrateur le distribue,
   avec. Les diagnostics de mot de passe faux ou expiré, port fermé et hôte inconnu ont été provoqués et vérifiés.
 - **Non testé** : Codex (installation absente ici; le format suit sa documentation MCP), Claude Desktop,
   Windows pour ces deux scripts, et un serveur distant réel (certificat d'une vraie autorité).
+- **Trousseau du système** : `init --keyring` vérifié avec le module `keyring` (dorsal de test) : aucun mot de passe
+  dans le fichier et recette `check` réussie. Non testé sur les trousseaux graphiques de macOS et de Windows.
 - Le lanceur Windows historique (`scripts/start_dbhub.ps1`, rôle `warehouse_reader`) reste inchangé.

@@ -133,8 +133,8 @@ Trois corrections :
   que la ligne liée est hors périmètre. Aucune valeur masquée n'apparaît. Le contexte MCP le rappelle aux agents.
 - **Contrat FILET** : `filet_analysis.analysis_contract` n'est pas utilisé pour l'accès. Le contrat
   d'accès est celui de la version du jeu de données.
-- **Fuites de métadonnées (aucune ligne de données)** : les statistiques de PostgreSQL sont lisibles par tout
-  rôle. `pg_stat_user_tables.n_live_tup` donne le nombre **total** de lignes d'une table, hors périmètre compris,
+- **Fuites de métadonnées (aucune ligne de données), risque accepté en v1** : les statistiques de PostgreSQL
+  (`pg_stat_*`, `pg_class.reltuples`) sont lisibles par tout rôle. `pg_stat_user_tables.n_live_tup` donne le nombre **total** de lignes d'une table, hors périmètre compris,
   et `EXPLAIN` laisse voir une estimation de lignes. Les noms des tables et colonnes sont visibles. Aucun contenu
   ni valeur n'est accessible. Ces vues système ne peuvent pas être restreintes pour un seul rôle sans modifier le
   catalogue du serveur; si les effectifs globaux sont sensibles, utiliser une base dédiée aux comptes concernés.

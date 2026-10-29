@@ -28,6 +28,9 @@ docker compose --env-file .env.warehouse -f docker-compose.warehouse.yml run --r
 
 Pour mettre à jour un volume existant, rejouer `python scripts/deploy_warehouse_postgres.py` :
 il applique seulement les migrations additives, le contrôle d'accès, les rôles et le contexte.
+Le dernier script d'initialisation enregistre la version et l'empreinte des fichiers montés
+(`explore.warehouse_release`). Vérifier ensuite sans rien modifier :
+`python scripts/deploy_warehouse_postgres.py --verify` (dernière ligne `PRÊT`).
 Vue d'ensemble : [WAREHOUSE_README.md](WAREHOUSE_README.md).
 
 ## Sauvegarde et restauration

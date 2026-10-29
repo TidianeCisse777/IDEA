@@ -28,7 +28,8 @@ feuille de route avec les scénarios de référence et le protocole de preuve.
 
 Les données EcoTaxa, EcoPart, FILET et CTD sont centralisées dans un warehouse PostgreSQL, lu par comptes
 restreints (contrat, zone, années) et accessible depuis Codex ou Claude via DbHub. Point d'entrée :
-[docs/WAREHOUSE_README.md](docs/WAREHOUSE_README.md) (déploiement, rôles, accès, connexion, FAIR).
+[docs/WAREHOUSE_README.md](docs/WAREHOUSE_README.md) (déploiement, rôles, accès, connexion, FAIR). Version stable
+actuelle : [1.0.0](docs/WAREHOUSE_RELEASE_V1.md).
 
 ### Démarche technique
 
