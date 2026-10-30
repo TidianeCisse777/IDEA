@@ -52,6 +52,9 @@ SELECT
     u.marine_zone_key, u.marine_zone_assignment_status, u.sampled_at,
     o.id AS ecotaxa_object_id, o.object_id, o.acquisition_id,
     o.category_id AS taxon_id, o.category_name AS taxon_name, o.annotation_status,
+    CASE WHEN o.category_id IS NOT NULL THEN 'ecotaxa:id:'||o.category_id
+         WHEN o.category_name IS NOT NULL THEN 'ecotaxa:name:'||o.category_name
+         ELSE 'warehouse:unclassified' END AS taxon_key,
     o.depth_min_m AS object_depth_min_m, o.depth_max_m AS object_depth_max_m,
     b.id AS uvp_bin_id, b.depth_min_m, b.depth_max_m, b.sampled_volume_l,
     o.area_px, o.esd_px, o.major_px, o.minor_px, ac.pixel_size_mm,
@@ -71,4 +74,5 @@ COMMENT ON VIEW explore.uvp_object_sizes IS
     'Un objet EcoTaxa identifie par ligne, avec sa taille reelle (esd_um/major_um/minor_um/area_um2) quand la calibration pixel de son acquisition est connue (NULL sinon : ne pas supposer une taille absente egale a zero). '
     'Grain distinct de explore.uvp_taxon_abundance (agregee par bin/taxon) et de explore.uvp_particle_sizes (non taxonomique) : ici, taxon et taille sont sur la meme ligne. '
     'sampled_volume_l est un attribut du bin, repete sur chaque objet de ce bin : pour une densite par taxon et gamme de taille, agreger le volume une seule fois par uvp_bin_id (ex. MIN(sampled_volume_l) GROUP BY uvp_bin_id), comme pour explore.uvp_particle_sizes, avant de diviser le compte d''objets filtres par ce volume. '
-    'esd_px/major_px/minor_px/area_px sont les valeurs source EcoTaxa (Zooprocess), non recalculees; les colonnes _um/_um2 sont calculees ici a partir de pixel_size_mm, qui n''existe pas pour tous les projets.';
+    'esd_px/major_px/minor_px/area_px sont les valeurs source EcoTaxa (Zooprocess), non recalculees; les colonnes _um/_um2 sont calculees ici a partir de pixel_size_mm, qui n''existe pas pour tous les projets. '
+    'taxon_key suit la meme convention que uvp_taxon_abundance.taxon_key : pour comparer a une abondance FILET du meme taxon, joindre explore.taxon_mapping sur uvp_taxon_id = taxon_key (mapping_status accepted uniquement), comme explore.filet_uvp_abundance le fait en interne.';

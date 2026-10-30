@@ -21,11 +21,12 @@ services:
       - ./docs/warehouse_ctd_zone_migration.sql:/docker-entrypoint-initdb.d/004_warehouse_ctd_zone.sql:ro
       - ./docs/warehouse_uvp_particle_sizes_view.sql:/docker-entrypoint-initdb.d/005_warehouse_uvp_sizes.sql:ro
       - ./docs/warehouse_ecotaxa_object_size_migration.sql:/docker-entrypoint-initdb.d/006_warehouse_ecotaxa_sizes.sql:ro
-      - ./docs/warehouse_fair_migration.sql:/docker-entrypoint-initdb.d/007_warehouse_fair.sql:ro
-      - ./docs/warehouse_access_control.sql:/docker-entrypoint-initdb.d/008_warehouse_access.sql:ro
+      - ./docs/warehouse_taxon_mapping_view.sql:/docker-entrypoint-initdb.d/007_warehouse_taxon_mapping.sql:ro
+      - ./docs/warehouse_fair_migration.sql:/docker-entrypoint-initdb.d/008_warehouse_fair.sql:ro
+      - ./docs/warehouse_access_control.sql:/docker-entrypoint-initdb.d/009_warehouse_access.sql:ro
       - ./docs/warehouse_roles.sql:/opt/warehouse/warehouse_roles.sql:ro
       - ./docs/warehouse_release.sql:/opt/warehouse/warehouse_release.sql:ro
-      - ./docker/warehouse_init_roles.sh:/docker-entrypoint-initdb.d/009_warehouse_roles.sh:ro
+      - ./docker/warehouse_init_roles.sh:/docker-entrypoint-initdb.d/010_warehouse_roles.sh:ro
     # Ready only after the init scripts: the entrypoint's temporary server
     # listens on the Unix socket alone, so a TCP probe waits for the real start.
     healthcheck:

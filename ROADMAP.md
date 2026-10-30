@@ -4,6 +4,27 @@
 
 **Dernière mise à jour :** 30 octobre 2026
 
+### 30 octobre 2026 — Comparaison FILET/UVP filtrée par taille, taxonomie incluse
+
+- Fermé l'écart trouvé plus tôt dans la journée : `warehouse.taxon_mapping` (correspondance FILET↔UVP retenue)
+  n'était accessible à aucun compte scopé (ceux-ci n'ont `USAGE` que sur le schéma `explore`, jamais sur
+  `warehouse` directement), donc un agent ne pouvait pas relier un taxon FILET à `explore.uvp_object_sizes`
+  sans deviner par nom de taxon en texte libre.
+- Ajouts (migration `docs/warehouse_taxon_mapping_view.sql`) : vue `explore.taxon_mapping` (statut `accepted`
+  uniquement — `ambiguous`/`rejected` restent cachés, documenté comme tel, pas confondus avec une absence de
+  correspondance), et colonne `taxon_key` sur `explore.uvp_object_sizes` (même formule que
+  `uvp_taxon_abundance.taxon_key`), permettant la jointure `uvp_object_sizes.taxon_key = taxon_mapping.uvp_taxon_id`.
+  Table de référence non datée/zonée, exemptée de sécurité par ligne comme les autres catalogues
+  (`dataset_version`, `dataset_metadata`, etc.).
+- Vérifié en direct (Docker, jeu de test, compte scopé C1) : un agent Claude réel a comparé l'abondance FILET
+  (*Calanus finmarchicus*, toutes tailles, 30 ind/m³) à l'abondance UVP du même taxon filtrée sur un axe majeur
+  ≥1000 µm (20 ind/m³, 2 objets sur 3), en utilisant lui-même le chemin `filet_uvp_matches` → `taxon_mapping` →
+  `uvp_object_sizes`, sans aide et sans deviner de lien. Chiffres confirmés indépendamment par `psql`.
+  L'agent a aussi correctement signalé les limites scientifiques réelles (le taxon UVP est au niveau du genre
+  `Calanus`, le mapping le déclare équivalent à l'espèce `C. finmarchicus` — à confirmer; profondeur du trait
+  FILET absente; effectif minuscule dans ce jeu de test).
+- 101 tests verts en direct contre Docker (19 vues, 355 colonnes documentées).
+
 ### 30 octobre 2026 — Taille réelle des objets EcoTaxa (taxon + taille sur une même ligne), vérifiée contre l'API réelle
 
 - Identifiants EcoTaxa réels fournis par l'utilisateur pour cette vérification (jamais commités). Confirmé en

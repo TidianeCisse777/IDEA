@@ -245,7 +245,7 @@ Un objet EcoTaxa identifié (taxon) par ligne, avec sa taille réelle quand elle
 
 **Grain :** Objet EcoTaxa (un par ligne), avec le bin EcoPart auquel il est rattaché.
 
-**Relations :** uvp_profile_id vers uvp_samples.uvp_profile_id; uvp_bin_id vers le bin de profondeur; taxon_id/taxon_name comme sur explore.uvp_objects. Distinct de uvp_taxon_abundance (agrégée par bin/taxon, sans taille) et de uvp_particle_sizes (taille sans taxon) : ici, taxon et taille sont sur la même ligne.
+**Relations :** uvp_profile_id vers uvp_samples.uvp_profile_id; uvp_bin_id vers le bin de profondeur; taxon_id/taxon_name comme sur explore.uvp_objects. Distinct de uvp_taxon_abundance (agrégée par bin/taxon, sans taille) et de uvp_particle_sizes (taille sans taxon) : ici, taxon et taille sont sur la même ligne. taxon_key suit la même convention que uvp_taxon_abundance.taxon_key (ecotaxa:id:…/ecotaxa:name:…/warehouse:unclassified) : pour comparer à une abondance FILET du même taxon, joindre explore.taxon_mapping sur uvp_taxon_id = taxon_key, comme explore.filet_uvp_abundance le fait en interne.
 
 **Limites :** esd_um/major_um/minor_um/area_um2 sont NULL quand la calibration pixel de l’acquisition EcoTaxa (pixel_size_mm) est inconnue — ne pas traiter un NULL comme une taille nulle ni l’exclure silencieusement sans le signaler. esd_px/major_px/minor_px/area_px sont les valeurs source EcoTaxa (Zooprocess), non recalculées; _um/_um2 sont calculées ici. sampled_volume_l est un attribut du bin, répété sur chaque objet de ce bin : pour une densité par taxon et gamme de taille, agréger ce volume une seule fois par uvp_bin_id (ex. MIN(sampled_volume_l) GROUP BY uvp_bin_id) avant de diviser, comme pour uvp_particle_sizes. Un objet peut ne pas être rattaché à un bin (uvp_bin_id NULL) : l’exclure explicitement d’un calcul de densité plutôt que de le laisser fausser silencieusement une moyenne.
 
@@ -263,6 +263,7 @@ Un objet EcoTaxa identifié (taxon) par ligne, avec sa taille réelle quand elle
 | taxon_id | text | Identifiant de catégorie EcoTaxa fourni; pas une équivalence FILET implicite. |
 | taxon_name | text | Libellé taxonomique EcoTaxa fourni; ne prouve pas un mapping FILET ni une validation. |
 | annotation_status | text | Statut d’annotation EcoTaxa chargé; NULL signifie inconnu, pas validated. |
+| taxon_key | text | Clé dérivée : ecotaxa:id:…, ecotaxa:name:… ou warehouse:unclassified; ne pas présenter un libellé ou marqueur comme identifiant taxonomique officiel. |
 | object_depth_min_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
 | object_depth_max_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
 | uvp_bin_id | bigint | Clé technique du bin EcoPart lié à l’objet; NULL si non apparié. |
@@ -281,6 +282,28 @@ Un objet EcoTaxa identifié (taxon) par ligne, avec sa taille réelle quand elle
 
 ```sql
 WITH per_bin AS (SELECT uvp_bin_id, MIN(sampled_volume_l) AS vol_l, COUNT(*) AS n FROM explore.uvp_object_sizes WHERE taxon_name ILIKE '%calanus%' AND major_um BETWEEN 500 AND 1000 AND uvp_bin_id IS NOT NULL GROUP BY uvp_bin_id) SELECT SUM(n)/SUM(vol_l)*1000 AS ind_m3 FROM per_bin;
+```
+
+## explore.taxon_mapping
+
+Correspondance taxonomique FILET↔UVP retenue (statut accepted uniquement).
+
+**Grain :** Une ligne par paire filet_taxon_id/uvp_taxon_id/mapping_version retenue.
+
+**Relations :** filet_taxon_id vers filet_data.taxon_id; uvp_taxon_id suit la même convention que uvp_taxon_abundance.taxon_key et uvp_object_sizes.taxon_key (ecotaxa:id:…/ecotaxa:name:…/warehouse:unclassified). C’est la même jointure que explore.filet_uvp_abundance utilise en interne pour comparer les deux sources.
+
+**Limites :** Ne montre que les correspondances mapping_status=accepted : un taxon FILET absent d’ici n’a pas (encore) de correspondance UVP retenue, ce n’est pas la preuve qu’aucune proposition n’existe (ambiguous/rejected sont cachées, pas absentes). Table de référence, non datée ni zonée : pas de filtre d’accès par contrat/zone/année.
+
+| Colonne | Type SQL | Définition |
+|---|---|---|
+| filet_taxon_id | text | Identifiant taxonomique FILET source de la correspondance; voir filet_data.taxon_id. |
+| uvp_taxon_id | text | Taxon UVP associé, même convention que taxon_key (ecotaxa:id:…/ecotaxa:name:…/warehouse:unclassified). |
+| mapping_relation | text | Relation entre le taxon FILET et le taxon UVP (ex. équivalence, taxon plus large); ne pas supposer une équivalence stricte sans le vérifier. |
+| mapping_version | text | Version de la correspondance taxonomique retenue; une mise à jour change potentiellement le résultat d’une comparaison. |
+| evidence | text | Preuves de correspondance JSON; conserver les paramètres, sources et éventuelles ambiguïtés. |
+
+```sql
+SELECT tm.filet_taxon_id, s.taxon_name, s.major_um FROM explore.taxon_mapping tm JOIN explore.uvp_object_sizes s ON s.taxon_key = tm.uvp_taxon_id WHERE tm.filet_taxon_id = 'Calanus finmarchicus' LIMIT 20;
 ```
 
 ## explore.ecopart_source_metadata

@@ -113,7 +113,10 @@ VIEWS = {
         'Objet EcoTaxa (un par ligne), avec le bin EcoPart auquel il est rattaché.',
         'uvp_profile_id vers uvp_samples.uvp_profile_id; uvp_bin_id vers le bin de profondeur; taxon_id/taxon_name '
         'comme sur explore.uvp_objects. Distinct de uvp_taxon_abundance (agrégée par bin/taxon, sans taille) et de '
-        'uvp_particle_sizes (taille sans taxon) : ici, taxon et taille sont sur la même ligne.',
+        'uvp_particle_sizes (taille sans taxon) : ici, taxon et taille sont sur la même ligne. taxon_key suit la '
+        'même convention que uvp_taxon_abundance.taxon_key (ecotaxa:id:…/ecotaxa:name:…/warehouse:unclassified) : '
+        'pour comparer à une abondance FILET du même taxon, joindre explore.taxon_mapping sur '
+        'uvp_taxon_id = taxon_key, comme explore.filet_uvp_abundance le fait en interne.',
         'esd_um/major_um/minor_um/area_um2 sont NULL quand la calibration pixel de l’acquisition EcoTaxa '
         '(pixel_size_mm) est inconnue — ne pas traiter un NULL comme une taille nulle ni l’exclure silencieusement '
         'sans le signaler. esd_px/major_px/minor_px/area_px sont les valeurs source EcoTaxa (Zooprocess), non '
@@ -125,6 +128,18 @@ VIEWS = {
         'WITH per_bin AS (SELECT uvp_bin_id, MIN(sampled_volume_l) AS vol_l, COUNT(*) AS n '
         'FROM explore.uvp_object_sizes WHERE taxon_name ILIKE \'%calanus%\' AND major_um BETWEEN 500 AND 1000 '
         'AND uvp_bin_id IS NOT NULL GROUP BY uvp_bin_id) SELECT SUM(n)/SUM(vol_l)*1000 AS ind_m3 FROM per_bin;'),
+    'taxon_mapping': view(
+        'Correspondance taxonomique FILET↔UVP retenue (statut accepted uniquement).',
+        'Une ligne par paire filet_taxon_id/uvp_taxon_id/mapping_version retenue.',
+        'filet_taxon_id vers filet_data.taxon_id; uvp_taxon_id suit la même convention que uvp_taxon_abundance.taxon_key '
+        'et uvp_object_sizes.taxon_key (ecotaxa:id:…/ecotaxa:name:…/warehouse:unclassified). C’est la même jointure '
+        'que explore.filet_uvp_abundance utilise en interne pour comparer les deux sources.',
+        'Ne montre que les correspondances mapping_status=accepted : un taxon FILET absent d’ici n’a pas (encore) de '
+        'correspondance UVP retenue, ce n’est pas la preuve qu’aucune proposition n’existe (ambiguous/rejected sont '
+        'cachées, pas absentes). Table de référence, non datée ni zonée : pas de filtre d’accès par contrat/zone/année.',
+        'SELECT tm.filet_taxon_id, s.taxon_name, s.major_um FROM explore.taxon_mapping tm '
+        'JOIN explore.uvp_object_sizes s ON s.taxon_key = tm.uvp_taxon_id '
+        'WHERE tm.filet_taxon_id = \'Calanus finmarchicus\' LIMIT 20;'),
     'ecopart_source_metadata': view(
         'Lignes brutes des métadonnées EcoPart.', 'Ligne source de métadonnées dans une version et un profil éventuel.',
         'dataset_version_id vers dataset_versions; profile_name correspond au nom natif, pas à une clé globale.',
@@ -287,6 +302,10 @@ COLUMNS = {
     'time_gap_minutes': 'Écart temporel enregistré du lien EcoTaxa–CTD, en minutes.',
     'time_gap_hours': 'Écart temporel FILET–UVP enregistré, en heures.',
     'evidence': 'Preuves de correspondance JSON; conserver les paramètres, sources et éventuelles ambiguïtés.',
+    'filet_taxon_id': 'Identifiant taxonomique FILET source de la correspondance; voir filet_data.taxon_id.',
+    'uvp_taxon_id': 'Taxon UVP associé, même convention que taxon_key (ecotaxa:id:…/ecotaxa:name:…/warehouse:unclassified).',
+    'mapping_relation': 'Relation entre le taxon FILET et le taxon UVP (ex. équivalence, taxon plus large); ne pas supposer une équivalence stricte sans le vérifier.',
+    'mapping_version': 'Version de la correspondance taxonomique retenue; une mise à jour change potentiellement le résultat d’une comparaison.',
     'match_status': 'Statut de la correspondance; accepted est distinct des candidats ambiguous et des liens non acceptés.',
     'match_method': 'Méthode enregistrée de rapprochement; ne pas la déduire du seul statut.',
     'relation_type': 'Nature de la liaison EcoTaxa–CTD déclarée par le rapprochement.',
