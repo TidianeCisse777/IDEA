@@ -16,41 +16,11 @@ il ne génère pas de candidats par proximité et ne requalifie pas les ambiguï
 La fenêtre temporelle demeure limitée par les correspondances déjà chargées.
 Le seuil spatial doit être ressaisi après rechargement de la page.
 
-## Contrat et état de validation — 21 octobre 2026
+## Qualification avec `audit_warehouse.py`
 
-Ce chantier concerne les phases 1 et 2 du [plan](../ROADMAP.md).
-Le schéma versionné et les preuves historiques ne remplacent pas une mesure
-live. Ce checkout ne contient ni configuration locale du warehouse ni serveur
-DbHub configuré. La connexion MCP à Codex reste à effectuer sur la machine
-disposant du service et des credentials lecteur.
-
-## Documentation de référence
-
-| Sujet | Référence et grain |
-|---|---|
-| Tables, clés, relations | [Diagramme de classes](WAREHOUSE_CLASS_DIAGRAM.md) |
-| Sources et versions | `warehouse.dataset_version` : une version de dataset, manifeste et empreinte |
-| Catalogue descriptif | [Migration métadonnées](warehouse_metadata_migration.sql) : datasets, fichiers, colonnes et validations |
-| EcoTaxa / EcoPart | [Contrat EcoPart](WAREHOUSE_ECOPART.md) : objets, profils, bins, volumes en litres et abondances dérivées |
-| FILET | [DDL](warehouse_schema_proposal.sql) : échantillon, analyse, ligne source × taxon × stade |
-| Calculs et usages | [Cas SQL](UVP_USE_CASES_SQL.md) et [frictions](UVP_FRICTIONS_OPEN.md) |
-| Connexion et stockage | [Procédure Docker](WAREHOUSE_DOCKER.md) |
-
-Les abondances FILET depth et flowmeter et les biomasses restent distinctes.
-Les stades agrégés ne doivent pas être additionnés à leurs sous-stades.
-Le catalogue contient un champ `taxonomic_scope`; sa présence dans le DDL
-ne prouve ni son remplissage ni la validation des annotations des objets.
-Les graphiques et calculs documentés dans les cas SQL sont des usages proposés;
-ils ne constituent pas un inventaire de graphiques effectivement produits.
-
-## Connexion reproductible en lecture seule
-
-Prérequis : Python 3.10+, `psycopg[binary]`, PostgreSQL démarré et rôle
-`warehouse_reader` provisionné par `scripts/deploy_warehouse_postgres.py` ([rôles](WAREHOUSE_ROLES.md)). Fournir via
-l'environnement `WAREHOUSE_READER_PASSWORD`, et au besoin
-`WAREHOUSE_READER_HOST`, `WAREHOUSE_READER_PORT`, `WAREHOUSE_READER_DB`.
-Ne pas utiliser le mot de passe du rôle d'ingestion. Aucun secret n'est passé
-sur la ligne de commande ou inclus dans le rapport.
+Pour la connexion (rôle `warehouse_reader` ou un compte personnel, variables d'environnement, secrets),
+voir [Rôles](WAREHOUSE_ROLES.md) et [Connexion DbHub](WAREHOUSE_CONNECT.md); ce document ne couvre que ce
+qui est propre à l'outil de qualification.
 
 ```bash
 python scripts/audit_warehouse.py

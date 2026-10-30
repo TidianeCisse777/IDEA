@@ -80,6 +80,15 @@ Pour brancher DbHub avec un compte personnel (Codex, Claude) plutôt que `wareho
 [guide de connexion](WAREHOUSE_CONNECT.md); les rôles et le filtrage par périmètre sont décrits dans
 [WAREHOUSE_ROLES.md](WAREHOUSE_ROLES.md) et [WAREHOUSE_ACCESS_CONTROL.md](WAREHOUSE_ACCESS_CONTROL.md).
 
+## Particularités Windows résolues
+
+- Extraction PowerShell des nombreux fichiers PostgreSQL trop lente : runtime
+  extrait avec Python.
+- Initialisation UTF-8 sous un compte contenant un accent : utilisation des
+  chemins Windows courts par le lanceur.
+- Le DDL actuel contient déjà les zones FILET : la migration historique qui
+  suppose un ancien ordre de colonnes n'est pas rejouée sur une base neuve.
+
 ## Tests ciblés
 
 ```powershell

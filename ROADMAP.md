@@ -209,7 +209,7 @@
 - Tests exécutés : 20 schéma, 6 audit, 2 contrat spatial, 12 UI et contrôle
   PowerShell du lanceur, tous réussis. Les blocages Windows initdb ont été
   résolus avec les chemins courts et l'extraction complète du runtime.
-- Livrable : [résumé opérationnel](docs/RESUME_WAREHOUSE_LOCAL.md), procédure
+- Livrable : résumé opérationnel du 21 octobre (archivé depuis, voir WAREHOUSE_RELEASE_V1.md et WAREHOUSE_ROLES.md), procédure
   [portable](docs/WAREHOUSE_PORTABLE.md), scripts de cycle de vie et recette.
 - Limites : archive et sauvegarde absentes, aucune donnée scientifique
   restaurée; recette visuelle et conversation Codex après rechargement non
@@ -562,7 +562,7 @@ complet avec appel d’outil depuis Open WebUI.
   EcoPart/comparabilité. Inspection par `git show`, aucun checkout.
 - DDL SQLite EcoTaxa et manifeste EcoPart, pont SQL/DataFrame, contrat de
   jointure EcoTaxa/EcoPart et matcher CTD par nom de fichier examinés.
-  Références dans [docs/LEGACY_WAREHOUSE_REFERENCES.md](docs/LEGACY_WAREHOUSE_REFERENCES.md).
+  Références dans docs/LEGACY_WAREHOUSE_REFERENCES.md (archivé depuis, contenu repris dans le schéma et WAREHOUSE_ARCHITECTURE.md).
 - La recherche antérieure concernait les fichiers sur disque : le code
   historique est disponible dans Git, les bases de données remplies ne sont
   pas retrouvées. Aucun test historique exécuté, phase 1 toujours en cours.

@@ -25,37 +25,11 @@ couvrent (source, contrat, zone, années); le **contexte MCP** est l'ensemble de
 
 ## Déployer, de zéro à un compte qui fonctionne
 
-```bash
-# 0. Variables (ne jamais commiter .env.warehouse)
-cp example.warehouse.env .env.warehouse      # puis remplacer les CHANGER_MOI
-
-# 1. Docker: schéma, migrations, contrôle d'accès, rôles, puis publication du contexte MCP
-docker compose --env-file .env.warehouse -f docker-compose.warehouse.yml up -d
-#    ou, sur un PostgreSQL 16+ existant (base créée au préalable, psql et psycopg[binary] disponibles):
-set -a; . ./.env.warehouse; set +a
-python scripts/deploy_warehouse_postgres.py --check
-
-# 2. Après chaque chargement de profils CTD: zone marine depuis les coordonnées
-python scripts/assign_filet_zones.py --table ctd_profile
-
-# 3. Créer un compte restreint (aucun droit sans option) et obtenir son fichier d'identifiants.
-#    Les vues UVP exigent EcoTaxa ET EcoPart.
-python scripts/warehouse_user.py create ines --source ecotaxa,ecopart --contract C1 --zone lab \
-    --year-min 2018 --year-max 2022 --expires-days 90 --public-host warehouse.exemple.org
-
-# 4. La personne enregistre le fichier reçu et teste (guide de connexion)
-python scripts/warehouse_connect.py init --from-file ines.env
-python scripts/warehouse_connect.py check
-python scripts/warehouse_connect.py config codex      # ou claude-code, claude-desktop
-```
-
-Avec Docker, le service ponctuel `warehouse-context` publie le contexte MCP dès que la base est prête; le
-relancer après une modification du schéma : `docker compose ... run --rm warehouse-context`.
-Le script de déploiement est **rejouable** : une base existante ne reçoit que les migrations additives,
-le contrôle d'accès, les rôles et le contexte. À rejouer après toute nouvelle vue `explore`.
-`--check` déploie puis produit le rapport de préparation; `--verify` produit le rapport sans rien modifier.
-Codes de sortie : `0` prêt, `2` prêt mais métadonnées FAIR incomplètes, `3` non prêt (ligne `ÉCHEC`).
-La version déployée et l'empreinte de ses migrations se lisent dans `explore.warehouse_release`.
+Procédure complète (Docker ou PostgreSQL existant), vérification `--verify`, création d'un compte de test,
+mise à jour et retour arrière : voir [Version 1.0.0 — Déployer](WAREHOUSE_RELEASE_V1.md#déployer).
+En résumé : copier `example.warehouse.env`, déployer, créer un compte avec
+`scripts/warehouse_user.py create` ([Connexion DbHub](WAREHOUSE_CONNECT.md)), sauvegarder régulièrement
+avec `scripts/backup_warehouse.py` ([Déploiement](WAREHOUSE_DOCKER.md#sauvegarde-et-restauration)).
 
 ## Rendre la base trouvable
 
