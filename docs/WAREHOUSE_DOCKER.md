@@ -40,17 +40,24 @@ Vue d'ensemble : [WAREHOUSE_README.md](WAREHOUSE_README.md).
 
 ## Sauvegarde et restauration
 
-Sauvegarde recommandée :
+`scripts/backup_warehouse.py` encapsule `pg_dump`/`pg_restore` : fichier horodaté, empreinte SHA-256
+vérifiée avant toute restauration, copie optionnelle vers un dossier (cloud synchronisé, disque externe),
+purge des anciennes sauvegardes locales. Portable d'une machine ou d'un serveur à l'autre.
+
+```bash
+python scripts/backup_warehouse.py                                         # sauvegarde horodatée
+python scripts/backup_warehouse.py --copy-to "~/OneDrive/NeoLab/warehouse-backups"
+python scripts/backup_warehouse.py --keep 10                               # garder les 10 plus récentes
+python scripts/backup_warehouse.py --restore data/warehouse_backups/<fichier>.dump
+```
+
+Équivalent manuel :
 
 ```bash
 pg_dump -Fc --no-owner --no-acl \
   postgresql://localhost/postgres \
   > data/warehouse_backups/neolab_warehouse.dump
-```
 
-Restauration dans le conteneur :
-
-```bash
 pg_restore --clean --if-exists --no-owner --no-acl \
   -d postgresql://neolab:${WAREHOUSE_POSTGRES_PASSWORD}@localhost:55432/neolab_warehouse \
   data/warehouse_backups/neolab_warehouse.dump
