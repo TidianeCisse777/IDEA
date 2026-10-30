@@ -92,6 +92,22 @@ VIEWS = {
         'profile_id vers uvp_samples.uvp_profile_id; bin_id vers ecopart_bins.bin_id. Isoler annotation_policy et dataset_version_id.',
         'Formule : n_objects_taxon / sampled_volume_l × 1000, individus/m³. Agréger par SUM(n_objects_taxon)/SUM(sampled_volume_l)*1000, pas par moyenne simple. La vue ajoute des zéros sur tous les bins uniquement pour les taxons observés dans ce profil et cette annotation_policy; un taxon absent du profil entier ne reçoit pas de zéro. all_loaded_objects inclut les objets non validés. Ne pas sommer le même volume sur plusieurs taxons.',
         'SELECT profile_id,taxon_key,annotation_policy,SUM(n_objects_taxon)/SUM(sampled_volume_l)*1000 AS ind_m3 FROM explore.uvp_taxon_abundance GROUP BY 1,2,3 LIMIT 20;'),
+    'uvp_particle_sizes': view(
+        'Spectre de tailles des particules UVP (produit EcoPart LPM), sans annotation taxonomique.',
+        'Profil × bin (profondeur) × size_class_key.',
+        'uvp_profile_id vers uvp_samples.uvp_profile_id; uvp_bin_id vers le bin de profondeur. Grain distinct de '
+        'uvp_taxon_abundance : pas de taxon_key, pas de correspondance directe avec une espèce ou un stade.',
+        'sampled_volume_l est un attribut du bin, répété sur chaque size_class_key de ce bin : sommer ce volume '
+        'directement sur plusieurs classes de taille le compte une fois par classe au lieu d’une fois par bin, et '
+        'fausse la densité (division par un volume trop grand). Pour une densité sur une gamme de taille, agréger '
+        'le volume une seule fois par uvp_bin_id (ex. MIN(sampled_volume_l) GROUP BY uvp_bin_id), sommer '
+        'particle_count et ce volume par bin sur les size_class_key choisies, puis diviser et ×1000 pour des '
+        'particules/m³; ne pas mélanger des bins de profondeur différente dans une même somme sans le dire. '
+        'particle_count et observed_volume_m3 sont les valeurs source, non recalculées. Ne pas comparer directement '
+        'à une abondance taxonomique FILET ou UVP : la comparaison porte sur une taille, pas une identification.',
+        'WITH per_bin AS (SELECT uvp_bin_id, MIN(sampled_volume_l) AS vol_l, SUM(particle_count) AS n '
+        'FROM explore.uvp_particle_sizes WHERE size_min_um>=200 AND size_max_um<=1000 GROUP BY uvp_bin_id) '
+        'SELECT SUM(n)/SUM(vol_l)*1000 AS n_m3 FROM per_bin;'),
     'ecopart_source_metadata': view(
         'Lignes brutes des métadonnées EcoPart.', 'Ligne source de métadonnées dans une version et un profil éventuel.',
         'dataset_version_id vers dataset_versions; profile_name correspond au nom natif, pas à une clé globale.',
@@ -202,6 +218,14 @@ COLUMNS = {
     'filet_stage': 'Stade FILET conservé dans la comparaison; ne pas additionner agrégats et détails.',
     'is_aggregate': 'Vrai pour COPEPODID, NAUPLIUS ou ALL_STAGES; éviter leur double comptage avec les sous-stades.',
     'sampled_volume_l': 'Volume échantillonné du bin EcoPart, en litres; ne pas le répéter dans une somme multi-taxons.',
+    'size_class_key': 'Clé de classe de taille EcoPart (produit LPM); grain non taxonomique, distinct de taxon_key.',
+    'size_min_um': 'Borne inférieure de la classe de taille, en micromètres; définit la gamme avec size_max_um.',
+    'size_max_um': 'Borne supérieure de la classe de taille, en micromètres; définit la gamme avec size_min_um.',
+    'size_definition': 'Méthode ou convention EcoPart ayant défini les bornes de taille; ne pas supposer une convention unique entre jeux de données.',
+    'particle_count': 'Nombre brut de particules comptées pour la classe de taille et le bin; valeur source, non recalculée.',
+    'observed_volume_m3': 'Volume observé par l’instrument pour ce bin, en m³; distinct de sampled_volume_l.',
+    'supplied_concentration': 'Concentration fournie par EcoPart pour la classe de taille, si présente; ne pas la substituer à un calcul propre sans vérifier son unité.',
+    'concentration_unit': 'Unité de supplied_concentration telle que fournie par EcoPart; vérifier avant toute comparaison entre jeux de données.',
     'n_objects_taxon': 'Nombre d’objets du taxon pour le bin et la politique; zéros densifiés selon le contrat de la vue.',
     'abundance_uvp_ind_m3': 'Abondance UVP dérivée en individus/m³ : n_objects_taxon / sampled_volume_l × 1000.',
     'sample_abundance': 'Nombre d’individus attribués par la source FILET, déjà calculé; ne pas recalculer implicitement.',

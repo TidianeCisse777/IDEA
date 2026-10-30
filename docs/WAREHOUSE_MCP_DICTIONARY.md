@@ -204,6 +204,41 @@ Abondances UVP dérivées des objets EcoTaxa et volumes EcoPart.
 SELECT profile_id,taxon_key,annotation_policy,SUM(n_objects_taxon)/SUM(sampled_volume_l)*1000 AS ind_m3 FROM explore.uvp_taxon_abundance GROUP BY 1,2,3 LIMIT 20;
 ```
 
+## explore.uvp_particle_sizes
+
+Spectre de tailles des particules UVP (produit EcoPart LPM), sans annotation taxonomique.
+
+**Grain :** Profil × bin (profondeur) × size_class_key.
+
+**Relations :** uvp_profile_id vers uvp_samples.uvp_profile_id; uvp_bin_id vers le bin de profondeur. Grain distinct de uvp_taxon_abundance : pas de taxon_key, pas de correspondance directe avec une espèce ou un stade.
+
+**Limites :** sampled_volume_l est un attribut du bin, répété sur chaque size_class_key de ce bin : sommer ce volume directement sur plusieurs classes de taille le compte une fois par classe au lieu d’une fois par bin, et fausse la densité (division par un volume trop grand). Pour une densité sur une gamme de taille, agréger le volume une seule fois par uvp_bin_id (ex. MIN(sampled_volume_l) GROUP BY uvp_bin_id), sommer particle_count et ce volume par bin sur les size_class_key choisies, puis diviser et ×1000 pour des particules/m³; ne pas mélanger des bins de profondeur différente dans une même somme sans le dire. particle_count et observed_volume_m3 sont les valeurs source, non recalculées. Ne pas comparer directement à une abondance taxonomique FILET ou UVP : la comparaison porte sur une taille, pas une identification.
+
+| Colonne | Type SQL | Définition |
+|---|---|---|
+| uvp_profile_id | bigint | Clé technique du profil UVP; équivaut à profile_id dans les vues de bins et abondances. |
+| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir explore.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
+| sample_name | text | Nom natif du profil EcoPart; pas un identifiant global. |
+| marine_zone_key | text | Clé de zone maritime attribuée; consulter source, version et statut. |
+| marine_zone_assignment_status | text | assigned, ambiguous, outside ou unresolved; un chevauchement peut être ambiguous. |
+| sampled_at | timestamp with time zone | Horodatage source ou borne agrégée selon le nom; vérifier le type SQL et le fuseau. Le rapprochement FILET existant interprète ses dates sans fuseau en UTC. |
+| uvp_bin_id | bigint | Clé technique du bin EcoPart lié à l’objet; NULL si non apparié. |
+| depth_min_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
+| depth_max_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
+| sampled_volume_l | numeric | Volume échantillonné du bin EcoPart, en litres; ne pas le répéter dans une somme multi-taxons. |
+| size_class_key | text | Clé de classe de taille EcoPart (produit LPM); grain non taxonomique, distinct de taxon_key. |
+| size_min_um | double precision | Borne inférieure de la classe de taille, en micromètres; définit la gamme avec size_max_um. |
+| size_max_um | double precision | Borne supérieure de la classe de taille, en micromètres; définit la gamme avec size_min_um. |
+| size_definition | text | Méthode ou convention EcoPart ayant défini les bornes de taille; ne pas supposer une convention unique entre jeux de données. |
+| particle_count | bigint | Nombre brut de particules comptées pour la classe de taille et le bin; valeur source, non recalculée. |
+| observed_volume_m3 | double precision | Volume observé par l’instrument pour ce bin, en m³; distinct de sampled_volume_l. |
+| supplied_concentration | double precision | Concentration fournie par EcoPart pour la classe de taille, si présente; ne pas la substituer à un calcul propre sans vérifier son unité. |
+| concentration_unit | text | Unité de supplied_concentration telle que fournie par EcoPart; vérifier avant toute comparaison entre jeux de données. |
+
+```sql
+WITH per_bin AS (SELECT uvp_bin_id, MIN(sampled_volume_l) AS vol_l, SUM(particle_count) AS n FROM explore.uvp_particle_sizes WHERE size_min_um>=200 AND size_max_um<=1000 GROUP BY uvp_bin_id) SELECT SUM(n)/SUM(vol_l)*1000 AS n_m3 FROM per_bin;
+```
+
 ## explore.ecopart_source_metadata
 
 Lignes brutes des métadonnées EcoPart.

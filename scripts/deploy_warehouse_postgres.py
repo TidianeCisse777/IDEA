@@ -29,7 +29,8 @@ DOCS = ROOT / 'docs'
 # record comes last so it describes a complete deployment.
 FRESH_FILES = ('warehouse_schema_proposal.sql', 'warehouse_metadata_migration.sql',
                'warehouse_ecopart_migration.sql')
-ALWAYS_FILES = ('warehouse_ctd_zone_migration.sql', 'warehouse_fair_migration.sql', 'warehouse_access_control.sql')
+ALWAYS_FILES = ('warehouse_ctd_zone_migration.sql', 'warehouse_uvp_particle_sizes_view.sql',
+               'warehouse_fair_migration.sql', 'warehouse_access_control.sql')
 ROLES_FILE = 'warehouse_roles.sql'
 RELEASE_FILE = 'warehouse_release.sql'
 SERVICE_ROLES = ('warehouse_reader', 'warehouse_navigator')

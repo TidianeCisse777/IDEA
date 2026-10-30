@@ -2,7 +2,31 @@
 
 **Période proposée :** du 14 septembre au 30 novembre 2026
 
-**Dernière mise à jour :** 29 octobre 2026
+**Dernière mise à jour :** 30 octobre 2026
+
+### 30 octobre 2026 — Jointure FILET–UVP et filtrage par taille UVP vérifiés avec un agent réel (phases 2 et 4)
+
+- Vérifié avec un agent Claude réel (Docker, compte scopé, chiffres indépendamment recalculés par `psql`) : la
+  comparaison d'abondance FILET–UVP permet déjà de jouer sur la proximité temporelle (`time_gap_hours` dans
+  `explore.filet_uvp_matches`/`explore.filet_uvp_abundance`, filtrable directement en SQL) et sur la proximité
+  spatiale — non pré-calculée en vue, mais calculable par l'agent lui-même en PostGIS (`ST_Distance`) à partir de
+  `latitude`/`longitude`, déjà exposées sur `explore.filet_samples` et `explore.uvp_samples`. L'agent a produit les
+  deux filtres sans aide et avec des chiffres exacts.
+- Lacune trouvée par le même test : les tailles de particules UVP (`warehouse.uvp_particle`, produit EcoPart LPM,
+  chargé par `populate_ecopart.py`) n'étaient exposées par aucune vue `explore.*` — donc invisibles à tout agent.
+  L'agent a correctement signalé l'absence plutôt que d'inventer un chiffre.
+- Ajout : `explore.uvp_particle_sizes` (migration additive `docs/warehouse_uvp_particle_sizes_view.sql`), héritant
+  automatiquement du filtre d'accès déjà posé sur `warehouse.uvp_particle` (vérifié : un compte scopé au contrat C1
+  ne voit que son profil, pas celui d'un autre contrat). Documentée dans `scripts/warehouse_context.py` et
+  `docs/WAREHOUSE_MCP_DICTIONARY.md`.
+- Défaut trouvé et corrigé pendant le même test : la formule de densité par gamme de taille documentée
+  (`SUM(particle_count)/SUM(sampled_volume_l)`) est fausse dès qu'on agrège plusieurs `size_class_key` d'un même
+  bin, car `sampled_volume_l` est répété sur chaque classe et se trouve compté plusieurs fois au dénominateur.
+  Un agent de test l'a détecté en recalculant lui-même et en comparant à la fiche; la fiche et l'exemple SQL ont été
+  corrigés pour agréger le volume une seule fois par `uvp_bin_id` avant de diviser. Rejoué avec succès : l'agent
+  retrouve maintenant le chiffre correct (1900 puis 6980 particules/m³ sur le jeu de test), confirmé indépendamment
+  par `psql`.
+- 101 tests verts en direct contre Docker (`WAREHOUSE_TEST_LIVE=1`), incluant les nouveaux cas.
 
 ### 29 octobre 2026 — Chargeurs et infrastructure vérifiés avant le premier chargement réel (phases 2 et 4)
 
