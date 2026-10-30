@@ -9,7 +9,7 @@ from warehouse_context import VIEWS, GRAPHICS, column_description
 
 class WarehouseContextTests(unittest.TestCase):
     def test_every_scientific_view_has_a_grain_and_caveat(self):
-        self.assertEqual(len(VIEWS), 17)
+        self.assertEqual(len(VIEWS), 18)
         for name, item in VIEWS.items():
             for key in ('purpose', 'grain', 'joins', 'caveats', 'example'):
                 self.assertTrue(item[key], (name, key))

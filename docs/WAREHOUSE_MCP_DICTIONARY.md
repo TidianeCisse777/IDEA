@@ -239,6 +239,50 @@ Spectre de tailles des particules UVP (produit EcoPart LPM), sans annotation tax
 WITH per_bin AS (SELECT uvp_bin_id, MIN(sampled_volume_l) AS vol_l, SUM(particle_count) AS n FROM explore.uvp_particle_sizes WHERE size_min_um>=200 AND size_max_um<=1000 GROUP BY uvp_bin_id) SELECT SUM(n)/SUM(vol_l)*1000 AS n_m3 FROM per_bin;
 ```
 
+## explore.uvp_object_sizes
+
+Un objet EcoTaxa identifié (taxon) par ligne, avec sa taille réelle quand elle est calculable.
+
+**Grain :** Objet EcoTaxa (un par ligne), avec le bin EcoPart auquel il est rattaché.
+
+**Relations :** uvp_profile_id vers uvp_samples.uvp_profile_id; uvp_bin_id vers le bin de profondeur; taxon_id/taxon_name comme sur explore.uvp_objects. Distinct de uvp_taxon_abundance (agrégée par bin/taxon, sans taille) et de uvp_particle_sizes (taille sans taxon) : ici, taxon et taille sont sur la même ligne.
+
+**Limites :** esd_um/major_um/minor_um/area_um2 sont NULL quand la calibration pixel de l’acquisition EcoTaxa (pixel_size_mm) est inconnue — ne pas traiter un NULL comme une taille nulle ni l’exclure silencieusement sans le signaler. esd_px/major_px/minor_px/area_px sont les valeurs source EcoTaxa (Zooprocess), non recalculées; _um/_um2 sont calculées ici. sampled_volume_l est un attribut du bin, répété sur chaque objet de ce bin : pour une densité par taxon et gamme de taille, agréger ce volume une seule fois par uvp_bin_id (ex. MIN(sampled_volume_l) GROUP BY uvp_bin_id) avant de diviser, comme pour uvp_particle_sizes. Un objet peut ne pas être rattaché à un bin (uvp_bin_id NULL) : l’exclure explicitement d’un calcul de densité plutôt que de le laisser fausser silencieusement une moyenne.
+
+| Colonne | Type SQL | Définition |
+|---|---|---|
+| uvp_profile_id | bigint | Clé technique du profil UVP; équivaut à profile_id dans les vues de bins et abondances. |
+| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir explore.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
+| sample_name | text | Nom natif du profil EcoPart; pas un identifiant global. |
+| marine_zone_key | text | Clé de zone maritime attribuée; consulter source, version et statut. |
+| marine_zone_assignment_status | text | assigned, ambiguous, outside ou unresolved; un chevauchement peut être ambiguous. |
+| sampled_at | timestamp with time zone | Horodatage source ou borne agrégée selon le nom; vérifier le type SQL et le fuseau. Le rapprochement FILET existant interprète ses dates sans fuseau en UTC. |
+| ecotaxa_object_id | bigint | Clé technique de l’objet EcoTaxa; utiliser DISTINCT si une jointure peut multiplier ses lignes. |
+| object_id | text | Identifiant natif de l’objet EcoTaxa, qualifié par son sample/source. |
+| acquisition_id | text | Identifiant natif d’acquisition EcoTaxa. |
+| taxon_id | text | Identifiant de catégorie EcoTaxa fourni; pas une équivalence FILET implicite. |
+| taxon_name | text | Libellé taxonomique EcoTaxa fourni; ne prouve pas un mapping FILET ni une validation. |
+| annotation_status | text | Statut d’annotation EcoTaxa chargé; NULL signifie inconnu, pas validated. |
+| object_depth_min_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
+| object_depth_max_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
+| uvp_bin_id | bigint | Clé technique du bin EcoPart lié à l’objet; NULL si non apparié. |
+| depth_min_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
+| depth_max_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
+| sampled_volume_l | numeric | Volume échantillonné du bin EcoPart, en litres; ne pas le répéter dans une somme multi-taxons. |
+| area_px | double precision | Aire Zooprocess de l’objet EcoTaxa, en pixels; valeur source, non recalculée. |
+| esd_px | double precision | Diamètre sphérique équivalent Zooprocess, en pixels; NULL si le projet EcoTaxa ne fournit pas cette colonne libre. |
+| major_px | double precision | Axe majeur de l’ellipse ajustée par Zooprocess, en pixels; valeur source, non recalculée. |
+| minor_px | double precision | Axe mineur de l’ellipse ajustée par Zooprocess, en pixels; valeur source, non recalculée. |
+| pixel_size_mm | double precision | Taille réelle d’un pixel pour l’acquisition de l’objet, en mm; NULL si EcoTaxa ne la fournit pas, auquel cas aucune colonne _um/_um2 n’est calculable pour cet objet. |
+| esd_um | double precision | esd_px converti en micromètres via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une taille nulle. |
+| major_um | double precision | major_px converti en micromètres via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une taille nulle. |
+| minor_um | double precision | minor_px converti en micromètres via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une taille nulle. |
+| area_um2 | double precision | area_px convertie en micromètres carrés via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une aire nulle. |
+
+```sql
+WITH per_bin AS (SELECT uvp_bin_id, MIN(sampled_volume_l) AS vol_l, COUNT(*) AS n FROM explore.uvp_object_sizes WHERE taxon_name ILIKE '%calanus%' AND major_um BETWEEN 500 AND 1000 AND uvp_bin_id IS NOT NULL GROUP BY uvp_bin_id) SELECT SUM(n)/SUM(vol_l)*1000 AS ind_m3 FROM per_bin;
+```
+
 ## explore.ecopart_source_metadata
 
 Lignes brutes des métadonnées EcoPart.

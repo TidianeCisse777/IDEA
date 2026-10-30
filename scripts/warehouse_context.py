@@ -108,6 +108,23 @@ VIEWS = {
         'WITH per_bin AS (SELECT uvp_bin_id, MIN(sampled_volume_l) AS vol_l, SUM(particle_count) AS n '
         'FROM explore.uvp_particle_sizes WHERE size_min_um>=200 AND size_max_um<=1000 GROUP BY uvp_bin_id) '
         'SELECT SUM(n)/SUM(vol_l)*1000 AS n_m3 FROM per_bin;'),
+    'uvp_object_sizes': view(
+        'Un objet EcoTaxa identifié (taxon) par ligne, avec sa taille réelle quand elle est calculable.',
+        'Objet EcoTaxa (un par ligne), avec le bin EcoPart auquel il est rattaché.',
+        'uvp_profile_id vers uvp_samples.uvp_profile_id; uvp_bin_id vers le bin de profondeur; taxon_id/taxon_name '
+        'comme sur explore.uvp_objects. Distinct de uvp_taxon_abundance (agrégée par bin/taxon, sans taille) et de '
+        'uvp_particle_sizes (taille sans taxon) : ici, taxon et taille sont sur la même ligne.',
+        'esd_um/major_um/minor_um/area_um2 sont NULL quand la calibration pixel de l’acquisition EcoTaxa '
+        '(pixel_size_mm) est inconnue — ne pas traiter un NULL comme une taille nulle ni l’exclure silencieusement '
+        'sans le signaler. esd_px/major_px/minor_px/area_px sont les valeurs source EcoTaxa (Zooprocess), non '
+        'recalculées; _um/_um2 sont calculées ici. sampled_volume_l est un attribut du bin, répété sur chaque objet '
+        'de ce bin : pour une densité par taxon et gamme de taille, agréger ce volume une seule fois par '
+        'uvp_bin_id (ex. MIN(sampled_volume_l) GROUP BY uvp_bin_id) avant de diviser, comme pour uvp_particle_sizes. '
+        'Un objet peut ne pas être rattaché à un bin (uvp_bin_id NULL) : l’exclure explicitement d’un calcul de '
+        'densité plutôt que de le laisser fausser silencieusement une moyenne.',
+        'WITH per_bin AS (SELECT uvp_bin_id, MIN(sampled_volume_l) AS vol_l, COUNT(*) AS n '
+        'FROM explore.uvp_object_sizes WHERE taxon_name ILIKE \'%calanus%\' AND major_um BETWEEN 500 AND 1000 '
+        'AND uvp_bin_id IS NOT NULL GROUP BY uvp_bin_id) SELECT SUM(n)/SUM(vol_l)*1000 AS ind_m3 FROM per_bin;'),
     'ecopart_source_metadata': view(
         'Lignes brutes des métadonnées EcoPart.', 'Ligne source de métadonnées dans une version et un profil éventuel.',
         'dataset_version_id vers dataset_versions; profile_name correspond au nom natif, pas à une clé globale.',
@@ -226,6 +243,15 @@ COLUMNS = {
     'observed_volume_m3': 'Volume observé par l’instrument pour ce bin, en m³; distinct de sampled_volume_l.',
     'supplied_concentration': 'Concentration fournie par EcoPart pour la classe de taille, si présente; ne pas la substituer à un calcul propre sans vérifier son unité.',
     'concentration_unit': 'Unité de supplied_concentration telle que fournie par EcoPart; vérifier avant toute comparaison entre jeux de données.',
+    'area_px': 'Aire Zooprocess de l’objet EcoTaxa, en pixels; valeur source, non recalculée.',
+    'esd_px': 'Diamètre sphérique équivalent Zooprocess, en pixels; NULL si le projet EcoTaxa ne fournit pas cette colonne libre.',
+    'major_px': 'Axe majeur de l’ellipse ajustée par Zooprocess, en pixels; valeur source, non recalculée.',
+    'minor_px': 'Axe mineur de l’ellipse ajustée par Zooprocess, en pixels; valeur source, non recalculée.',
+    'pixel_size_mm': 'Taille réelle d’un pixel pour l’acquisition de l’objet, en mm; NULL si EcoTaxa ne la fournit pas, auquel cas aucune colonne _um/_um2 n’est calculable pour cet objet.',
+    'esd_um': 'esd_px converti en micromètres via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une taille nulle.',
+    'major_um': 'major_px converti en micromètres via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une taille nulle.',
+    'minor_um': 'minor_px converti en micromètres via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une taille nulle.',
+    'area_um2': 'area_px convertie en micromètres carrés via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une aire nulle.',
     'n_objects_taxon': 'Nombre d’objets du taxon pour le bin et la politique; zéros densifiés selon le contrat de la vue.',
     'abundance_uvp_ind_m3': 'Abondance UVP dérivée en individus/m³ : n_objects_taxon / sampled_volume_l × 1000.',
     'sample_abundance': 'Nombre d’individus attribués par la source FILET, déjà calculé; ne pas recalculer implicitement.',

@@ -65,22 +65,31 @@ class FakeEcoTaxa:
         if url.endswith("/samples/search"):
             pid = int(params["project_ids"])
             return FakeResponse([{"sampleid": s["sampleid"]} for s in self.projects[pid]["samples"]])
+        if "/acquisition/" in url:
+            # Real API: pixel calibration lives on the acquisition's free_columns,
+            # not on the object (confirmed live, see ROADMAP 30 octobre 2026).
+            return FakeResponse({"free_columns": {"pixel": "0.01"}})
         if "/sample/" in url:
             sid = int(url.rsplit("/", 1)[1])
             return FakeResponse(next(s for p in self.projects.values() for s in p["samples"] if s["sampleid"] == sid))
         pid = int(url.rsplit("/", 1)[1])
         project = self.projects[pid]
         return FakeResponse({"projid": pid, "title": project["title"], "instrument": "UVP5", "status": "Annotate",
-                             "objcount": len(project["objects"])})
+                             "objcount": len(project["objects"]), "obj_free_cols": project.get("obj_free_cols", {})})
 
     def post(self, url, params=None, json=None, timeout=None):
         pid = int(url.split("/object_set/")[1].split("/")[0])
         start, size = params["window_start"], params["window_size"]
         page = self.projects[pid]["objects"][start:start + size]
-        # fields: obj.orig_id,obj.objdate,obj.depth_min,obj.depth_max,obj.latitude,obj.longitude,txo.display_name
+        # fields: obj.orig_id,obj.objdate,obj.depth_min,obj.depth_max,obj.latitude,obj.longitude,txo.display_name[,fre.<label>...]
+        # A requested fre.<label> is appended in request order, exactly like the real
+        # API: the loader itself only ever requests labels this project's obj_free_cols
+        # has, so nothing here needs to be dropped to reproduce that behaviour.
+        size_labels = [f.split(".", 1)[1] for f in params["fields"].split(",") if f.startswith("fre.")]
         return FakeResponse({"object_ids": [o["objid"] for o in page], "sample_ids": [o["sampleid"] for o in page],
                              "acquisition_ids": [f"acq{o['sampleid']}" for o in page],
-                             "details": [[f"o{o['objid']}", o["date"], o["depth"], o["depth"] + 1, None, None, o["taxon"]]
+                             "details": [[f"o{o['objid']}", o["date"], o["depth"], o["depth"] + 1, None, None, o["taxon"],
+                                         *[o["sizes"][lbl] for lbl in size_labels]]
                                          for o in page]})
 
 
@@ -110,17 +119,24 @@ def ecotaxa_fixture():
                 "free_columns": {"stationid": "G1", "cruise": "AM2024", "profileid": orig,
                                  "ctdrosettefilename": "2024_001.int.nc", "note": contract_note}}
     objects = lambda sid, base: [{"objid": base + i, "sampleid": sid, "date": "2024-07-01",
-                                  "depth": d, "taxon": t} for i, (d, t) in enumerate([(0, "Calanus"), (4.999, "Calanus"),
-                                                                                    (5, "Oithona"), (15, "Calanus")])]
+                                  "depth": d, "taxon": t,
+                                  "sizes": {"area": 90.0 + i, "esd": 10.0 + i, "major": 20.0 + i, "minor": 5.0 + i}}
+                                 for i, (d, t) in enumerate([(0, "Calanus"), (4.999, "Calanus"),
+                                                             (5, "Oithona"), (15, "Calanus")])]
     return {
         # 101 and 102 are under contract C1 and C2; 103 carries the EcoPart fixture profile.
-        101: {"title": "Projet C1", "samples": [sample(1001, "c1_baffin", BAFFIN, "C1"),
-                                                sample(1002, "c1_pacific", PACIFIC, "C1"),
-                                                sample(1003, "c1_nocoord", None, "C1")],
+        # obj_free_cols differs per project, as it does for real EcoTaxa projects: 101 has
+        # no esd (like the lab's UVP6 projects), 102 has no size columns at all, 103 has all four.
+        101: {"title": "Projet C1", "obj_free_cols": {"area": "n01", "major": "n16", "minor": "n17"},
+              "samples": [sample(1001, "c1_baffin", BAFFIN, "C1"),
+                         sample(1002, "c1_pacific", PACIFIC, "C1"),
+                         sample(1003, "c1_nocoord", None, "C1")],
               "objects": objects(1001, 10_000) + objects(1002, 20_000)},
-        102: {"title": "Projet C2", "samples": [sample(2001, "c2_baffin", BAFFIN, "C2")],
+        102: {"title": "Projet C2", "obj_free_cols": {},
+              "samples": [sample(2001, "c2_baffin", BAFFIN, "C2")],
               "objects": objects(2001, 30_000)},
-        103: {"title": "Projet UVP C1", "samples": [sample(100, "001_profile", BAFFIN, "C1")],
+        103: {"title": "Projet UVP C1", "obj_free_cols": {"area": "n01", "esd": "n02", "major": "n03", "minor": "n04"},
+              "samples": [sample(100, "001_profile", BAFFIN, "C1")],
               "objects": objects(100, 40_000)},
     }
 
@@ -269,6 +285,14 @@ class LoaderChainTests(unittest.TestCase):
                                         "FROM warehouse.ecotaxa_sample WHERE project_id = 101"), "assigned,outside,unresolved")
         self.assertEqual(self.owner_sql("SELECT count(*) FROM warehouse.ecotaxa_sample WHERE datetime_min IS NULL "
                                         "AND sample_id IN ('1001','1002','2001','100')"), "0")
+        # Object size enrichment: per-project obj_free_cols decides what is populated.
+        # 101 has no esd (like the lab's UVP6 projects), 102 has no size columns at all,
+        # 103 (the UVP project) has all four — area_px/major_px/minor_px on 101's 8 objects
+        # plus 103's 4, esd_px on 103's 4 only, nothing on 102's 4.
+        self.assertEqual(self.owner_sql("SELECT count(*) FROM warehouse.ecotaxa_object WHERE area_px IS NOT NULL"), "12")
+        self.assertEqual(self.owner_sql("SELECT count(*) FROM warehouse.ecotaxa_object WHERE esd_px IS NOT NULL"), "4")
+        self.assertEqual(self.owner_sql("SELECT count(*) FROM warehouse.ecotaxa_acquisition"), "4")
+        self.assertEqual(self.owner_sql("SELECT count(DISTINCT pixel_size_mm) FROM warehouse.ecotaxa_acquisition"), "1")
         self.assertEqual(self.owner_sql("SELECT count(*) FROM warehouse.ecotaxa_ctd"), "5")
         self.assertEqual(self.owner_sql("SELECT count(*) FROM warehouse.ctd_measurement"), "24")
         self.assertEqual(self.owner_sql("SELECT marine_zone_key FROM warehouse.ctd_profile"), "Baie de Baffin")
@@ -292,6 +316,11 @@ class LoaderChainTests(unittest.TestCase):
         scoped = lambda sql: self.as_role(self.scoped, sql, scoped_pw)
         self.assertEqual(scoped("SELECT string_agg(DISTINCT ecotaxa_native_sample_id, ',') FROM explore.uvp_samples"), "100")
         self.assertEqual(scoped("SELECT count(*) FROM explore.uvp_objects"), "4")
+        # Real-unit size, scoped: only project 103's objects, converted via the
+        # acquisition's calibration (major_px 20.0 * pixel_size_mm 0.01 * 1000 = 200 um).
+        self.assertEqual(scoped("SELECT count(*) FROM explore.uvp_object_sizes"), "4")
+        self.assertEqual(scoped("SELECT major_um FROM explore.uvp_object_sizes WHERE object_id = '40000'"), "200")
+        self.assertEqual(scoped("SELECT pixel_size_mm FROM explore.uvp_object_sizes WHERE object_id = '40000'"), "0.01")
         self.assertEqual(scoped("SELECT count(*) FROM explore.uvp_taxon_abundance WHERE n_objects_taxon > 0") != "0", True)
         self.assertEqual(scoped("SELECT my_scope FROM explore.my_datasets WHERE dataset_key = '102'"), "aucun")
         reader = self.as_role("warehouse_reader", "SELECT count(*) FROM explore.uvp_objects", "reader-pw")

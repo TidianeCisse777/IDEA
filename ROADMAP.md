@@ -4,6 +4,36 @@
 
 **Dernière mise à jour :** 30 octobre 2026
 
+### 30 octobre 2026 — Taille réelle des objets EcoTaxa (taxon + taille sur une même ligne), vérifiée contre l'API réelle
+
+- Identifiants EcoTaxa réels fournis par l'utilisateur pour cette vérification (jamais commités). Confirmé en
+  direct sur l'API (`https://ecotaxa.obs-vlfr.fr/api`), avec les 23 projets réels du compte : les objets
+  EcoTaxa portent déjà les mesures Zooprocess (`area`, `esd`, `major`, `minor`, en pixels), mais comme
+  « colonnes libres » nommées par projet (`obj_free_cols` fait correspondre un libellé stable à un slot propre
+  au projet, ex. `n01`). Pas tous les projets ne définissent pas `esd` (les projets UVP6 récents ne l'ont pas).
+  Un libellé demandé qu'un projet ne connaît pas est retiré en silence de la ligne (pas renvoyé NULL), ce qui
+  décale les colonnes suivantes : confirmé en testant ce cas précis sur un vrai projet avant d'écrire le
+  chargeur, pour ne jamais lire une taille dans la mauvaise colonne.
+- La calibration pixel→mm n'est pas un champ d'objet : elle vit sur l'acquisition EcoTaxa
+  (`GET /acquisition/{id}.free_columns.pixel`, confirmée à 0,088 mm/pixel sur un vrai projet UVP5), pas
+  interrogeable en lot avec les objets.
+- Ajouts : colonnes `area_px/esd_px/major_px/minor_px` sur `warehouse.ecotaxa_object`, table
+  `warehouse.ecotaxa_acquisition` (calibration par acquisition, sécurité par ligne héritée comme
+  `ecotaxa_object`), vue `explore.uvp_object_sizes` (migration `docs/warehouse_ecotaxa_object_size_migration.sql`) :
+  un objet identifié par ligne avec sa taille réelle en µm quand elle est calculable — referme l'écart trouvé la
+  veille (taxon et taille ne se croisaient dans aucune vue). `scripts/populate_ecotaxa_objects.py` interroge
+  désormais `obj_free_cols` par projet avant de demander les champs de taille, et charge la calibration par
+  acquisition (un appel par acquisition distincte, mis en cache côté base).
+- Vérifié en direct (Docker, jeu de test, compte scopé contrat C1) : tailles calculées correctes (2393,6 µm et
+  987,99 µm pour un objet connu), compte hors contrat invisible. Un agent Claude réel a ensuite filtré
+  l'abondance d'un taxon par gamme de taille réelle (µm) sans aide, avec le même soin pour agréger le volume du
+  bin une seule fois.
+- `tests/test_loaders_v1.py` étendu : trois projets de test avec des `obj_free_cols` différents (aucun, partiel,
+  complet), vérifie que seules les tailles attendues sont chargées et que la conversion en µm est correcte pour
+  un compte scopé. 101 tests verts en direct contre Docker.
+- Non fait : chargement réel complet (23 projets, ~15M objets, plusieurs heures) — seule l'infrastructure est
+  prête et testée; aucune donnée réelle n'a été chargée dans un warehouse de production.
+
 ### 30 octobre 2026 — Jointure FILET–UVP et filtrage par taille UVP vérifiés avec un agent réel (phases 2 et 4)
 
 - Vérifié avec un agent Claude réel (Docker, compte scopé, chiffres indépendamment recalculés par `psql`) : la

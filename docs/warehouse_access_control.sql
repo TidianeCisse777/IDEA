@@ -221,6 +221,8 @@ BEGIN
          'OR (metadata_dataset_version_id IS NULL AND dataset_version_id IN (SELECT warehouse.readable_versions(true))))'),
         ('ecotaxa_object',
          'sample_id IN (SELECT id FROM warehouse.ecotaxa_sample)'),
+        ('ecotaxa_acquisition',
+         'sample_id IN (SELECT id FROM warehouse.ecotaxa_sample)'),
         ('uvp_bin',
          'profile_id IN (SELECT id FROM warehouse.uvp_profile)'),
         ('uvp_particle',
