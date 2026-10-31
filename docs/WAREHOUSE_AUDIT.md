@@ -13,6 +13,20 @@ Deux journaux distincts, qui ne répondent pas à la même question :
 
 Aucun des deux ne contient de mot de passe.
 
+## Pour qui ça fonctionne
+
+| | Audit (serveur) | Nom de l'agent dans l'audit, trace locale |
+|---|---|---|
+| Comptes personnels, restreints ou « toutes les données » | **oui, tous**, quel que soit l'agent ou le poste | oui, si le poste a la version à jour du dépôt (`git pull`) |
+| `warehouse_reader` (version portable Windows) | oui | non (lanceur DbHub historique) |
+| Navigateur web, chargeurs, compte propriétaire | non (volontaire) | — |
+| Connexion directe (psql, script, notebook) avec un compte personnel | oui (outil : le nom que déclare le client, `psql` par exemple, sinon `?`) | — |
+
+L'audit est appliqué par le serveur : il ne dépend ni de l'agent, ni de la version des scripts sur le poste de la
+personne. Il suffit que l'administrateur l'ait activé (voir [Ce qu'il faut côté serveur](#ce-quil-faut-côté-serveur)).
+Seuls l'étiquette de l'agent et la trace de débogage viennent du lanceur `warehouse_connect.py run` : une personne
+qui n'a pas mis à jour sa copie du dépôt reste auditée, mais apparaît avec l'outil `?` et n'a pas `trace`.
+
 ## Audit des requêtes (administrateur)
 
 ### Ce qui est journalisé
@@ -21,7 +35,7 @@ Aucun des deux ne contient de mot de passe.
   `warehouse_reader` : texte SQL, paramètres, compte, heure, session.
 - **L'agent utilisé** : chaque connexion par MCP est étiquetée `neolab-mcp:<agent>` (par exemple
   `neolab-mcp:claude-code`, `neolab-mcp:codex-mcp-client`). La recette `check` apparaît comme `neolab-check`.
-  Une connexion directe (psql, script) apparaît sans étiquette (`?`).
+  Une connexion directe apparaît avec le nom que déclare l'outil (`psql`, par exemple), ou `?` s'il n'en déclare pas.
 - **Les refus et échecs** : une tentative de lire une table brute (`permission denied for schema warehouse`) ou
   d'écrire est visible avec `--errors`.
 
@@ -115,7 +129,7 @@ passe, et ne quitte pas le poste. L'extrait du résultat contient des données q
 droit de voir : désactiver la trace quand elle n'est plus utile.
 
 Le même lanceur (`warehouse_connect.py run`) sert à tous les agents : la trace et l'étiquette d'agent de l'audit
-fonctionnent pour Claude Code, Codex, Gemini et tout autre client MCP.
+fonctionnent pour Claude Code, Codex, Gemini, OpenCode et tout autre client MCP.
 
 ## État de validation (31 octobre 2026)
 

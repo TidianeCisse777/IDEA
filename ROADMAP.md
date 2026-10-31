@@ -4,6 +4,17 @@
 
 **Dernière mise à jour :** 31 octobre 2026
 
+### 31 octobre 2026 — OpenCode branché au warehouse
+
+- `warehouse_connect.py config opencode` génère le bloc `mcp` d'`opencode.json` (`"type": "local"`, commande en
+  liste), d'après la documentation d'OpenCode (opencode.ai/docs/mcp-servers).
+- Vérifié avec OpenCode 1.19.5 : le bloc généré, collé tel quel, donne `✓ neolab-warehouse connected`; l'agent
+  est identifié (`opencode`) dans la trace et donc dans l'audit. Pas de conversation complète : quota des modèles
+  gratuits d'OpenCode épuisé depuis l'environnement de test (les identifiants Amazon Bedrock présents dans
+  l'environnement n'ont volontairement pas été utilisés).
+- Précisé dans `docs/WAREHOUSE_AUDIT.md` pour qui l'audit fonctionne : tous les comptes personnels, quel que soit
+  l'agent ou le poste; l'étiquette d'agent et la trace demandent la version à jour du dépôt sur le poste.
+
 ### 31 octobre 2026 — Audit des requêtes des agents et trace de débogage
 
 - **Audit (serveur)** : chaque requête des comptes personnels et de `warehouse_reader` est écrite dans le journal

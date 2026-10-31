@@ -1,4 +1,4 @@
-# Connecter un agent IA au warehouse (Claude, Codex, Gemini, Cursor, VS Code)
+# Connecter un agent IA au warehouse (Claude, Codex, Gemini, OpenCode, Cursor, VS Code)
 
 ## Comment ça marche
 
@@ -47,6 +47,7 @@ serveurs MCP qu'au démarrage.
 | Claude Code | `claude-code` | oui, conversations complètes |
 | Codex (OpenAI) | `codex` | oui, serveur démarré et connecté par Codex |
 | Gemini CLI (Google) | `gemini` | oui, serveur « Connected » |
+| OpenCode (open source, multi-modèles) | `opencode` | oui, serveur « connected » |
 | Claude Desktop | `claude-desktop` | non |
 | Cursor | `cursor` | non |
 | VS Code / GitHub Copilot | `vscode` | non |
@@ -94,6 +95,32 @@ gemini mcp list                       # vérification : ✓ neolab-warehouse …
 considère pas de confiance (`gemini mcp list` affiche alors « Disabled »). Lancez `gemini` depuis votre dossier
 de travail et répondez oui à « Do you trust the files in this folder? », ou utilisez la commande `/permissions`
 dans une session.
+
+### OpenCode
+
+Agent open source qui fonctionne avec de nombreux fournisseurs de modèles (Anthropic, OpenAI, modèles ouverts,
+modèles locaux). Coller dans `~/.config/opencode/opencode.json` (tous projets) ou `opencode.json` à la racine d'un
+projet, en fusionnant la clé `"mcp"` si le fichier existe déjà :
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "neolab-warehouse": {
+      "type": "local",
+      "command": ["<python>", "<IDEA>/scripts/warehouse_connect.py", "run"],
+      "enabled": true
+    }
+  }
+}
+```
+
+```bash
+opencode mcp list                     # vérification : ✓ neolab-warehouse connected
+```
+
+`command` est une **liste** (programme puis arguments), pas une chaîne. OpenCode laisse l'agent appeler les outils
+sans demander d'approbation; sans conséquence ici, les trois outils étant en lecture seule.
 
 ### Claude Desktop, Cursor, VS Code
 
@@ -300,6 +327,9 @@ Le certificat d'autorité est un fichier public : l'administrateur le distribue,
   conversation complète n'a pas été menée avec ces deux clients (aucun compte OpenAI ni Google dans
   l'environnement de test); elle l'a été avec Claude Code. Démarrage mesuré du serveur : 0,9 s avec DbHub
   installé localement.
+- **OpenCode 1.19 vérifié le 31 octobre 2026** : le bloc généré par `config opencode`, collé tel quel, donne
+  `✓ neolab-warehouse connected`, et l'agent est identifié (`opencode`) dans la trace. Pas de conversation
+  complète : le quota des modèles gratuits d'OpenCode était épuisé depuis l'environnement de test.
 - **Non testé** : Claude Desktop, Cursor et VS Code (formats générés selon leur documentation MCP), Windows
   pour ces deux scripts, et un serveur distant réel (certificat d'une vraie autorité).
 - **Trousseau du système** : `init --keyring` vérifié avec le module `keyring` (dorsal de test) : aucun mot de passe

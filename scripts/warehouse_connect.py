@@ -6,7 +6,7 @@ un argument de commande ni la sortie de ce script.
 
     python scripts/warehouse_connect.py init --from-file mon_compte.env
     python scripts/warehouse_connect.py check
-    python scripts/warehouse_connect.py config codex      # ou claude-code, claude-desktop, gemini, cursor, vscode, json
+    python scripts/warehouse_connect.py config codex      # ou claude-code, claude-desktop, gemini, opencode, cursor, vscode, json
 
 `run` est la commande que le client MCP lance (protocole sur stdout: rien d'autre
 n'y est écrit). Code de sortie de `check`: 0 réussi, 1 échec.
@@ -425,6 +425,12 @@ def registration(client):
                 '# Gemini désactive tout serveur MCP dans un dossier non approuvé: lancer gemini\n'
                 '# depuis un dossier de travail approuvé (invite au premier lancement, ou /permissions).\n'
                 % (SERVER_NAME, python, script))
+    if client == 'opencode':
+        return ('Ajouter dans ~/.config/opencode/opencode.json (tous projets) ou opencode.json à la racine du projet\n'
+                '(fusionner la clé "mcp" si le fichier existe déjà). Vérifier: opencode mcp list\n%s\n'
+                % json.dumps({'$schema': 'https://opencode.ai/config.json',
+                              'mcp': {SERVER_NAME: {'type': 'local', 'command': [python, script, 'run'],
+                                                    'enabled': True}}}, indent=2))
     if client == 'cursor':
         return ('Ajouter dans ~/.cursor/mcp.json (tous projets) ou .cursor/mcp.json (ce projet):\n%s\n'
                 % registration('json'))
@@ -580,7 +586,7 @@ def main(argv=None):
     p.add_argument('--full', action='store_true', help='show: SQL complet')
     p.set_defaults(handler=trace)
     p = sub.add_parser('config', help='afficher la commande ou le fragment de configuration du client')
-    p.add_argument('client', choices=('codex', 'claude-code', 'claude-desktop', 'gemini', 'cursor', 'vscode', 'json'))
+    p.add_argument('client', choices=('codex', 'claude-code', 'claude-desktop', 'gemini', 'opencode', 'cursor', 'vscode', 'json'))
     p.set_defaults(handler=config)
     args = parser.parse_args(argv)
     if args.command == 'init' and not args.from_file and not (args.host and args.user):
