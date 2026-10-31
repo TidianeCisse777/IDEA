@@ -66,13 +66,15 @@ VIEWS = {
         'Inventaire agrégé des projets UVP liés à EcoTaxa/EcoPart.',
         'Projet EcoTaxa × projet EcoPart × campagne; EcoTaxa peut être NULL.',
         'Navigation vers uvp_samples par ecotaxa_project_id et ecopart_project_id; sélectionner la campagne.',
-        'Ne pas sommer des projets qui réutilisent les mêmes profils. La zone MIN est un libellé représentatif, pas toute la couverture. Pas de dataset_version_id dans cette vue : auditer les versions dans dataset_versions et les vues détaillées.',
+        'Ne pas sommer des projets qui réutilisent les mêmes profils. La zone MIN est un libellé représentatif, pas toute la couverture. Pas de dataset_version_id dans cette vue : auditer les versions dans dataset_versions et les vues détaillées. '
+        'ecotaxa_project_title est le nom natif du projet EcoTaxa, pour affichage (légende, étiquette) : NULL si le projet n’a pas été chargé dans warehouse.ecotaxa_project, et ne pas l’utiliser comme clé (deux projets pourraient en théorie partager un titre) — grouper/joindre sur ecotaxa_project_id.',
         'SELECT * FROM explore.uvp_projects LIMIT 20;'),
     'uvp_samples': view(
         'Métadonnées des profils UVP liés à un sample EcoTaxa.',
         'Profil UVP × liaison sample EcoTaxa; plusieurs liaisons par profil possibles.',
         'uvp_profile_id = uvp_taxon_abundance.profile_id ou ecopart_bins.profile_id; ecotaxa_sample_id = ecotaxa_ctd_profile.ecotaxa_sample_id.',
-        'INNER JOIN : les profils sans sample EcoTaxa lié sont absents. COUNT(DISTINCT uvp_profile_id) pour compter les profils. Les zones préfèrent EcoTaxa puis EcoPart.',
+        'INNER JOIN : les profils sans sample EcoTaxa lié sont absents. COUNT(DISTINCT uvp_profile_id) pour compter les profils. Les zones préfèrent EcoTaxa puis EcoPart. '
+        'ecotaxa_project_title est le nom natif du projet, pour affichage uniquement (peut être NULL); ecotaxa_project_id reste la clé stable.',
         'SELECT uvp_profile_id,sample_name,station_key,sampled_at FROM explore.uvp_samples LIMIT 20;'),
     'uvp_objects': view(
         'Objets EcoTaxa associés aux profils UVP, avec un bin EcoPart éventuel.',
@@ -206,6 +208,7 @@ COLUMNS = {
     'ctd_dataset_version_id': 'Version de la source du profil CTD.',
     'ecopart_project_id': 'Identifiant natif du projet EcoPart; distinct de celui du projet EcoTaxa.',
     'ecotaxa_project_id': 'Identifiant natif du projet EcoTaxa; distinct de celui du projet EcoPart.',
+    'ecotaxa_project_title': 'Nom natif du projet EcoTaxa, pour affichage; NULL si le projet n’a pas été chargé. Ne pas l’utiliser comme clé, préférer ecotaxa_project_id.',
     'uvp_profile_id': 'Clé technique du profil UVP; équivaut à profile_id dans les vues de bins et abondances.',
     'profile_id': 'Clé technique du profil UVP; équivaut à uvp_samples.uvp_profile_id.',
     'ctd_profile_id': 'Clé technique du profil CTD; pas une clé d’alignement des mesures individuelles.',

@@ -25,7 +25,7 @@ Inventaire agrégé des projets UVP liés à EcoTaxa/EcoPart.
 
 **Relations :** Navigation vers uvp_samples par ecotaxa_project_id et ecopart_project_id; sélectionner la campagne.
 
-**Limites :** Ne pas sommer des projets qui réutilisent les mêmes profils. La zone MIN est un libellé représentatif, pas toute la couverture. Pas de dataset_version_id dans cette vue : auditer les versions dans dataset_versions et les vues détaillées.
+**Limites :** Ne pas sommer des projets qui réutilisent les mêmes profils. La zone MIN est un libellé représentatif, pas toute la couverture. Pas de dataset_version_id dans cette vue : auditer les versions dans dataset_versions et les vues détaillées. ecotaxa_project_title est le nom natif du projet EcoTaxa, pour affichage (légende, étiquette) : NULL si le projet n’a pas été chargé dans warehouse.ecotaxa_project, et ne pas l’utiliser comme clé (deux projets pourraient en théorie partager un titre) — grouper/joindre sur ecotaxa_project_id.
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
@@ -43,6 +43,7 @@ Inventaire agrégé des projets UVP liés à EcoTaxa/EcoPart.
 | latitude_max | double precision | Coordonnée géographique source en degrés WGS84; suffixe min/max = étendue agrégée, pas un point de prélèvement. |
 | longitude_min | double precision | Coordonnée géographique source en degrés WGS84; suffixe min/max = étendue agrégée, pas un point de prélèvement. |
 | longitude_max | double precision | Coordonnée géographique source en degrés WGS84; suffixe min/max = étendue agrégée, pas un point de prélèvement. |
+| ecotaxa_project_title | text | Nom natif du projet EcoTaxa, pour affichage; NULL si le projet n’a pas été chargé. Ne pas l’utiliser comme clé, préférer ecotaxa_project_id. |
 
 ```sql
 SELECT * FROM explore.uvp_projects LIMIT 20;
@@ -56,7 +57,7 @@ Métadonnées des profils UVP liés à un sample EcoTaxa.
 
 **Relations :** uvp_profile_id = uvp_taxon_abundance.profile_id ou ecopart_bins.profile_id; ecotaxa_sample_id = ecotaxa_ctd_profile.ecotaxa_sample_id.
 
-**Limites :** INNER JOIN : les profils sans sample EcoTaxa lié sont absents. COUNT(DISTINCT uvp_profile_id) pour compter les profils. Les zones préfèrent EcoTaxa puis EcoPart.
+**Limites :** INNER JOIN : les profils sans sample EcoTaxa lié sont absents. COUNT(DISTINCT uvp_profile_id) pour compter les profils. Les zones préfèrent EcoTaxa puis EcoPart. ecotaxa_project_title est le nom natif du projet, pour affichage uniquement (peut être NULL); ecotaxa_project_id reste la clé stable.
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
@@ -92,6 +93,7 @@ Métadonnées des profils UVP liés à un sample EcoTaxa.
 | nb_predicted | bigint | Nombre prédit déclaré dans les métadonnées EcoTaxa. |
 | nb_dubious | bigint | Nombre douteux déclaré dans les métadonnées EcoTaxa. |
 | nb_unclassified | bigint | Nombre non classé déclaré dans les métadonnées EcoTaxa. |
+| ecotaxa_project_title | text | Nom natif du projet EcoTaxa, pour affichage; NULL si le projet n’a pas été chargé. Ne pas l’utiliser comme clé, préférer ecotaxa_project_id. |
 
 ```sql
 SELECT uvp_profile_id,sample_name,station_key,sampled_at FROM explore.uvp_samples LIMIT 20;

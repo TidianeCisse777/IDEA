@@ -2,7 +2,25 @@
 
 **Période proposée :** du 14 septembre au 30 novembre 2026
 
-**Dernière mise à jour :** 30 octobre 2026
+**Dernière mise à jour :** 31 octobre 2026
+
+### 31 octobre 2026 — Filtre par zone, carte avec taille/couleur de projet : vérifiés, un trou fermé
+
+- Vérifié avec un agent réel (Docker, 3 zones maritimes réelles, 3 projets EcoTaxa de test, compte scopé C1) :
+  le filtrage par zone maritime (`marine_zone_key`) fonctionne correctement — l'agent a vérifié les zones
+  disponibles, exclu la bonne, et signalé que `marine_zone_name` était vide plutôt que de l'utiliser à tort.
+- Demande d'une carte (taille du point = taille réelle moyenne des objets en µm, couleur = nom du projet
+  EcoTaxa) : l'agent a produit une page HTML autonome avec SVG, légende accessible et infobulles, chiffres
+  exacts (3168/1584/836 µm). Mais il a trouvé un vrai trou : `warehouse.ecotaxa_project.title` (le nom du
+  projet, ex. « Campagne Amundsen 2023 ») n'était exposé par aucune vue `explore.*` — seul l'identifiant
+  numérique l'était. L'agent l'a signalé plutôt que d'inventer un nom.
+- Corrigé (migration `docs/warehouse_ecotaxa_project_title_migration.sql`) : `ecotaxa_project_title` ajouté en
+  fin de colonnes de `explore.uvp_samples` et `explore.uvp_projects` (`CREATE OR REPLACE VIEW` refuse de
+  renommer une colonne existante en insérant au milieu — corrigé après un premier essai en échec à
+  l'initialisation Docker). Référence seule (NULL si le projet n'a pas été chargé), ne remplace pas
+  `ecotaxa_project_id` comme clé.
+- Rejoué avec succès : la même carte montre maintenant les vrais noms de projet dans la légende, vérifié
+  directement dans le HTML produit. 101 tests verts en direct (19 vues, 357 colonnes documentées).
 
 ### 30 octobre 2026 — Comparaison FILET/UVP filtrée par taille, taxonomie incluse
 

@@ -31,6 +31,7 @@ FRESH_FILES = ('warehouse_schema_proposal.sql', 'warehouse_metadata_migration.sq
                'warehouse_ecopart_migration.sql')
 ALWAYS_FILES = ('warehouse_ctd_zone_migration.sql', 'warehouse_uvp_particle_sizes_view.sql',
                'warehouse_ecotaxa_object_size_migration.sql', 'warehouse_taxon_mapping_view.sql',
+               'warehouse_ecotaxa_project_title_migration.sql',
                'warehouse_fair_migration.sql', 'warehouse_access_control.sql')
 ROLES_FILE = 'warehouse_roles.sql'
 RELEASE_FILE = 'warehouse_release.sql'
