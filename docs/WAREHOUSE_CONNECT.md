@@ -88,6 +88,36 @@ valeurs : le compte restreint a retrouvé les 4 abondances moyennes attendues (2
 signalé qu'ils ne pouvaient pas distinguer des données masquées de données absentes, ce qui est voulu : le
 catalogue n'expose pas de compteurs hors périmètre.
 
+### Peut-on faire confiance à ce que l'agent répond ?
+
+L'agent n'est pas plus honnête qu'un autre par principe : c'est le warehouse qui rend l'invention plus difficile
+que le signalement de l'incertitude. Trois mécanismes concrets, pas une promesse :
+
+- **Le contrôle d'accès (RLS) l'empêche physiquement de voir ce qu'il n'a pas le droit de voir.** Un résultat vide
+  peut vouloir dire « aucun droit sur ce jeu », pas « aucune donnée » — `explore.my_access` et `explore.my_datasets`
+  distinguent les deux (voir plus haut). Un agent qui confond les deux fait une erreur vérifiable : `my_datasets`
+  dit explicitement « masqué » pour ce cas.
+- **NULL n'est jamais recodé en zéro.** Une taille d'objet non calculable (calibration pixel inconnue), un taxon
+  sans correspondance retenue (`warehouse.taxon_mapping`, statut `accepted` uniquement), une zone non attribuée :
+  chaque vue documente ce que signifie une valeur absente, et le texte d'aide (`warehouse_context`) le rappelle
+  avant que l'agent n'écrive une requête.
+- **Les correspondances scientifiques ne sont jamais déduites par l'agent.** Le lien entre un taxon FILET et un
+  taxon UVP, par exemple, vient uniquement de `warehouse.taxon_mapping` — une table remplie par un biologiste, pas
+  calculée par ressemblance de nom. Sans ligne acceptée pour un taxon, l'agent n'a aucun moyen de deviner une
+  correspondance : il doit le signaler comme non mappé.
+
+Recette réalisée le 30 octobre 2026 (Docker, jeu de test, compte scopé contrat C1) : un agent Claude réel a comparé
+l'abondance FILET d'un taxon (toutes tailles) à l'abondance UVP du même taxon filtrée sur une taille réelle
+(µm), en passant par `filet_uvp_matches` → `taxon_mapping` → `uvp_object_sizes` sans qu'on le lui demande
+explicitement. Les deux chiffres ont été recalculés indépendamment par `psql` et correspondaient exactement. Sans
+accès aux outils, l'agent a répondu qu'il n'avait aucun chiffre à donner plutôt que d'en estimer un. Il a aussi
+signalé de lui-même une limite non demandée (le taxon UVP identifié au genre, le mapping le déclarant équivalent
+à l'espèce FILET).
+
+Ce que ça ne garantit pas : que les données elles-mêmes sont correctes (erreur de saisie, mapping mal posé par le
+biologiste, calibration manquante), ni qu'un agent mal guidé ne tente pas une estimation si on le lui demande
+explicitement. Vérifier un chiffre important par une requête directe reste la bonne pratique, pas une formalité.
+
 ## Pour l'administrateur
 
 Connexion : `WAREHOUSE_POSTGRES_HOST|PORT|DB|USER|PASSWORD` (comme le [déploiement](WAREHOUSE_DOCKER.md)).
