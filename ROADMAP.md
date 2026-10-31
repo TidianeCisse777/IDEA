@@ -4,6 +4,24 @@
 
 **Dernière mise à jour :** 31 octobre 2026
 
+### 31 octobre 2026 — Connaissance des stades de copépodes (FILET et UVP) pour les agents
+
+- Nouvelle référence `warehouse.copepod_stage` / `explore.copepod_stages` (migration
+  `docs/warehouse_copepod_stage_migration.sql`) : les 18 codes de stade FILET avec libellé, phase (nauplius,
+  copépodite, adulte, agrégat), rang de développement, sexe, statut d'agrégat, présence d'une biomasse dans
+  l'export, et ce que l'UVP permet (aucun champ de stade; seulement via les catégories EcoTaxa et
+  `taxon_mapping`).
+- Établi dans le dépôt et verrouillé par test (codes = contrainte du schéma = chargeur FILET; agrégats et biomasse
+  identiques) : codes, `is_aggregate`, `filet_has_biomass`, règle de ne jamais additionner un agrégat à ses
+  composants. **Non établi, marqué « à confirmer »** : libellés, sens de `COP_NS`/`NAUP_NS`, composition des
+  agrégats (adultes dans COPEPODID ?). La référence est le dictionnaire FILET du labo
+  (`copepod abund&biomass-metadata.csv`), absent du warehouse : à charger ou à faire relire par un biologiste.
+- Vérifié avec Docker et un vrai Claude Code : l'agent a utilisé la référence de lui-même, donné les abondances par
+  stade dans l'ordre du développement, 38 ind/m³ au total sans double compte de `ALL_STAGES`, signalé les
+  libellés « à confirmer » et l'absence de stade côté UVP. 109 tests verts en direct.
+- La base de connaissances copépodes de l'ancien projet (« ChromaDB copépodes », `ARCHITECTURE.md` §9) est dans
+  l'archive `../IDEA-archive-20260911`, absente de cet environnement : non consultée.
+
 ### 31 octobre 2026 — OpenCode branché au warehouse
 
 - `warehouse_connect.py config opencode` génère le bloc `mcp` d'`opencode.json` (`"type": "local"`, commande en

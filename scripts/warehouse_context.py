@@ -163,6 +163,23 @@ VIEWS = {
         'Parser geometry_geojson côté client (ex. Python : json.loads puis shapely.geometry.shape). '
         'Table de référence, non datée ni contractuelle : pas de filtre d’accès par contrat/zone/année.',
         'SELECT zone_key, geometry_geojson FROM explore.marine_zone_boundaries WHERE zone_key = \'Baie de Baffin\';'),
+    'copepod_stages': view(
+        'Stades de développement des copépodes : signification, ordre et agrégats des codes de stade FILET, '
+        'et ce que l’UVP permet (ou non) sur les stades.',
+        'Une ligne par code de stade FILET (18 codes).',
+        'stage_code = filet_data.stage = filet_uvp_abundance.filet_stage. UVP : aucun champ de stade; un stade '
+        'n’existe côté UVP que si la catégorie EcoTaxa (taxon_key) le nomme, et sa correspondance avec un stade '
+        'FILET passe par taxon_mapping, décision d’un biologiste.',
+        'Établi : les codes, is_aggregate, filet_has_biomass, et la règle de ne jamais additionner un agrégat '
+        '(COPEPODID, NAUPLIUS, ALL_STAGES) à ses composants. À confirmer (definition_status) : les libellés, le '
+        'sens de COP_NS/NAUP_NS et la composition des agrégats (adultes inclus ou non dans COPEPODID); la référence '
+        'est le dictionnaire FILET du labo, non chargé dans le warehouse — le dire plutôt que présenter ces libellés '
+        'comme validés. Pour une somme par phase, additionner les stades détaillés OU prendre l’agrégat, jamais les '
+        'deux. Comparer un total FILET tous stades à l’UVP suppose que l’UVP voit les mêmes stades : le signaler, ne '
+        'pas le supposer.',
+        "SELECT f.stage, s.label_fr, s.life_phase, s.is_aggregate, SUM(f.abundance_depth_ind_m3) FROM explore.filet_data f "
+        "JOIN explore.copepod_stages s ON s.stage_code = f.stage WHERE NOT s.is_aggregate GROUP BY 1,2,3,4 "
+        "ORDER BY min(s.development_order);"),
     'ecopart_source_metadata': view(
         'Lignes brutes des métadonnées EcoPart.', 'Ligne source de métadonnées dans une version et un profil éventuel.',
         'dataset_version_id vers dataset_versions; profile_name correspond au nom natif, pas à une clé globale.',
@@ -270,8 +287,17 @@ COLUMNS = {
     'taxon_filet': 'Identifiant taxonomique FILET source du mapping; pas un AphiaID supposé.',
     'annotation_status': 'Statut d’annotation EcoTaxa chargé; NULL signifie inconnu, pas validated.',
     'annotation_policy': 'Politique de sélection des objets et projet EcoTaxa; all_loaded_objects inclut tous les objets chargés, pas uniquement les validés.',
-    'stage': 'Stade FILET source; distinguer détails et agrégats COPEPODID, NAUPLIUS, ALL_STAGES.',
-    'filet_stage': 'Stade FILET conservé dans la comparaison; ne pas additionner agrégats et détails.',
+    'stage': 'Stade FILET source; distinguer détails et agrégats COPEPODID, NAUPLIUS, ALL_STAGES. Signification et ordre : explore.copepod_stages.',
+    'filet_stage': 'Stade FILET conservé dans la comparaison; ne pas additionner agrégats et détails. Signification : explore.copepod_stages.',
+    'stage_code': 'Code de stade FILET (N1-N6, NAUP_NS, C1-C5, COP_NS, M, F, COPEPODID, NAUPLIUS, ALL_STAGES); même valeur que filet_data.stage.',
+    'label_fr': 'Libellé du stade en français; voir definition_status avant de le présenter comme validé.',
+    'life_phase': 'Phase de développement : nauplius, copépodite, adulte, ou agrégat de plusieurs phases.',
+    'development_order': 'Rang de développement (N1=1 … C5=11, adultes=12); NULL pour un stade non précisé ou un agrégat.',
+    'sex': 'mâle ou femelle pour les adultes M et F; NULL sinon.',
+    'aggregate_of': 'Stades que l’agrégat regroupe, avec ce qui reste à confirmer; NULL pour un stade détaillé.',
+    'filet_has_biomass': 'Vrai si l’export FILET fournit une biomasse (µg C/m³) pour ce stade; faux pour les nauplii et ALL_STAGES (absence, pas zéro).',
+    'definition_status': 'Ce qui reste à confirmer pour ce stade avec le dictionnaire FILET du labo; aucune ligne n’est encore validée par un biologiste.',
+    'note': 'Remarque sur le stade (règle d’agrégation, absence de biomasse, sens présumé d’un code).',
     'is_aggregate': 'Vrai pour COPEPODID, NAUPLIUS ou ALL_STAGES; éviter leur double comptage avec les sous-stades.',
     'sampled_volume_l': 'Volume échantillonné du bin EcoPart, en litres; ne pas le répéter dans une somme multi-taxons.',
     'size_class_key': 'Clé de classe de taille EcoPart (produit LPM); grain non taxonomique, distinct de taxon_key.',

@@ -9,7 +9,7 @@ from warehouse_context import VIEWS, GRAPHICS, column_description
 
 class WarehouseContextTests(unittest.TestCase):
     def test_every_scientific_view_has_a_grain_and_caveat(self):
-        self.assertEqual(len(VIEWS), 20)
+        self.assertEqual(len(VIEWS), 21)
         for name, item in VIEWS.items():
             for key in ('purpose', 'grain', 'joins', 'caveats', 'example'):
                 self.assertTrue(item[key], (name, key))
@@ -52,6 +52,43 @@ class WarehouseContextTests(unittest.TestCase):
         for requirement in ('oceans', 'gsw', 'TEOS-10', 'cmocean', 'xarray',
                             'salinité pratique/absolue', 'pression et profondeur', 'hypothèses'):
             self.assertIn(requirement, text)
+
+
+class CopepodStageReferenceTests(unittest.TestCase):
+    """The stage reference must say exactly what the schema and the FILET loader already do."""
+
+    def setUp(self):
+        import ast
+        import re
+        root = Path(__file__).resolve().parents[1]
+        sql = (root / 'docs/warehouse_copepod_stage_migration.sql').read_text(encoding='utf-8')
+        values = sql.split('VALUES', 1)[1].split('ON CONFLICT', 1)[0]
+        values = re.sub(r'\bNULL\b', 'None', re.sub(r'\btrue\b', 'True', re.sub(r'\bfalse\b', 'False', values)))
+        # (code, label, phase, order, sex, is_aggregate, aggregate_of, has_biomass, status, note)
+        self.rows = {row[0]: row for row in ast.literal_eval('[' + values + ']')}
+        schema = (root / 'docs/warehouse_schema_proposal.sql').read_text(encoding='utf-8')
+        check = re.search(r"stage text NOT NULL CHECK \(stage IN \((.*?)\)\)", schema, re.S).group(1)
+        generated = re.search(r"is_aggregate boolean GENERATED ALWAYS AS\s*\(stage IN \((.*?)\)\)", schema, re.S).group(1)
+        self.schema_stages = set(re.findall(r"'([A-Z0-9_]+)'", check))
+        self.schema_aggregates = set(re.findall(r"'([A-Z0-9_]+)'", generated))
+        sys.path.insert(0, str(root / 'scripts'))
+        import populate_filet
+        self.loader = populate_filet
+
+    def test_codes_match_the_schema_and_the_loader(self):
+        self.assertEqual(set(self.rows), self.schema_stages)
+        self.assertEqual(set(self.rows), set(self.loader.STAGES))
+
+    def test_aggregates_and_biomass_match_what_is_established(self):
+        aggregates = {code for code, row in self.rows.items() if row[5]}
+        self.assertEqual(aggregates, self.schema_aggregates)
+        with_biomass = {code for code, row in self.rows.items() if row[7]}
+        self.assertEqual(with_biomass, set(self.loader.STAGES_WITH_BIOMASS))
+
+    def test_nothing_unconfirmed_is_presented_as_validated(self):
+        self.assertTrue(all(row[8] in ('convention usuelle, à confirmer', 'à confirmer') for row in self.rows.values()))
+        for code in ('COP_NS', 'NAUP_NS', 'COPEPODID', 'NAUPLIUS', 'ALL_STAGES'):
+            self.assertEqual(self.rows[code][8], 'à confirmer', code)
 
 
 if __name__ == '__main__':
