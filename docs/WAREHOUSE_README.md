@@ -19,6 +19,7 @@ couvrent (source, contrat, zone, années); le **contexte MCP** est l'ensemble de
 | comprendre **qui peut faire quoi** | [Rôles](WAREHOUSE_ROLES.md) |
 | limiter un compte à un contrat, une zone, des années | [Contrôle d'accès](WAREHOUSE_ACCESS_CONTROL.md) |
 | **créer un compte** et le brancher dans un agent (Claude, Codex, Gemini, Cursor, VS Code) | [Connexion DbHub](WAREHOUSE_CONNECT.md) |
+| savoir **qui a lu quoi** (audit) ou **ce qu'un agent a fait** (trace) | [Audit et débogage](WAREHOUSE_AUDIT.md) |
 | savoir où en est la conformité FAIR | [Exigences FAIR](WAREHOUSE_FAIR_REQUIREMENTS.md), [brouillon PGD](WAREHOUSE_DMP_DRAFT.md) |
 | lancer le warehouse sans Docker (Windows) | [Version portable](WAREHOUSE_PORTABLE.md) |
 | connaître les contrôles de qualité | [Accès et qualification](WAREHOUSE_ACCESS_QUALIFICATION.md) |

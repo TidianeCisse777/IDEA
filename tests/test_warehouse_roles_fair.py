@@ -528,6 +528,21 @@ class LivePostgresTests(unittest.TestCase):
             code, out = self.run_as(role, sql, "pw")
             self.assertNotEqual(code, 0, sql)
 
+    def test_zz_queries_of_a_personal_account_are_audited_and_it_cannot_turn_that_off(self):
+        if not hasattr(type(self), "tag"):
+            self.seed_access_data()
+        code, superuser = self.owner("SELECT rolsuper FROM pg_roles WHERE rolname = current_user")
+        if superuser != "t":
+            self.skipTest("log_statement exige un superuser: audit seulement signalé comme non actif")
+        role = f"acl_scoped_{self.tag}"
+        self.assertEqual(self.run_as(role, "SHOW log_statement", "pw"), (0, "all"))
+        for sql in ("SET log_statement = 'none'", "SET SESSION log_statement = 'none'",
+                    "ALTER ROLE %s RESET log_statement" % role):
+            code, out = self.run_as(role, sql, "pw")
+            self.assertNotEqual(code, 0, sql)
+        self.assertEqual(self.owner("SELECT 'log_statement=all' = ANY (setconfig) FROM pg_db_role_setting "
+                                    "WHERE setrole = 'warehouse_reader'::regrole"), (0, "t"))
+
     def test_zz_no_protected_table_is_left_without_row_security(self):
         code, out = self.owner("SELECT count(*) FROM explore.access_audit WHERE problem = 'table without row security'")
         self.assertEqual((code, out), (0, "0"))

@@ -177,10 +177,147 @@ def install_dbhub(_args):
     return 0
 
 
-def server_environment(values):
+def server_environment(values, application='neolab-mcp'):
     env = dict(os.environ)
     env['WAREHOUSE_DSN'] = build_dsn(values)
+    # Names the agent in the server's query audit (docs/WAREHOUSE_AUDIT.md). DbHub drops
+    # application_name from the DSN; node-postgres reads PGAPPNAME instead.
+    env['PGAPPNAME'] = application
     return env
+
+
+def agent_application_name(initialize_line):
+    """'neolab-mcp:<agent>' from the client's first MCP message, so the server audit shows
+    which agent ran each query. Older protocol versions send clientInfo in `initialize`;
+    2026-07-28 (Claude Code 2.1) opens with `server/discover` and puts it in params._meta."""
+    try:
+        params = json.loads(initialize_line).get('params') or {}
+        info = params.get('clientInfo') or (params.get('_meta') or {}).get('io.modelcontextprotocol/clientInfo') or {}
+        name = info.get('name')
+    except (ValueError, AttributeError, TypeError):
+        return 'neolab-mcp'
+    if not name:
+        return 'neolab-mcp'
+    cleaned = ''.join(c for c in str(name) if c.isalnum() or c in '._-')[:40]
+    return 'neolab-mcp:' + cleaned if cleaned else 'neolab-mcp'
+
+
+def trace_paths():
+    base = credentials_path().parent
+    return base / 'trace.on', base / 'trace.jsonl'
+
+
+def summarize_result(message):
+    """Debug summary of a tools/call response: status, rows, truncation, size, preview."""
+    if 'error' in message:
+        return {'status': 'erreur', 'error': str(message['error'].get('message', message['error']))[:500]}
+    result = message.get('result') or {}
+    text = ''.join(part.get('text', '') for part in result.get('content', []) if isinstance(part, dict))
+    summary = {'status': 'erreur' if result.get('isError') else 'ok', 'bytes': len(text.encode('utf-8'))}
+    try:
+        payload = json.loads(text)
+    except ValueError:
+        payload = None
+
+    def walk(node):
+        if isinstance(node, dict):
+            if node.get('success') is False and node.get('error'):
+                summary['status'] = 'erreur'
+                summary['error'] = str(node['error'])[:500]
+            if node.get('truncated') is True:
+                summary['truncated'] = True
+            if isinstance(node.get('rows'), list):
+                summary['rows'] = summary.get('rows', 0) + len(node['rows'])
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+    walk(payload)
+    summary['preview'] = text[:300]
+    return summary
+
+
+def relay(command, values, trace_file=None):
+    """Pass MCP messages between the agent (stdin/stdout) and DbHub, line by line
+    (MCP stdio messages are newline-delimited JSON). DbHub starts once the agent's
+    initialize arrives, to tag its connection with the agent's name; with tracing
+    on, each request/response pair is appended to a private JSONL file."""
+    import threading
+    import time
+    from datetime import datetime, timezone
+    first = sys.stdin.buffer.readline()
+    if not first:
+        return 0
+    application = agent_application_name(first)
+    child = subprocess.Popen(command, env=server_environment(values, application),
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    pending, lock = {}, threading.Lock()
+    agent = application.split(':', 1)[1] if ':' in application else '?'
+
+    def record(entry):
+        if trace_file is None:
+            return
+        line = json.dumps(entry, ensure_ascii=False) + '\n'
+        with lock:
+            descriptor = os.open(trace_file, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            with os.fdopen(descriptor, 'a', encoding='utf-8') as handle:
+                handle.write(line)
+
+    def note_request(raw):
+        if trace_file is None:
+            return
+        try:
+            message = json.loads(raw)
+        except ValueError:
+            return
+        if isinstance(message, dict) and 'id' in message and 'method' in message:
+            params = message.get('params') or {}
+            with lock:
+                pending[message['id']] = (time.monotonic(), message['method'], params.get('name'),
+                                          params.get('arguments'))
+
+    def to_server():
+        line = first
+        try:
+            while line:
+                note_request(line)
+                child.stdin.write(line)
+                child.stdin.flush()
+                line = sys.stdin.buffer.readline()
+        except (BrokenPipeError, OSError):
+            pass
+        finally:
+            try:
+                child.stdin.close()
+            except OSError:
+                pass
+
+    threading.Thread(target=to_server, daemon=True).start()
+    for line in iter(child.stdout.readline, b''):
+        sys.stdout.buffer.write(line)
+        sys.stdout.buffer.flush()
+        if trace_file is None:
+            continue
+        try:
+            message = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(message, dict) or 'id' not in message or 'method' in message:
+            continue
+        with lock:
+            started = pending.pop(message['id'], None)
+        if started is None:
+            continue
+        began, method, tool, arguments = started
+        entry = {'time': datetime.now(timezone.utc).isoformat(timespec='seconds'), 'agent': agent,
+                 'method': method, 'duration_ms': round((time.monotonic() - began) * 1000)}
+        if method == 'tools/call':
+            entry.update({'tool': tool, 'arguments': arguments, **summarize_result(message)})
+        elif 'error' in message:
+            entry.update({'status': 'erreur', 'error': str(message['error'])[:500]})
+        record(entry)
+    return child.wait()
 
 
 def write_private(path, content):
@@ -223,11 +360,52 @@ def init(args):
 
 
 def run(_args):
-    command = dbhub_command()
-    env = server_environment(load_settings())
-    if os.name == 'nt':
-        return subprocess.call(command, env=env)
-    os.execvpe(command[0], command, env)
+    marker, log = trace_paths()
+    return relay(dbhub_command(), load_settings(), log if marker.exists() else None)
+
+
+def trace(args):
+    """Debug trace of the agent's tool calls, local to this machine (trace on|off|show)."""
+    marker, log = trace_paths()
+    if args.action == 'on':
+        write_private(marker, 'on\n')
+        print('Trace activée: chaque appel d\'outil de l\'agent (SQL, durée, lignes, erreurs, extrait du résultat)')
+        print('sera ajouté à %s (fichier privé, sur ce poste seulement).' % log)
+        print('Redémarrer l\'agent pour qu\'il relance le serveur. Désactiver: trace off.')
+        return 0
+    if args.action == 'off':
+        marker.unlink(missing_ok=True)
+        print('Trace désactivée (le fichier %s est conservé; le supprimer si besoin).' % log)
+        return 0
+    if args.action == 'clear':
+        log.unlink(missing_ok=True)
+        print('Trace effacée.')
+        return 0
+    print('Trace %s; fichier: %s' % ('ACTIVE' if marker.exists() else 'inactive', log))
+    if not log.exists():
+        print('Aucun appel enregistré.')
+        return 0
+    entries = [json.loads(line) for line in log.read_text(encoding='utf-8').splitlines() if line.strip()]
+    for entry in entries[-args.last:]:
+        what = entry.get('tool') or entry.get('method')
+        arguments = entry.get('arguments') or {}
+        detail = arguments.get('sql') or arguments.get('topic') or (
+            ' '.join('%s=%s' % kv for kv in arguments.items()) if arguments else '')
+        detail = ' '.join(str(detail).split())
+        if not args.full and len(detail) > 140:
+            detail = detail[:137] + '...'
+        outcome = entry.get('status', 'ok')
+        if 'rows' in entry:
+            outcome += ', %d ligne(s)' % entry['rows']
+        if entry.get('truncated'):
+            outcome += ', TRONQUÉ'
+        if entry.get('error'):
+            outcome += ': ' + entry['error'][:160]
+        print('%s  %-12s %-18s %6d ms  %s' % (entry['time'][:19], entry.get('agent', '?')[:12], what[:18],
+                                             entry.get('duration_ms', 0), outcome))
+        if detail:
+            print('    ' + detail)
+    return 0
 
 
 def registration(client):
@@ -267,7 +445,9 @@ def registration(client):
 
 def config(args):
     print(registration(args.client))
-    print('Les identifiants restent dans %s; redémarrer le client pour charger le serveur.' % credentials_path())
+    # On stderr: `config json > mcp.json` must produce a valid JSON file.
+    print('Les identifiants restent dans %s; redémarrer le client pour charger le serveur.' % credentials_path(),
+          file=sys.stderr)
     return 0
 
 
@@ -336,7 +516,7 @@ def check(_args):
         values['WAREHOUSE_DB_USER'], values['WAREHOUSE_DB_HOST'], values['WAREHOUSE_DB_PORT'],
         values['WAREHOUSE_DB_NAME'], values['WAREHOUSE_DB_SSLMODE'], dbhub_origin()))
     expiry = expiry_status(values)
-    session = McpSession(dbhub_command(), server_environment(values))
+    session = McpSession(dbhub_command(), server_environment(values, 'neolab-check'))
     steps = []
     if expiry:
         steps.append(('validité du mot de passe', 'expiré' not in expiry, expiry))
@@ -394,6 +574,11 @@ def main(argv=None):
     sub.add_parser('check', help='recette complète: connexion, rôle, périmètre, catalogue').set_defaults(handler=check)
     sub.add_parser('run', help='lancer le serveur MCP (commande enregistrée dans le client)').set_defaults(handler=run)
     sub.add_parser('install-dbhub', help='installer DbHub localement (une fois, réseau npm requis)').set_defaults(handler=install_dbhub)
+    p = sub.add_parser('trace', help='débogage: journal local des appels d\'outils de l\'agent (on, off, show, clear)')
+    p.add_argument('action', choices=('on', 'off', 'show', 'clear'))
+    p.add_argument('--last', type=int, default=20, help='show: nombre d\'appels affichés (défaut 20)')
+    p.add_argument('--full', action='store_true', help='show: SQL complet')
+    p.set_defaults(handler=trace)
     p = sub.add_parser('config', help='afficher la commande ou le fragment de configuration du client')
     p.add_argument('client', choices=('codex', 'claude-code', 'claude-desktop', 'gemini', 'cursor', 'vscode', 'json'))
     p.set_defaults(handler=config)

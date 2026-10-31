@@ -153,6 +153,94 @@ class ClientConfigurationTests(unittest.TestCase):
         self.assertRegex(connect.DBHUB_PACKAGE, r"@\d+\.\d+\.\d+$")
 
 
+FAKE_DBHUB = r'''
+import json, os, sys
+open(sys.argv[1], "w").write(os.environ.get("PGAPPNAME", ""))
+for line in sys.stdin:
+    message = json.loads(line)
+    if "id" not in message:
+        continue
+    if message["method"] == "tools/call":
+        payload = {"success": True, "data": {"rows": [{"n": 1}, {"n": 2}], "count": 2, "truncated": False}}
+        result = {"content": [{"type": "text", "text": json.dumps(payload)}]}
+    else:
+        result = {"protocolVersion": "2025-06-18", "capabilities": {}, "serverInfo": {"name": "fake", "version": "1"}}
+    print(json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": result}), flush=True)
+'''
+
+
+class RelayAndTraceTests(unittest.TestCase):
+    """`run` relays MCP messages unchanged, tags the connection with the agent's name for
+    the server audit, and writes a private debug trace only when `trace on`."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        credentials = self.tmp / "cred" / "credentials.env"
+        credentials.parent.mkdir()
+        credentials.write_text("".join(f"{k}={v}\n" for k, v in VALUES.items()), encoding="utf-8")
+        (self.tmp / "fake_dbhub.py").write_text(FAKE_DBHUB, encoding="utf-8")
+        self.env = dict(os.environ, NEOLAB_WAREHOUSE_CREDENTIALS=str(credentials),
+                        WAREHOUSE_DBHUB_COMMAND=f"{sys.executable} {self.tmp / 'fake_dbhub.py'} {self.tmp / 'dsn.txt'}")
+        self.messages = [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+             "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                        "clientInfo": {"name": "codex-mcp-client", "version": "0.166"}}},
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": "execute_sql", "arguments": {"sql": "SELECT * FROM explore.my_access"}}},
+        ]
+
+    def run_agent(self):
+        script = str(ROOT / "scripts" / "warehouse_connect.py")
+        stdin = "".join(json.dumps(m) + "\n" for m in self.messages)
+        result = subprocess.run([sys.executable, script, "run"], input=stdin, env=self.env,
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return [json.loads(line) for line in result.stdout.splitlines()]
+
+    def trace_cli(self, *args):
+        script = str(ROOT / "scripts" / "warehouse_connect.py")
+        return subprocess.run([sys.executable, script, "trace", *args], env=self.env,
+                              capture_output=True, text=True, timeout=30)
+
+    def test_messages_are_relayed_and_the_connection_names_the_agent(self):
+        replies = self.run_agent()
+        self.assertEqual([r["id"] for r in replies], [1, 2])
+        self.assertEqual((self.tmp / "dsn.txt").read_text(encoding="utf-8"), "neolab-mcp:codex-mcp-client")
+        self.assertFalse((self.tmp / "cred" / "trace.jsonl").exists())
+
+    def test_trace_records_each_tool_call_privately_only_when_on(self):
+        self.assertEqual(self.trace_cli("on").returncode, 0)
+        self.run_agent()
+        log = self.tmp / "cred" / "trace.jsonl"
+        entries = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+        call = [e for e in entries if e["method"] == "tools/call"][0]
+        self.assertEqual((call["agent"], call["tool"], call["status"], call["rows"]),
+                         ("codex-mcp-client", "execute_sql", "ok", 2))
+        self.assertEqual(call["arguments"]["sql"], "SELECT * FROM explore.my_access")
+        self.assertNotIn(SECRET, log.read_text(encoding="utf-8"))
+        if os.name != "nt":
+            self.assertEqual(stat.S_IMODE(log.stat().st_mode), 0o600)
+        self.assertIn("explore.my_access", self.trace_cli("show").stdout)
+        self.trace_cli("off")
+        before = log.read_text(encoding="utf-8")
+        self.run_agent()
+        self.assertEqual(log.read_text(encoding="utf-8"), before)
+
+    def test_an_unexpected_client_name_is_reduced_to_a_safe_label(self):
+        line = json.dumps({"params": {"clientInfo": {"name": "x&sslmode=disable password=y"}}})
+        self.assertEqual(connect.agent_application_name(line), "neolab-mcp:xsslmodedisablepasswordy")
+        self.assertEqual(connect.agent_application_name("not json"), "neolab-mcp")
+        self.assertEqual(connect.agent_application_name(json.dumps({"method": "tools/list"})), "neolab-mcp")
+
+    def test_the_agent_is_named_from_the_newer_server_discover_message_too(self):
+        # MCP 2026-07-28 (Claude Code 2.1): no initialize first, clientInfo in params._meta.
+        line = json.dumps({"jsonrpc": "2.0", "id": "server-discover-probe-1", "method": "server/discover",
+                           "params": {"_meta": {"io.modelcontextprotocol/clientInfo": {"name": "claude-code"}}}})
+        self.assertEqual(connect.agent_application_name(line), "neolab-mcp:claude-code")
+
+
 class AdminProvisioningTests(unittest.TestCase):
     def test_role_names_are_validated_and_reserved_names_refused(self):
         self.assertEqual(users.valid_name("ines_labrador"), "ines_labrador")

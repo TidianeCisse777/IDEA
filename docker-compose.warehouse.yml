@@ -3,6 +3,21 @@ services:
     image: postgis/postgis:16-3.4
     container_name: neolab-warehouse-db
     restart: unless-stopped
+    # Query audit (docs/WAREHOUSE_AUDIT.md): the server writes its log as CSV
+    # files in the data volume, one per day, read back by scripts/warehouse_audit.py.
+    # Which statements are logged is set per account (log_statement), not here.
+    command:
+      - postgres
+      - -c
+      - logging_collector=on
+      - -c
+      - log_destination=csvlog
+      - -c
+      - log_filename=postgresql-%Y-%m-%d.log
+      - -c
+      - log_rotation_age=1d
+      - -c
+      - log_rotation_size=0
     environment:
       POSTGRES_DB: ${WAREHOUSE_POSTGRES_DB:-neolab_warehouse}
       POSTGRES_USER: ${WAREHOUSE_POSTGRES_USER:-neolab}

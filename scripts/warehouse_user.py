@@ -136,6 +136,14 @@ def paired_source_warning(args):
     return None
 
 
+def audit_status(env, name):
+    active = psql(env, "SELECT EXISTS (SELECT 1 FROM pg_db_role_setting s JOIN pg_roles r ON r.oid = s.setrole "
+                       "WHERE r.rolname = :'name' AND 'log_statement=all' = ANY (s.setconfig));",
+                  {'name': name}, tuples=True) == 't'
+    return ('Audit des requêtes: actif (relire avec scripts/warehouse_audit.py).' if active else
+            'Audit des requêtes: NON actif (log_statement exige un superuser; voir docs/WAREHOUSE_AUDIT.md).')
+
+
 def wants_grant(args):
     return any(value is not None for value in (args.source, args.contract, args.zone, args.year_min, args.year_max))
 
@@ -151,7 +159,8 @@ def create(args):
     enroll = ("GRANT warehouse_all_access TO :\"name\"; GRANT warehouse_explore_reader TO :\"name\"; "
               "ALTER ROLE :\"name\" SET default_transaction_read_only = on; "
               "ALTER ROLE :\"name\" SET statement_timeout = '30s'; "
-              "ALTER ROLE :\"name\" SET enable_mergejoin = off;"
+              "ALTER ROLE :\"name\" SET enable_mergejoin = off; "
+              "SELECT warehouse.enable_query_audit(:'name');"
               if args.all_access else "SELECT warehouse.enroll_access_role(:'name');")
     script = ("BEGIN;\nCREATE ROLE :\"name\" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS "
               "PASSWORD '%s' %s;\n%s\n" % (password, expires, enroll))
@@ -166,6 +175,7 @@ def create(args):
     warning = paired_source_warning(args) if wants_grant(args) and not args.all_access else None
     if warning:
         print(warning)
+    print(audit_status(env, args.name))
     print('Remettre ce fichier par un canal sûr; la personne exécute:')
     print('  python scripts/warehouse_connect.py init --from-file <fichier> && python scripts/warehouse_connect.py check')
     return 0

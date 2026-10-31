@@ -167,6 +167,10 @@ Un résultat vide peut signifier **un accès limité**, pas une absence de donn�
 | Codex : délai de démarrage dépassé | `startup_timeout_sec = 30` dans `~/.codex/config.toml`, ou `install-dbhub` |
 | l'agent répond mais ne voit aucune donnée | lancer `check` : droits absents, ou une des deux sources UVP manquante (ligne ci-dessous) |
 | erreur de connexion dans l'agent | relancer `check` : il donne la cause exacte (tableau suivant) |
+| comprendre ce que l'agent a fait (requêtes, erreurs, lignes) | `python scripts/warehouse_connect.py trace on`, redémarrer l'agent, puis `trace show` ([détails](WAREHOUSE_AUDIT.md#trace-de-débogage-chaque-personne-sur-son-poste)) |
+
+Vos requêtes sont aussi journalisées côté serveur pour l'audit du labo (compte, heure, agent) : voir
+[Audit et débogage](WAREHOUSE_AUDIT.md).
 
 ### Messages du `check`
 

@@ -68,6 +68,9 @@ ALTER ROLE warehouse_navigator SET statement_timeout = '30s';
 -- merge join that discards hundreds of millions of rows (> 90 s on 4.8 M
 -- objects); hash joins finish in 7-9 s. Measured in docs/WAREHOUSE_ACCESS_CONTROL.md.
 ALTER ROLE warehouse_reader SET enable_mergejoin = off;
+-- Shared agent role (portable DbHub): audit its queries like personal accounts.
+-- The navigator is a web app with its own fixed queries: not audited.
+DO $$ BEGIN PERFORM warehouse.enable_query_audit('warehouse_reader'); END $$;
 
 -- The reader sees the curated surface only; raw tables stay out of reach.
 REVOKE ALL ON SCHEMA warehouse FROM warehouse_reader;

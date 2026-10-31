@@ -4,6 +4,25 @@
 
 **Dernière mise à jour :** 31 octobre 2026
 
+### 31 octobre 2026 — Audit des requêtes des agents et trace de débogage
+
+- **Audit (serveur)** : chaque requête des comptes personnels et de `warehouse_reader` est écrite dans le journal
+  CSV de PostgreSQL (`log_statement` par compte, `logging_collector` + `csvlog` dans le compose), avec le compte,
+  l'heure et l'agent (`neolab-mcp:<agent>`). Le compte ne peut pas le couper (`SET`/`ALTER ROLE` refusés).
+  Relecture : `scripts/warehouse_audit.py` (`--summary`, `--user`, `--since`, `--errors`, `--csv`, `--file`).
+  Activé au déploiement pour les comptes existants et par `warehouse_user.py create` pour les nouveaux; sans
+  superuser, signalé non actif sans échec. [Guide](docs/WAREHOUSE_AUDIT.md).
+- **Trace (poste)** : `warehouse_connect.py trace on|off|show|clear` journalise localement chaque appel d'outil
+  de l'agent (SQL, durée, lignes, troncature, erreur, extrait). `run` relaie désormais les messages MCP pour
+  l'écrire et pour nommer l'agent auprès du serveur.
+- Vérifié avec Docker et un vrai Claude Code (19 requêtes et un refus d'accès retrouvés dans l'audit, trace
+  correspondante), Codex 0.166 et Gemini CLI 0.66 à travers le même lanceur; 105 tests verts en direct.
+- Trouvé en route : MCP 2026-07-28 (Claude Code 2.1) n'ouvre plus par `initialize` (nom de l'agent dans
+  `params._meta`); DbHub ignore `application_name` du DSN (passage par `PGAPPNAME`); `config json > mcp.json`
+  produisait un JSON invalide (message final désormais sur stderr).
+- À décider par le labo : durée de conservation du journal et qui peut le lire. Non testé : hébergement géré,
+  Windows.
+
 ### 31 octobre 2026 — Branchement MCP pour Codex, Gemini CLI, Cursor et VS Code
 
 - `warehouse_connect.py config` génère désormais aussi les configurations Gemini CLI, Cursor et VS Code

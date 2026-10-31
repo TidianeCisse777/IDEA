@@ -126,6 +126,26 @@ GRANT EXECUTE ON FUNCTION warehouse.is_unrestricted(), warehouse.row_allowed(big
     warehouse.readable_versions(boolean)
     TO warehouse_data_owner, warehouse_all_access, warehouse_explore_reader;
 
+-- Query audit: every statement of an agent-facing account is written to the
+-- server log (user, time, SQL; read back with scripts/warehouse_audit.py).
+-- log_statement is superuser-only: the account itself cannot turn it off with
+-- SET, and only a superuser (Docker init, or an owner granted SET on the
+-- parameter) can turn it on. Anyone else gets a warning, never a failed
+-- deploy or account creation; the server must also write its log to a file
+-- (logging_collector + csvlog, set in docker-compose.warehouse.yml).
+CREATE OR REPLACE FUNCTION warehouse.enable_query_audit(p_role name)
+RETURNS boolean LANGUAGE plpgsql
+AS $$
+BEGIN
+    EXECUTE format('ALTER ROLE %I SET log_statement = ''all''', p_role);
+    RETURN true;
+EXCEPTION WHEN insufficient_privilege THEN
+    RAISE WARNING 'audit des requetes non active pour % (superuser requis pour log_statement)', p_role;
+    RETURN false;
+END
+$$;
+REVOKE ALL ON FUNCTION warehouse.enable_query_audit(name) FROM PUBLIC;
+
 -- Enroll an existing login role as a scoped reader: it can query the explore
 -- surface and sees only what access_grant gives it.
 CREATE OR REPLACE FUNCTION warehouse.enroll_access_role(p_role name)
@@ -143,6 +163,7 @@ BEGIN
     EXECUTE format('ALTER ROLE %I SET statement_timeout = ''30s''', p_role);
     -- Same planner setting as warehouse_reader (see warehouse_roles.sql).
     EXECUTE format('ALTER ROLE %I SET enable_mergejoin = off', p_role);
+    PERFORM warehouse.enable_query_audit(p_role);
 END
 $$;
 REVOKE ALL ON FUNCTION warehouse.enroll_access_role(name) FROM PUBLIC;
@@ -179,6 +200,24 @@ BEGIN
         EXCEPTION WHEN insufficient_privilege THEN
             RAISE WARNING 'settings not updated for role % (needs CREATEROLE with ADMIN on it)', member.rolname;
         END;
+    END LOOP;
+END
+$$;
+
+-- Query audit for every personal account, scoped or all-access (both are
+-- members of warehouse_explore_reader); service roles are handled in
+-- warehouse_roles.sql. Accounts created before the audit existed get it here.
+DO $$
+DECLARE
+    member record;
+BEGIN
+    FOR member IN
+        SELECT DISTINCT r.rolname FROM pg_auth_members a
+        JOIN pg_roles g ON g.oid = a.roleid AND g.rolname = 'warehouse_explore_reader'
+        JOIN pg_roles r ON r.oid = a.member
+        WHERE r.rolcanlogin AND NOT r.rolsuper AND r.rolname <> current_user
+    LOOP
+        PERFORM warehouse.enable_query_audit(member.rolname);
     END LOOP;
 END
 $$;
