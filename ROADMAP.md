@@ -4,6 +4,35 @@
 
 **Dernière mise à jour :** 31 octobre 2026
 
+### 31 octobre 2026 — Vrais contours de zone pour les agents, et la zone enfin directe sur l'abondance UVP
+
+- Fermé deux écarts trouvés en testant abondance multi-taxon/multi-zone avec un agent réel la veille.
+- **Zone manquante sur `explore.uvp_taxon_abundance`** : la vue joint déjà `uvp_profile` (qui porte
+  `marine_zone_key`) mais ne le sélectionnait pas — un agent sans `explore.uvp_samples` peuplé (profil sans
+  sample EcoTaxa lié) devait deviner la zone autrement. Corrigé (`docs/warehouse_uvp_abundance_zone_migration.sql`) :
+  `marine_zone_key/name/assignment_status` et `ecotaxa_project_id` ajoutés en fin de colonnes.
+- **Contours de zone absents du SQL** : `marine_zone_key` n'était qu'une étiquette texte partout dans le
+  warehouse; la géométrie réelle (`shared_data/geo/zones_registry.geojson`, 65 zones, IHO Marine Regions)
+  n'existait que comme fichier local lu par le navigateur et les scripts Python — injoignable depuis DbHub/MCP.
+  Ajouts : table PostGIS `warehouse.marine_zone`, vue `explore.marine_zone_boundaries` (GeoJSON), chargeur
+  `scripts/load_marine_zones.py` (idempotent, 65 zones). Simplification nécessaire : certaines zones (archipel
+  arctique, ex. « Nunavik ») encodent des milliers de petites îles en trous internes — simplifier la ligne
+  (Douglas-Peucker) seule ne réduisait presque rien (1,2 Mo même à tolérance 0,5°); retirer d'abord les îles
+  sous un seuil de surface a ramené le total des 65 zones de 4,65 Mo à 464 Ko (max 96 Ko/zone, contre 1,2 Mo
+  avant).
+- PostGIS n'était activé qu'en fin de déploiement, après les migrations (`ensure_postgis`, pour le filtre
+  spatial du navigateur, jamais requis par le schéma jusqu'ici) : la nouvelle table en a besoin plus tôt,
+  déplacé avant les migrations. Sur un propriétaire non-superuser sans droit préalable sur l'extension
+  (hébergement géré, cas déjà testé), la migration se dégrade proprement (vue non créée, reste du déploiement
+  intact) — corrigé `publish_warehouse_context.py` pour accepter cette vue comme optionnelle plutôt que
+  d'échouer tout le contexte MCP si elle manque.
+- Vérifié en direct (Docker, jeu de test, compte scopé C1) avec un agent réel : il a trouvé la zone directement
+  sur `explore.uvp_taxon_abundance` (sans deviner, cette fois), calculé l'abondance de Calanus par zone (450 /
+  200 / 90 ind/m³, exact), puis tracé une carte avec les **vrais contours polygonaux** des 3 zones concernées
+  (pas des points) via `explore.marine_zone_boundaries`, colorée par abondance.
+- 101 tests verts en direct (20 vues, 366 colonnes documentées), y compris le cas hébergement géré non-superuser
+  sans PostGIS préalable.
+
 ### 31 octobre 2026 — Filtre par zone, carte avec taille/couleur de projet : vérifiés, un trou fermé
 
 - Vérifié avec un agent réel (Docker, 3 zones maritimes réelles, 3 projets EcoTaxa de test, compte scopé C1) :

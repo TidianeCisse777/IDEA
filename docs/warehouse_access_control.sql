@@ -408,7 +408,8 @@ SELECT 'table without row security'::text AS problem, c.relname::text AS object_
 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname = 'warehouse' AND c.relkind = 'r' AND NOT c.relrowsecurity
   AND c.relname NOT IN ('dataset_version', 'dataset_metadata', 'dataset_file', 'column_metadata',
-                        'validation_run', 'taxon_mapping', 'ctd_variable', 'access_grant', 'release_history')
+                        'validation_run', 'taxon_mapping', 'ctd_variable', 'access_grant', 'release_history',
+                        'marine_zone')
 UNION ALL
 SELECT DISTINCT 'view bypasses row security', v.relname::text
 FROM pg_class v

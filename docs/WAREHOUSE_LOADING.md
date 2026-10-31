@@ -46,6 +46,19 @@ python scripts/audit_warehouse.py --qualify                                     
 Sans contrat posé, un compte limité par contrat ne voit pas ces données (refus par défaut). Les versions FILET qui
 mélangent plusieurs contrats sont signalées par le rapport : les charger en une version par contrat.
 
+## Contours de zone (optionnel, pour les cartes faites par un agent)
+
+```bash
+python scripts/load_marine_zones.py              # charge/rafraîchit les 65 zones depuis shared_data/geo/zones_registry.geojson
+```
+
+Indépendant des autres chargeurs : pas de `dataset_version`, pas de sécurité par ligne (table de référence,
+comme `taxon_mapping`). Simplifie les géométries (îles sous un seuil de surface retirées, puis
+Douglas-Peucker) pour qu'un agent puisse récupérer une zone via `explore.marine_zone_boundaries` sans qu'elle
+domine son contexte; rejouer après une mise à jour du registre. Nécessite PostGIS — absent chez un propriétaire
+non-superuser sans droit préalable sur l'extension, la migration se dégrade alors proprement (vue non créée, le
+reste du warehouse continue de fonctionner).
+
 ## Vérifié avant le premier chargement réel
 
 Les chargeurs ont été exécutés sans modification sur une v1 complète, avec EcoTaxa et l'ERDDAP simulés et les

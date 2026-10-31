@@ -31,7 +31,8 @@ FRESH_FILES = ('warehouse_schema_proposal.sql', 'warehouse_metadata_migration.sq
                'warehouse_ecopart_migration.sql')
 ALWAYS_FILES = ('warehouse_ctd_zone_migration.sql', 'warehouse_uvp_particle_sizes_view.sql',
                'warehouse_ecotaxa_object_size_migration.sql', 'warehouse_taxon_mapping_view.sql',
-               'warehouse_ecotaxa_project_title_migration.sql',
+               'warehouse_ecotaxa_project_title_migration.sql', 'warehouse_uvp_abundance_zone_migration.sql',
+               'warehouse_marine_zone_migration.sql',
                'warehouse_fair_migration.sql', 'warehouse_access_control.sql')
 ROLES_FILE = 'warehouse_roles.sql'
 RELEASE_FILE = 'warehouse_release.sql'
@@ -82,6 +83,12 @@ def query(env, statement):
 
 def deploy(env, dry_run):
     fresh = query(env, "SELECT to_regnamespace('warehouse') IS NULL") == 't'
+    if not dry_run:
+        # Before the migrations: warehouse.marine_zone needs the geometry type.
+        # A non-superuser owner without prior CREATE EXTENSION rights degrades
+        # gracefully (see ensure_postgis); that migration also has its own
+        # fallback for this case.
+        ensure_postgis(env)
     steps = []
     if fresh:
         steps += [(name, True) for name in FRESH_FILES]
@@ -101,8 +108,6 @@ def deploy(env, dry_run):
     if not dry_run:
         psql(env, '-1', '-v', 'release=' + release_version(), '-v', 'method=deploy-script',
              '-v', 'migrations=' + json.dumps(release_manifest()), '-f', str(DOCS / RELEASE_FILE))
-    if not dry_run:
-        ensure_postgis(env)
 
 
 def ensure_postgis(env):

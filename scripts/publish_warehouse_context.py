@@ -4,7 +4,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from warehouse_context import VIEWS, GRAPHICS, column_description
+from warehouse_context import VIEWS, OPTIONAL_VIEWS, GRAPHICS, column_description
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -55,12 +55,15 @@ def publish(conn):
                 WHERE table_schema='explore' ORDER BY table_name,ordinal_position""").fetchall()
         scientific = [row for row in columns if row['table_name'] in VIEWS]
         actual = {row['table_name'] for row in scientific}
-        if actual != set(VIEWS):
-            raise ValueError(f'Vues scientifiques absentes : {set(VIEWS)-actual}')
+        missing = (set(VIEWS) - OPTIONAL_VIEWS) - actual
+        if missing:
+            raise ValueError(f'Vues scientifiques absentes : {missing}')
         # Validate coverage before performing any metadata changes.
         descriptions = {(r['table_name'], r['column_name']): column_description(r['table_name'], r['column_name'])
                         for r in scientific}
         for name, item in VIEWS.items():
+            if name not in actual:
+                continue  # optional view this deployment could not create (e.g. no PostGIS)
             comment = f"{item['purpose']} Grain : {item['grain']} Relations : {item['joins']} Limites : {item['caveats']}"
             cur_sql = sql.SQL('COMMENT ON VIEW explore.{} IS {}').format(sql.Identifier(name), sql.Literal(comment))
             conn.execute(cur_sql)
@@ -74,7 +77,7 @@ def publish(conn):
         rows.append(('graphs', GRAPHICS['purpose'], GRAPHICS['grain'], GRAPHICS['joins'],
                      GRAPHICS['caveats'], GRAPHICS['example']))
         rows += [(name, item['purpose'], item['grain'], item['joins'], item['caveats'], item['example'])
-                 for name, item in VIEWS.items()]
+                 for name, item in VIEWS.items() if name in actual]
         for name, purpose, grain, example in (
             ('dataset_versions', 'Inventaire vivant des versions enregistrées, sans URI de fichier local.',
              'Une version identifiée par source_instance, dataset_key et version_key.',

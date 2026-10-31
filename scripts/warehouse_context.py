@@ -61,6 +61,13 @@ GRAPHICS = view(
 )
 
 
+# Views registered in VIEWS that may legitimately be absent from a deployment:
+# marine_zone_boundaries needs PostGIS, which a non-superuser managed-hosting
+# owner cannot always create (see deploy_warehouse_postgres.py's
+# ensure_postgis and docs/warehouse_marine_zone_migration.sql). publish()
+# treats every other VIEWS entry as mandatory; this is the one exception.
+OPTIONAL_VIEWS = {'marine_zone_boundaries'}
+
 VIEWS = {
     'uvp_projects': view(
         'Inventaire agrégé des projets UVP liés à EcoTaxa/EcoPart.',
@@ -91,8 +98,10 @@ VIEWS = {
     'uvp_taxon_abundance': view(
         'Abondances UVP dérivées des objets EcoTaxa et volumes EcoPart.',
         'Version dérivée × profil × bin × taxon_key × annotation_policy.',
-        'profile_id vers uvp_samples.uvp_profile_id; bin_id vers ecopart_bins.bin_id. Isoler annotation_policy et dataset_version_id.',
-        'Formule : n_objects_taxon / sampled_volume_l × 1000, individus/m³. Agréger par SUM(n_objects_taxon)/SUM(sampled_volume_l)*1000, pas par moyenne simple. La vue ajoute des zéros sur tous les bins uniquement pour les taxons observés dans ce profil et cette annotation_policy; un taxon absent du profil entier ne reçoit pas de zéro. all_loaded_objects inclut les objets non validés. Ne pas sommer le même volume sur plusieurs taxons.',
+        'profile_id vers uvp_samples.uvp_profile_id; bin_id vers ecopart_bins.bin_id. Isoler annotation_policy et dataset_version_id. '
+        'ecotaxa_project_id vers uvp_projects.ecotaxa_project_id.',
+        'Formule : n_objects_taxon / sampled_volume_l × 1000, individus/m³. Agréger par SUM(n_objects_taxon)/SUM(sampled_volume_l)*1000, pas par moyenne simple. La vue ajoute des zéros sur tous les bins uniquement pour les taxons observés dans ce profil et cette annotation_policy; un taxon absent du profil entier ne reçoit pas de zéro. all_loaded_objects inclut les objets non validés. Ne pas sommer le même volume sur plusieurs taxons. '
+        'marine_zone_key/name/assignment_status viennent directement de uvp_profile : disponibles même quand explore.uvp_samples est vide pour ce profil (pas de sample EcoTaxa lié) — ne pas passer par uvp_samples pour la zone, elle est déjà ici.',
         'SELECT profile_id,taxon_key,annotation_policy,SUM(n_objects_taxon)/SUM(sampled_volume_l)*1000 AS ind_m3 FROM explore.uvp_taxon_abundance GROUP BY 1,2,3 LIMIT 20;'),
     'uvp_particle_sizes': view(
         'Spectre de tailles des particules UVP (produit EcoPart LPM), sans annotation taxonomique.',
@@ -142,6 +151,18 @@ VIEWS = {
         'SELECT tm.filet_taxon_id, s.taxon_name, s.major_um FROM explore.taxon_mapping tm '
         'JOIN explore.uvp_object_sizes s ON s.taxon_key = tm.uvp_taxon_id '
         'WHERE tm.filet_taxon_id = \'Calanus finmarchicus\' LIMIT 20;'),
+    'marine_zone_boundaries': view(
+        'Contour géométrique (GeoJSON) des zones maritimes utilisées ailleurs comme marine_zone_key.',
+        'Une ligne par zone (zone_key), simplifiée pour un usage cartographique.',
+        'zone_key correspond au marine_zone_key des vues d’occurrence (uvp_samples, uvp_taxon_abundance, '
+        'filet_data, uvp_object_sizes…) : joindre dessus pour dessiner le contour réel d’une zone au lieu d’un '
+        'simple point ou d’un label.',
+        'geometry_geojson est une géométrie simplifiée (Douglas-Peucker, tolérance en degrés dans '
+        'simplify_tolerance_deg) : ne pas l’utiliser pour un calcul de surface ou d’inclusion de précision — '
+        'shared_data/geo/zones_registry.geojson dans le dépôt reste la référence à pleine résolution. '
+        'Parser geometry_geojson côté client (ex. Python : json.loads puis shapely.geometry.shape). '
+        'Table de référence, non datée ni contractuelle : pas de filtre d’accès par contrat/zone/année.',
+        'SELECT zone_key, geometry_geojson FROM explore.marine_zone_boundaries WHERE zone_key = \'Baie de Baffin\';'),
     'ecopart_source_metadata': view(
         'Lignes brutes des métadonnées EcoPart.', 'Ligne source de métadonnées dans une version et un profil éventuel.',
         'dataset_version_id vers dataset_versions; profile_name correspond au nom natif, pas à une clé globale.',
@@ -309,6 +330,11 @@ COLUMNS = {
     'uvp_taxon_id': 'Taxon UVP associé, même convention que taxon_key (ecotaxa:id:…/ecotaxa:name:…/warehouse:unclassified).',
     'mapping_relation': 'Relation entre le taxon FILET et le taxon UVP (ex. équivalence, taxon plus large); ne pas supposer une équivalence stricte sans le vérifier.',
     'mapping_version': 'Version de la correspondance taxonomique retenue; une mise à jour change potentiellement le résultat d’une comparaison.',
+    'zone_key': 'Clé de la zone maritime, même valeur que marine_zone_key ailleurs dans le warehouse; clé de jointure vers les vues d’occurrence.',
+    'zone_source': 'Source de la géométrie de la zone (ex. registre IHO Marine Regions, composite NeoLab); voir shared_data/geo/zones_registry.geojson pour le détail.',
+    'geometry_geojson': 'Contour de la zone en GeoJSON (WGS84), simplifié pour l’affichage; parser côté client (json puis shapely/cartopy), ne pas l’utiliser pour un calcul de précision.',
+    'simplify_tolerance_deg': 'Tolérance de simplification (degrés, Douglas-Peucker) appliquée au contour; plus elle est grande, plus le contour s’écarte de la géométrie officielle.',
+    'loaded_at': 'Horodatage du dernier chargement de ce contour par scripts/load_marine_zones.py.',
     'match_status': 'Statut de la correspondance; accepted est distinct des candidats ambiguous et des liens non acceptés.',
     'match_method': 'Méthode enregistrée de rapprochement; ne pas la déduire du seul statut.',
     'relation_type': 'Nature de la liaison EcoTaxa–CTD déclarée par le rapprochement.',

@@ -181,9 +181,9 @@ Abondances UVP dérivées des objets EcoTaxa et volumes EcoPart.
 
 **Grain :** Version dérivée × profil × bin × taxon_key × annotation_policy.
 
-**Relations :** profile_id vers uvp_samples.uvp_profile_id; bin_id vers ecopart_bins.bin_id. Isoler annotation_policy et dataset_version_id.
+**Relations :** profile_id vers uvp_samples.uvp_profile_id; bin_id vers ecopart_bins.bin_id. Isoler annotation_policy et dataset_version_id. ecotaxa_project_id vers uvp_projects.ecotaxa_project_id.
 
-**Limites :** Formule : n_objects_taxon / sampled_volume_l × 1000, individus/m³. Agréger par SUM(n_objects_taxon)/SUM(sampled_volume_l)*1000, pas par moyenne simple. La vue ajoute des zéros sur tous les bins uniquement pour les taxons observés dans ce profil et cette annotation_policy; un taxon absent du profil entier ne reçoit pas de zéro. all_loaded_objects inclut les objets non validés. Ne pas sommer le même volume sur plusieurs taxons.
+**Limites :** Formule : n_objects_taxon / sampled_volume_l × 1000, individus/m³. Agréger par SUM(n_objects_taxon)/SUM(sampled_volume_l)*1000, pas par moyenne simple. La vue ajoute des zéros sur tous les bins uniquement pour les taxons observés dans ce profil et cette annotation_policy; un taxon absent du profil entier ne reçoit pas de zéro. all_loaded_objects inclut les objets non validés. Ne pas sommer le même volume sur plusieurs taxons. marine_zone_key/name/assignment_status viennent directement de uvp_profile : disponibles même quand explore.uvp_samples est vide pour ce profil (pas de sample EcoTaxa lié) — ne pas passer par uvp_samples pour la zone, elle est déjà ici.
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
@@ -201,6 +201,10 @@ Abondances UVP dérivées des objets EcoTaxa et volumes EcoPart.
 | cruise_key | text | Libellé/clé de campagne de la source; pas de normalisation inter-source implicite. |
 | station_key | text | Libellé/clé de station UVP de la source; ne prouve pas une identité inter-source. |
 | sampled_at | timestamp with time zone | Horodatage source ou borne agrégée selon le nom; vérifier le type SQL et le fuseau. Le rapprochement FILET existant interprète ses dates sans fuseau en UTC. |
+| marine_zone_key | text | Clé de zone maritime attribuée; consulter source, version et statut. |
+| marine_zone_name | text | Libellé de zone; dans uvp_projects, MIN ne représente pas toutes les zones du projet. |
+| marine_zone_assignment_status | text | assigned, ambiguous, outside ou unresolved; un chevauchement peut être ambiguous. |
+| ecotaxa_project_id | bigint | Identifiant natif du projet EcoTaxa; distinct de celui du projet EcoPart. |
 
 ```sql
 SELECT profile_id,taxon_key,annotation_policy,SUM(n_objects_taxon)/SUM(sampled_volume_l)*1000 AS ind_m3 FROM explore.uvp_taxon_abundance GROUP BY 1,2,3 LIMIT 20;
@@ -306,6 +310,28 @@ Correspondance taxonomique FILET↔UVP retenue (statut accepted uniquement).
 
 ```sql
 SELECT tm.filet_taxon_id, s.taxon_name, s.major_um FROM explore.taxon_mapping tm JOIN explore.uvp_object_sizes s ON s.taxon_key = tm.uvp_taxon_id WHERE tm.filet_taxon_id = 'Calanus finmarchicus' LIMIT 20;
+```
+
+## explore.marine_zone_boundaries
+
+Contour géométrique (GeoJSON) des zones maritimes utilisées ailleurs comme marine_zone_key.
+
+**Grain :** Une ligne par zone (zone_key), simplifiée pour un usage cartographique.
+
+**Relations :** zone_key correspond au marine_zone_key des vues d’occurrence (uvp_samples, uvp_taxon_abundance, filet_data, uvp_object_sizes…) : joindre dessus pour dessiner le contour réel d’une zone au lieu d’un simple point ou d’un label.
+
+**Limites :** geometry_geojson est une géométrie simplifiée (Douglas-Peucker, tolérance en degrés dans simplify_tolerance_deg) : ne pas l’utiliser pour un calcul de surface ou d’inclusion de précision — shared_data/geo/zones_registry.geojson dans le dépôt reste la référence à pleine résolution. Parser geometry_geojson côté client (ex. Python : json.loads puis shapely.geometry.shape). Table de référence, non datée ni contractuelle : pas de filtre d’accès par contrat/zone/année.
+
+| Colonne | Type SQL | Définition |
+|---|---|---|
+| zone_key | text | Clé de la zone maritime, même valeur que marine_zone_key ailleurs dans le warehouse; clé de jointure vers les vues d’occurrence. |
+| zone_source | text | Source de la géométrie de la zone (ex. registre IHO Marine Regions, composite NeoLab); voir shared_data/geo/zones_registry.geojson pour le détail. |
+| geometry_geojson | text | Contour de la zone en GeoJSON (WGS84), simplifié pour l’affichage; parser côté client (json puis shapely/cartopy), ne pas l’utiliser pour un calcul de précision. |
+| simplify_tolerance_deg | double precision | Tolérance de simplification (degrés, Douglas-Peucker) appliquée au contour; plus elle est grande, plus le contour s’écarte de la géométrie officielle. |
+| loaded_at | timestamp with time zone | Horodatage du dernier chargement de ce contour par scripts/load_marine_zones.py. |
+
+```sql
+SELECT zone_key, geometry_geojson FROM explore.marine_zone_boundaries WHERE zone_key = 'Baie de Baffin';
 ```
 
 ## explore.ecopart_source_metadata
