@@ -1,47 +1,150 @@
-# Se connecter au warehouse avec DbHub (Codex, Claude)
+# Connecter un agent IA au warehouse (Claude, Codex, Gemini, Cursor, VS Code)
 
-Chaque personne se connecte avec **son propre compte** : son périmètre de lecture
-([contrats, zones, années](WAREHOUSE_ACCESS_CONTROL.md)) est appliqué par la base, quel que soit le client.
-Les identifiants restent dans un fichier privé hors du dépôt; ils n'apparaissent jamais dans une
-configuration MCP, une commande ou une sortie.
+## Comment ça marche
 
-## Pour la personne qui teste (5 minutes)
-
-Prérequis : Python 3.10+, Node.js 18+ (DbHub 1.5.0 est téléchargé au premier lancement, ou installé une fois
-avec `install-dbhub` pour ne plus dépendre du réseau) et un accès
-réseau au serveur PostgreSQL.
-
-```bash
-# 1. Enregistrer le fichier remis par l'administrateur (puis le supprimer)
-python scripts/warehouse_connect.py init --from-file mon_compte.env
-#    (option --keyring: mot de passe dans le trousseau du système, avec `pip install keyring`)
-
-# 2. Vérifier: connexion, compte, périmètre, catalogue, contexte métier
-python scripts/warehouse_connect.py check
-
-# 3. Brancher votre client (affiche la commande exacte pour votre poste)
-python scripts/warehouse_connect.py config codex           # ou claude-code, claude-desktop, gemini, cursor, vscode, json
+```
+ Votre agent IA ──(MCP)──> warehouse_connect.py run ──> DbHub ──(SQL, lecture seule)──> PostgreSQL
+ (Claude, Codex, …)         lit vos identifiants dans                                     applique VOS droits
+                            un fichier privé, hors dépôt                                  (contrat, zone, années)
 ```
 
-Un `PASS` signifie que DbHub est utilisable depuis ce poste. Redémarrer ensuite le client pour qu'il
-charge le serveur `neolab-warehouse`. Pour un démarrage rapide et hors réseau, installer DbHub une fois :
-`python scripts/warehouse_connect.py install-dbhub` (sinon `npx` le télécharge au premier lancement).
+- **Un seul compte par personne**, remis par l'administrateur. La base applique vos droits, quel que soit
+  l'agent : deux agents branchés sur le même compte voient exactement les mêmes données.
+- **Le même branchement pour tous les agents** : chacun lance la commande `warehouse_connect.py run`. Seul
+  l'endroit où on l'enregistre change d'un agent à l'autre.
+- **Aucun mot de passe dans la configuration de l'agent** : il reste dans un fichier privé de votre poste
+  (`~/.config/neolab-warehouse/credentials.env`, ou `%APPDATA%\neolab-warehouse\` sous Windows).
+- **Lecture seule** : un agent ne peut rien modifier ni effacer dans le warehouse.
 
-| Client | Enregistrement | Vérifié |
+## Étapes 1 et 2 — une seule fois par poste, quel que soit l'agent
+
+Prérequis : Python 3.10+, Node.js 18+, et un accès réseau au serveur (tunnel SSH ou réseau du labo, voir
+[Réseau](#réseau)).
+
+```bash
+# 1. Enregistrer le fichier remis par l'administrateur, puis supprimer ce fichier
+python scripts/warehouse_connect.py init --from-file mon_compte.env
+#    option --keyring : garder le mot de passe dans le trousseau du système (pip install keyring)
+
+# 2. Vérifier : connexion, compte, droits, catalogue, contexte métier
+python scripts/warehouse_connect.py check            # doit finir par PASS
+
+# Recommandé : installer DbHub une fois (démarrage en ~1 s, sans dépendre d'Internet ensuite)
+python scripts/warehouse_connect.py install-dbhub
+```
+
+Ne passez à l'étape 3 qu'après un `PASS`. Sinon, voir [Dépannage](#dépannage).
+
+## Étape 3 — brancher votre agent
+
+`python scripts/warehouse_connect.py config <agent>` affiche la commande ou le bloc **exacts pour votre poste**,
+avec les bons chemins vers Python et vers le script. Copiez ce qu'il affiche plutôt que les exemples ci-dessous,
+où `<python>` et `<IDEA>` sont à remplacer. Après l'enregistrement, **redémarrez l'agent** : il ne charge ses
+serveurs MCP qu'au démarrage.
+
+| Agent | `config …` | Testé |
 |---|---|---|
-| Codex | `codex mcp add neolab-warehouse -- <python> <chemin>/scripts/warehouse_connect.py run`, ou bloc `[mcp_servers.neolab-warehouse]` de `~/.codex/config.toml` avec `startup_timeout_sec = 30` | serveur démarré par Codex 0.166 |
-| Claude Code | `claude mcp add --scope user neolab-warehouse -- <python> <chemin>/scripts/warehouse_connect.py run`, ou `.mcp.json` de projet (sans secret) | sessions complètes |
-| Claude Desktop | bloc `mcpServers` de `claude_desktop_config.json` | non |
-| Gemini CLI | `gemini mcp add -s user neolab-warehouse <python> <chemin>/scripts/warehouse_connect.py run` — lancer `gemini` depuis un **dossier approuvé**, sinon il désactive tous les serveurs MCP | `Connected` (Gemini CLI 0.66) |
-| Cursor | bloc `mcpServers` de `~/.cursor/mcp.json` | non |
-| VS Code / Copilot | bloc `servers` (`"type": "stdio"`) de `.vscode/mcp.json` | non |
-| Autre client MCP | `config json` : commande `<python>`, arguments `<chemin>/scripts/warehouse_connect.py run`, transport stdio | — |
+| Claude Code | `claude-code` | oui, conversations complètes |
+| Codex (OpenAI) | `codex` | oui, serveur démarré et connecté par Codex |
+| Gemini CLI (Google) | `gemini` | oui, serveur « Connected » |
+| Claude Desktop | `claude-desktop` | non |
+| Cursor | `cursor` | non |
+| VS Code / GitHub Copilot | `vscode` | non |
+| Tout autre client MCP | `json` | — |
 
-Aucune configuration ne contient d'identifiant : le serveur les lit dans le fichier privé enregistré à l'étape 1.
+### Claude Code
 
-### Que demander ensuite
+```bash
+claude mcp add --scope user neolab-warehouse -- <python> <IDEA>/scripts/warehouse_connect.py run
+claude mcp list                       # vérification : neolab-warehouse … ✓ Connected
+```
 
-Dans le client, commencer par ces questions : elles utilisent les mêmes points d'entrée que les agents.
+`--scope user` : disponible dans tous vos projets. Pour un projet partagé, `config claude-code` donne aussi un
+fichier `.mcp.json` à placer à la racine du projet (il ne contient aucun secret).
+
+### Codex
+
+```bash
+codex mcp add neolab-warehouse -- <python> <IDEA>/scripts/warehouse_connect.py run
+codex mcp list                        # vérification : neolab-warehouse … enabled
+```
+
+Ou directement dans `~/.codex/config.toml` :
+
+```toml
+[mcp_servers.neolab-warehouse]
+command = "<python>"
+args = ["<IDEA>/scripts/warehouse_connect.py", "run"]
+startup_timeout_sec = 30
+```
+
+**Piège** : Codex abandonne un serveur qui n'a pas répondu en 10 s. Le premier lancement sans `install-dbhub`
+télécharge DbHub et peut dépasser ce délai : gardez `startup_timeout_sec = 30`, ou faites `install-dbhub`.
+`codex mcp list` montre que le serveur est enregistré, pas qu'il démarre : la vérification réelle est la
+première question posée dans une session (voir [Première question](#première-question-à-poser)).
+
+### Gemini CLI
+
+```bash
+gemini mcp add -s user neolab-warehouse <python> <IDEA>/scripts/warehouse_connect.py run
+gemini mcp list                       # vérification : ✓ neolab-warehouse … Connected
+```
+
+**Piège** : Gemini **désactive tous les serveurs MCP** quand il est lancé depuis un dossier qu'il ne
+considère pas de confiance (`gemini mcp list` affiche alors « Disabled »). Lancez `gemini` depuis votre dossier
+de travail et répondez oui à « Do you trust the files in this folder? », ou utilisez la commande `/permissions`
+dans une session.
+
+### Claude Desktop, Cursor, VS Code
+
+Ces trois-là s'enregistrent en collant un bloc JSON dans un fichier de configuration :
+
+| Agent | Fichier | Bloc |
+|---|---|---|
+| Claude Desktop | Réglages > Développeur > Modifier la config (`claude_desktop_config.json`) | `mcpServers` |
+| Cursor | `~/.cursor/mcp.json` (tous projets) ou `.cursor/mcp.json` (un projet) | `mcpServers` |
+| VS Code / Copilot (mode agent) | `.vscode/mcp.json` du projet | `servers`, avec `"type": "stdio"` |
+
+```json
+{
+  "mcpServers": {
+    "neolab-warehouse": {
+      "command": "<python>",
+      "args": ["<IDEA>/scripts/warehouse_connect.py", "run"]
+    }
+  }
+}
+```
+
+Pour VS Code, `config vscode` donne la variante avec `servers` et `"type": "stdio"`. Ces trois agents n'ont pas
+encore été testés : merci de signaler ce qui coince.
+
+### Tout autre client MCP
+
+Serveur MCP en **stdio**, commande `<python>`, arguments `<IDEA>/scripts/warehouse_connect.py run`, aucune
+variable d'environnement nécessaire. `config json` affiche la forme `mcpServers`, la plus répandue.
+
+## Première question à poser
+
+Une fois l'agent redémarré, demandez-lui :
+
+> « Lis le contexte du warehouse NeoLab, puis dis-moi ce que mon compte a le droit de voir. »
+
+Un agent bien branché appelle l'outil `warehouse_context`, puis lit `explore.my_access`, et vous répond avec
+vos droits (sources, contrats, zones, années). S'il dit ne pas avoir d'outil `neolab-warehouse` : l'agent n'a
+pas été redémarré, ou l'enregistrement a échoué (voir [Dépannage](#dépannage)).
+
+Le serveur fournit trois outils, identiques pour tous les agents :
+
+| Outil | Rôle |
+|---|---|
+| `warehouse_context` | mode d'emploi métier : à lire en premier (`overview`), puis par vue, et `graphs` avant un graphique |
+| `execute_sql` | requêtes SQL en lecture seule (1000 lignes au plus par réponse) |
+| `search_objects` | lister vues, colonnes et types |
+
+## Que demander ensuite
+
+Ce que l'agent consulte, et que vous pouvez aussi lui demander directement :
 
 | Pour savoir… | Lire |
 |---|---|
@@ -53,11 +156,21 @@ Dans le client, commencer par ces questions : elles utilisent les mêmes points 
 
 Un résultat vide peut signifier **un accès limité**, pas une absence de données : vérifier `my_access` d'abord.
 
-### Dépannage
+## Dépannage
 
-| Symptôme du `check` | Cause probable |
+### Dans l'agent
+
+| Symptôme | Que faire |
 |---|---|
-La recette lit l'erreur de DbHub et donne la cause, sans jamais afficher de secret :
+| l'agent ne connaît pas d'outil `neolab-warehouse` | redémarrer l'agent; vérifier l'enregistrement (`claude mcp list`, `codex mcp list`, `gemini mcp list`) |
+| Gemini : serveur « Disabled » | dossier non approuvé : voir [Gemini CLI](#gemini-cli) |
+| Codex : délai de démarrage dépassé | `startup_timeout_sec = 30` dans `~/.codex/config.toml`, ou `install-dbhub` |
+| l'agent répond mais ne voit aucune donnée | lancer `check` : droits absents, ou une des deux sources UVP manquante (ligne ci-dessous) |
+| erreur de connexion dans l'agent | relancer `check` : il donne la cause exacte (tableau suivant) |
+
+### Messages du `check`
+
+`check` lit l'erreur de DbHub et donne la cause, sans jamais afficher de secret :
 
 | Message du `check` | Que faire |
 |---|---|
@@ -74,11 +187,9 @@ La recette lit l'erreur de DbHub et donne la cause, sans jamais afficher de secr
 | `Node.js 18+ est requis` | installer Node.js 18+ |
 | poste sans accès à npm | sur un poste connecté, `python scripts/warehouse_connect.py install-dbhub`, puis copier `data/tooling/dbhub` |
 
-### Tester avec un agent
+## Tester sans rien enregistrer (Claude Code)
 
-Avec Claude Code installé, un agent peut utiliser le serveur sans rien configurer d'autre que le fichier
-d'identifiants. Le fragment `config json` donne la configuration; l'agent suit seul le parcours de découverte
-(`warehouse_context`, `explore.my_access`, `explore.dataset_catalog`).
+Pour un essai ponctuel, sans toucher à la configuration de Claude Code :
 
 ```bash
 python scripts/warehouse_connect.py config json > mcp.json      # puis ajouter "env" si le fichier d'identifiants est ailleurs
@@ -95,7 +206,7 @@ valeurs : le compte restreint a retrouvé les 4 abondances moyennes attendues (2
 signalé qu'ils ne pouvaient pas distinguer des données masquées de données absentes, ce qui est voulu : le
 catalogue n'expose pas de compteurs hors périmètre.
 
-### Peut-on faire confiance à ce que l'agent répond ?
+## Peut-on faire confiance à ce que l'agent répond ?
 
 L'agent n'est pas plus honnête qu'un autre par principe : c'est le warehouse qui rend l'invention plus difficile
 que le signalement de l'incertitude. Trois mécanismes concrets, pas une promesse :

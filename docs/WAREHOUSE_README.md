@@ -1,7 +1,7 @@
 # Warehouse NeoLab — point d'entrée
 
 Base PostgreSQL qui centralise EcoTaxa, EcoPart, FILET et CTD, avec un accès en lecture par compte,
-un catalogue de métadonnées et un branchement DbHub pour Codex et Claude. Ce document relie les guides
+un catalogue de métadonnées et un branchement DbHub pour les agents IA (Claude, Codex, Gemini, Cursor, VS Code). Ce document relie les guides
 et donne le parcours complet; le détail est dans chaque guide.
 
 Vocabulaire : une **version de jeu de données** (`dataset_version`) est un chargement identifié d'une source;
@@ -18,7 +18,7 @@ couvrent (source, contrat, zone, années); le **contexte MCP** est l'ensemble de
 | **déployer** sur Docker ou sur un PostgreSQL existant | [Déploiement](WAREHOUSE_DOCKER.md) et la section ci-dessous |
 | comprendre **qui peut faire quoi** | [Rôles](WAREHOUSE_ROLES.md) |
 | limiter un compte à un contrat, une zone, des années | [Contrôle d'accès](WAREHOUSE_ACCESS_CONTROL.md) |
-| **créer un compte** et le brancher dans Codex ou Claude | [Connexion DbHub](WAREHOUSE_CONNECT.md) |
+| **créer un compte** et le brancher dans un agent (Claude, Codex, Gemini, Cursor, VS Code) | [Connexion DbHub](WAREHOUSE_CONNECT.md) |
 | savoir où en est la conformité FAIR | [Exigences FAIR](WAREHOUSE_FAIR_REQUIREMENTS.md), [brouillon PGD](WAREHOUSE_DMP_DRAFT.md) |
 | lancer le warehouse sans Docker (Windows) | [Version portable](WAREHOUSE_PORTABLE.md) |
 | connaître les contrôles de qualité | [Accès et qualification](WAREHOUSE_ACCESS_QUALIFICATION.md) |
