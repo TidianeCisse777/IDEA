@@ -20,17 +20,24 @@ python scripts/warehouse_connect.py init --from-file mon_compte.env
 python scripts/warehouse_connect.py check
 
 # 3. Brancher votre client (affiche la commande exacte pour votre poste)
-python scripts/warehouse_connect.py config codex           # ou claude-code, claude-desktop
+python scripts/warehouse_connect.py config codex           # ou claude-code, claude-desktop, gemini, cursor, vscode, json
 ```
 
 Un `PASS` signifie que DbHub est utilisable depuis ce poste. Redémarrer ensuite le client pour qu'il
-charge le serveur `neolab-warehouse`.
+charge le serveur `neolab-warehouse`. Pour un démarrage rapide et hors réseau, installer DbHub une fois :
+`python scripts/warehouse_connect.py install-dbhub` (sinon `npx` le télécharge au premier lancement).
 
-| Client | Enregistrement |
-|---|---|
-| Codex | `codex mcp add neolab-warehouse -- <python> <chemin>/scripts/warehouse_connect.py run` ou bloc `[mcp_servers.neolab-warehouse]` de `~/.codex/config.toml` |
-| Claude Code | `claude mcp add --scope user neolab-warehouse -- <python> <chemin>/scripts/warehouse_connect.py run`, ou `.mcp.json` de projet (sans secret) |
-| Claude Desktop | bloc `mcpServers` de `claude_desktop_config.json` |
+| Client | Enregistrement | Vérifié |
+|---|---|---|
+| Codex | `codex mcp add neolab-warehouse -- <python> <chemin>/scripts/warehouse_connect.py run`, ou bloc `[mcp_servers.neolab-warehouse]` de `~/.codex/config.toml` avec `startup_timeout_sec = 30` | serveur démarré par Codex 0.166 |
+| Claude Code | `claude mcp add --scope user neolab-warehouse -- <python> <chemin>/scripts/warehouse_connect.py run`, ou `.mcp.json` de projet (sans secret) | sessions complètes |
+| Claude Desktop | bloc `mcpServers` de `claude_desktop_config.json` | non |
+| Gemini CLI | `gemini mcp add -s user neolab-warehouse <python> <chemin>/scripts/warehouse_connect.py run` — lancer `gemini` depuis un **dossier approuvé**, sinon il désactive tous les serveurs MCP | `Connected` (Gemini CLI 0.66) |
+| Cursor | bloc `mcpServers` de `~/.cursor/mcp.json` | non |
+| VS Code / Copilot | bloc `servers` (`"type": "stdio"`) de `.vscode/mcp.json` | non |
+| Autre client MCP | `config json` : commande `<python>`, arguments `<chemin>/scripts/warehouse_connect.py run`, transport stdio | — |
+
+Aucune configuration ne contient d'identifiant : le serveur les lit dans le fichier privé enregistré à l'étape 1.
 
 ### Que demander ensuite
 
@@ -171,8 +178,15 @@ Le certificat d'autorité est un fichier public : l'administrateur le distribue,
 - **TLS vérifié en local** (certificat autosigné, connexions non chiffrées refusées par le serveur) : `require`
   fonctionne, `disable` est refusé avec le bon diagnostic, `verify-full` échoue sans certificat d'autorité et réussit
   avec. Les diagnostics de mot de passe faux ou expiré, port fermé et hôte inconnu ont été provoqués et vérifiés.
-- **Non testé** : Codex (installation absente ici; le format suit sa documentation MCP), Claude Desktop,
-  Windows pour ces deux scripts, et un serveur distant réel (certificat d'une vraie autorité).
+- **Codex et Gemini CLI vérifiés le 31 octobre 2026** (base Docker, compte restreint, parcours `init` →
+  `check` → enregistrement) : Codex 0.166 a lancé le serveur et terminé la poignée de main MCP (« DBHub MCP
+  Server 1.5.0 »), et lit `startup_timeout_sec`; Gemini CLI 0.66 l'affiche `Connected`. Les configurations
+  qu'écrivent `codex mcp add` et `gemini mcp add` sont identiques à celles générées par `config`. Une
+  conversation complète n'a pas été menée avec ces deux clients (aucun compte OpenAI ni Google dans
+  l'environnement de test); elle l'a été avec Claude Code. Démarrage mesuré du serveur : 0,9 s avec DbHub
+  installé localement.
+- **Non testé** : Claude Desktop, Cursor et VS Code (formats générés selon leur documentation MCP), Windows
+  pour ces deux scripts, et un serveur distant réel (certificat d'une vraie autorité).
 - **Trousseau du système** : `init --keyring` vérifié avec le module `keyring` (dorsal de test) : aucun mot de passe
   dans le fichier et recette `check` réussie. Non testé sur les trousseaux graphiques de macOS et de Windows.
 - Le lanceur Windows historique (`scripts/start_dbhub.ps1`, rôle `warehouse_reader`) reste inchangé.

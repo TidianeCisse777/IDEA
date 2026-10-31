@@ -99,7 +99,7 @@ class ClientConfigurationTests(unittest.TestCase):
 
     def test_client_registrations_never_contain_credentials(self):
         connect.main(["init", "--from-file", str(self.bundle())])
-        for client in ("codex", "claude-code", "claude-desktop", "json"):
+        for client in ("codex", "claude-code", "claude-desktop", "gemini", "cursor", "vscode", "json"):
             text = connect.registration(client)
             self.assertNotIn(SECRET, text)
             self.assertNotIn("WAREHOUSE_DB_PASSWORD", text)
@@ -108,6 +108,10 @@ class ClientConfigurationTests(unittest.TestCase):
         self.assertEqual(payload["args"][-1], "run")
         self.assertIn("claude mcp add", connect.registration("claude-code"))
         self.assertIn("codex mcp add", connect.registration("codex"))
+        self.assertIn("startup_timeout_sec = 30", connect.registration("codex"))
+        self.assertIn("gemini mcp add -s user", connect.registration("gemini"))
+        vscode = json.loads(connect.registration("vscode").split("\n", 1)[1])["servers"]["neolab-warehouse"]
+        self.assertEqual((vscode["type"], vscode["args"][-1]), ("stdio", "run"))
 
     def test_server_configuration_has_no_secret_and_reads_the_dsn_from_the_environment(self):
         toml = (ROOT / "dbhub" / "warehouse.connect.toml").read_text(encoding="utf-8")

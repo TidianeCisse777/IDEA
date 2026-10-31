@@ -4,6 +4,20 @@
 
 **Dernière mise à jour :** 31 octobre 2026
 
+### 31 octobre 2026 — Branchement MCP pour Codex, Gemini CLI, Cursor et VS Code
+
+- `warehouse_connect.py config` génère désormais aussi les configurations Gemini CLI, Cursor et VS Code
+  (Copilot), en plus de Codex, Claude Code, Claude Desktop et du format générique.
+- Vérifié avec les vrais clients (base Docker, compte restreint, parcours `init` → `check` → enregistrement) :
+  Codex 0.166 lance le serveur et termine la poignée de main MCP; Gemini CLI 0.66 l'affiche `Connected`. Les
+  configurations écrites par `codex mcp add` et `gemini mcp add` sont identiques à celles générées.
+- Trouvé en route : Gemini désactive tout serveur MCP lancé depuis un dossier non approuvé (documenté); Codex
+  abandonne un serveur muet après 10 s par défaut, ce que peut dépasser le premier téléchargement de DbHub par
+  `npx` : la configuration Codex générée porte `startup_timeout_sec = 30` (vérifié lu par Codex). Démarrage
+  mesuré : 0,9 s avec DbHub installé localement.
+- Limites : pas de conversation complète avec Codex ni Gemini (aucun compte OpenAI/Google dans
+  l'environnement de test); Cursor, VS Code et Claude Desktop non testés (formats selon leur documentation).
+
 ### 31 octobre 2026 — Vrais contours de zone pour les agents, et la zone enfin directe sur l'abondance UVP
 
 - Fermé deux écarts trouvés en testant abondance multi-taxon/multi-zone avec un agent réel la veille.

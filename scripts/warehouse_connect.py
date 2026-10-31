@@ -6,7 +6,7 @@ un argument de commande ni la sortie de ce script.
 
     python scripts/warehouse_connect.py init --from-file mon_compte.env
     python scripts/warehouse_connect.py check
-    python scripts/warehouse_connect.py config codex      # ou claude-code, claude-desktop
+    python scripts/warehouse_connect.py config codex      # ou claude-code, claude-desktop, gemini, cursor, vscode, json
 
 `run` est la commande que le client MCP lance (protocole sur stdout: rien d'autre
 n'y est écrit). Code de sortie de `check`: 0 réussi, 1 échec.
@@ -234,11 +234,26 @@ def registration(client):
     script = str(Path(__file__).resolve())
     python = sys.executable
     if client == 'codex':
+        # startup_timeout_sec: Codex abandons a server that has not answered within
+        # 10 s by default; the first `npx` download of DbHub can take longer.
         return ('# Option 1: ligne de commande\n'
                 'codex mcp add %s -- "%s" "%s" run\n\n'
                 '# Option 2: ~/.codex/config.toml\n'
-                '[mcp_servers.%s]\ncommand = "%s"\nargs = ["%s", "run"]\n'
+                '[mcp_servers.%s]\ncommand = "%s"\nargs = ["%s", "run"]\nstartup_timeout_sec = 30\n'
                 % (SERVER_NAME, python, script, SERVER_NAME, python, script))
+    if client == 'gemini':
+        return ('# Pour vous seul, tous projets (~/.gemini/settings.json):\n'
+                'gemini mcp add -s user %s "%s" "%s" run\n\n'
+                '# Gemini désactive tout serveur MCP dans un dossier non approuvé: lancer gemini\n'
+                '# depuis un dossier de travail approuvé (invite au premier lancement, ou /permissions).\n'
+                % (SERVER_NAME, python, script))
+    if client == 'cursor':
+        return ('Ajouter dans ~/.cursor/mcp.json (tous projets) ou .cursor/mcp.json (ce projet):\n%s\n'
+                % registration('json'))
+    if client == 'vscode':
+        return ('Ajouter dans .vscode/mcp.json (VS Code / GitHub Copilot, mode agent):\n%s\n'
+                % json.dumps({'servers': {SERVER_NAME: {'type': 'stdio', 'command': python,
+                                                        'args': [script, 'run']}}}, indent=2))
     if client == 'claude-code':
         return ('# Pour vous seul, tous projets:\n'
                 'claude mcp add --scope user %s -- "%s" "%s" run\n\n'
@@ -380,7 +395,7 @@ def main(argv=None):
     sub.add_parser('run', help='lancer le serveur MCP (commande enregistrée dans le client)').set_defaults(handler=run)
     sub.add_parser('install-dbhub', help='installer DbHub localement (une fois, réseau npm requis)').set_defaults(handler=install_dbhub)
     p = sub.add_parser('config', help='afficher la commande ou le fragment de configuration du client')
-    p.add_argument('client', choices=('codex', 'claude-code', 'claude-desktop', 'json'))
+    p.add_argument('client', choices=('codex', 'claude-code', 'claude-desktop', 'gemini', 'cursor', 'vscode', 'json'))
     p.set_defaults(handler=config)
     args = parser.parse_args(argv)
     if args.command == 'init' and not args.from_file and not (args.host and args.user):
