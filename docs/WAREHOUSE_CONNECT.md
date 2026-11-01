@@ -263,6 +263,12 @@ accès aux outils, l'agent a répondu qu'il n'avait aucun chiffre à donner plut
 signalé de lui-même une limite non demandée (le taxon UVP identifié au genre, le mapping le déclarant équivalent
 à l'espèce FILET).
 
+**L'agent montre son travail.** Toute réponse chiffrée se termine par une section « Requêtes exécutées » : le
+texte exact de chaque requête SQL qui a produit les chiffres, le nombre de lignes renvoyées et les valeurs
+utilisées. Le chercheur peut relancer ces requêtes lui-même. Vérifié le 1ᵉʳ novembre 2026 : les 4 requêtes
+affichées par un agent Claude réel figuraient toutes, au caractère près, dans l'[audit du serveur](WAREHOUSE_AUDIT.md),
+qui reste la preuve indépendante de ce qui a réellement été lu.
+
 Ce que ça ne garantit pas : que les données elles-mêmes sont correctes (erreur de saisie, mapping mal posé par le
 biologiste, calibration manquante), ni qu'un agent mal guidé ne tente pas une estimation si on le lui demande
 explicitement. Vérifier un chiffre important par une requête directe reste la bonne pratique, pas une formalité.

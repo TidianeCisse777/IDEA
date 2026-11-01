@@ -41,7 +41,12 @@ OVERVIEW = (
     'Le navigateur sur 127.0.0.1:8090 et le MCP sont deux accès distincts. '
     'Le filtre spatial du navigateur réduit les paires déjà enregistrées, sans changer leur statut. '
     'Les confirmations restent nécessaires avant téléchargement/calcul lourd. '
-    'Répondre en français; expliciter résultat, source, méthode et limites.'
+    'Répondre en français; expliciter résultat, source, méthode et limites. '
+    'Transparence pour le chercheur : toute réponse qui donne des chiffres se termine par une section '
+    '« Requêtes exécutées » listant, pour chaque requête SQL qui a produit ces chiffres, son texte exact '
+    'tel qu\'envoyé, le nombre de lignes renvoyées et les valeurs utilisées (un extrait si le résultat est '
+    'long). Ne montrer que des requêtes réellement exécutées et leurs résultats réels, sans les reformuler; '
+    'résumer en une ligne les requêtes de découverte (fiches, droits, colonnes).'
 )
 
 

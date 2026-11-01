@@ -2,7 +2,20 @@
 
 **Période proposée :** du 14 septembre au 30 novembre 2026
 
-**Dernière mise à jour :** 31 octobre 2026
+**Dernière mise à jour :** 1ᵉʳ novembre 2026
+
+### 1ᵉʳ novembre 2026 — Les agents montrent les requêtes derrière leurs chiffres
+
+- Consigne générale (`warehouse_context` overview) : toute réponse chiffrée se termine par « Requêtes exécutées »
+  — texte exact de chaque requête SQL ayant produit les chiffres, nombre de lignes, valeurs utilisées; seulement
+  des requêtes réellement exécutées; découverte résumée en une ligne.
+- Tests réalistes (dossier vide, question formulée comme un chercheur, sans indication) : carte des paires
+  UVP–filet à moins de 10 h et même station (bonnes paires, exclusions justes, recalcul indépendant des paires
+  stockées), puis dans la même conversation, comptage des samples et comparaison des abondances (valeurs exactes,
+  pas de double compte des stades). Puis la comparaison avec la nouvelle consigne : les 4 requêtes affichées
+  figuraient toutes dans l'audit du serveur.
+- Erreur de méthode corrigée : un premier essai lancé dans le dossier des données de test a laissé l'agent lire
+  les réponses; les tests se font désormais dans un dossier vide.
 
 ### 31 octobre 2026 — Connaissance des stades de copépodes (FILET et UVP) pour les agents
 

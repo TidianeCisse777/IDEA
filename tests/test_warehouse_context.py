@@ -54,6 +54,14 @@ class WarehouseContextTests(unittest.TestCase):
             self.assertIn(requirement, text)
 
 
+class OverviewTransparencyTests(unittest.TestCase):
+    def test_agents_show_the_queries_and_results_behind_their_numbers(self):
+        from publish_warehouse_context import OVERVIEW
+        for requirement in ('Requêtes exécutées', 'texte exact', 'nombre de lignes renvoyées',
+                            'réellement exécutées', 'sans les reformuler'):
+            self.assertIn(requirement, OVERVIEW)
+
+
 class CopepodStageReferenceTests(unittest.TestCase):
     """The stage reference must say exactly what the schema and the FILET loader already do."""
 
