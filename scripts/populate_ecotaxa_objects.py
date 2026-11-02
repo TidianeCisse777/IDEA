@@ -61,7 +61,6 @@ def load_project(args,s,pid):
     fields=base_fields + (',' + ','.join(f'fre.{lbl}' for lbl in size_labels) if size_labels else '')
     base_n=7
     loaded=0; state=Path(args.state_file); states=json.loads(state.read_text()) if state.exists() else {}; offset=int(states.get(str(pid),0))
-    acquisitions_seen={}  # acquisition_id -> internal sample_id, for the pixel-size pass at the end
     def fetch_page(start):
         for attempt in range(1, 4):
             try:
@@ -80,7 +79,6 @@ def load_project(args,s,pid):
               if i>=len(ids) or i>=len(samples) or str(samples[i]) not in mapping: continue
               sample_pk=mapping[str(samples[i])]
               acq=str(acqs[i]) if i<len(acqs) else None
-              if acq: acquisitions_seen[acq]=sample_pk
               size_vals={lbl: (row[base_n+j] if base_n+j<len(row) else None) for j,lbl in enumerate(size_labels)}
               vals=[sample_pk,str(ids[i]),acq,None,None,row[6] if len(row)>6 else None,None,row[1] if len(row)>1 else None,row[2] if len(row)>2 else None,row[3] if len(row)>3 else None,row[4] if len(row)>4 else None,row[5] if len(row)>5 else None,
                     size_vals.get('area'),size_vals.get('esd'),size_vals.get('major'),size_vals.get('minor')]
@@ -90,17 +88,22 @@ def load_project(args,s,pid):
           print(f'[objects] projet {pid}: {min(offset,total)}/{total} objets',flush=True)
     if loaded or offset>=total:
         psql(db,f"""UPDATE warehouse.ecotaxa_sample s SET datetime_min=a.min_date,datetime_max=a.max_date FROM (SELECT o.sample_id,min(o.object_datetime) AS min_date,max(o.object_datetime) AS max_date FROM warehouse.ecotaxa_object o JOIN warehouse.ecotaxa_sample es ON es.id=o.sample_id WHERE es.project_id={pid} AND o.object_datetime IS NOT NULL GROUP BY o.sample_id) a WHERE s.id=a.sample_id""")
-    load_acquisition_pixel_sizes(s, db, acquisitions_seen)
+    load_acquisition_pixel_sizes(s, db, pid)
     return loaded
 
-def load_acquisition_pixel_sizes(s, db, acquisitions_seen):
-    '''One GET /acquisition/{id} per distinct acquisition not already stored, threaded
-    like the object pages. free_columns.pixel is the mm/pixel calibration EcoTaxa
-    carries on the acquisition (confirmed live, not documented in the object schema);
+def load_acquisition_pixel_sizes(s, db, pid, batch=1000):
+    '''One GET /acquisition/{id} per acquisition of the project not yet stored. The list
+    comes from the database, not from the pages fetched in this run, so a run interrupted
+    after its objects were loaded still calibrates them on the next run; results are
+    written every `batch` acquisitions so an interruption loses at most one batch.
+    free_columns.pixel is the mm/pixel calibration EcoTaxa carries on the acquisition
+    (confirmed live; /acquisitions/search returns free_columns empty, so no bulk path);
     projects that do not define it leave pixel_size_mm NULL, never a guessed value.'''
-    if not acquisitions_seen: return
-    known=set(psql(db, "SELECT acquisition_id FROM warehouse.ecotaxa_acquisition").split())
-    todo=[a for a in acquisitions_seen if a not in known]
+    rows=[line.split('\t') for line in psql(db, f"""SELECT DISTINCT o.acquisition_id,o.sample_id FROM warehouse.ecotaxa_object o
+        JOIN warehouse.ecotaxa_sample s ON s.id=o.sample_id
+        WHERE s.project_id={pid} AND o.acquisition_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM warehouse.ecotaxa_acquisition a WHERE a.acquisition_id=o.acquisition_id)""").splitlines() if '\t' in line]
+    todo=dict(rows)
     if not todo: return
     def fetch_one(acq_id):
         for attempt in range(1, 4):
@@ -111,16 +114,20 @@ def load_acquisition_pixel_sizes(s, db, acquisitions_seen):
             except requests.RequestException:
                 if attempt == 3: raise
                 time.sleep(attempt * 2)
-    buf=io.StringIO(); w=csv.writer(buf,delimiter='\t',lineterminator='\n'); n=0
+    def flush(results):
+        buf=io.StringIO(); w=csv.writer(buf,delimiter='\t',lineterminator='\n')
+        for acq_id, pixel_mm in results:
+            w.writerow([acq_id, todo[acq_id], '\\N' if pixel_mm is None else pixel_mm])
+        psql(db,["""CREATE TEMP TABLE stage_ecotaxa_acquisition(acquisition_id text,sample_id bigint,pixel_size_mm double precision)""",
+                 """COPY stage_ecotaxa_acquisition FROM STDIN WITH (FORMAT csv,DELIMITER E'\\t',NULL '\\N')""",
+                 """INSERT INTO warehouse.ecotaxa_acquisition(acquisition_id,sample_id,pixel_size_mm) SELECT acquisition_id,sample_id,pixel_size_mm FROM stage_ecotaxa_acquisition ON CONFLICT (acquisition_id) DO UPDATE SET pixel_size_mm=EXCLUDED.pixel_size_mm"""],
+             stdin=buf.getvalue())
+    ids=list(todo); done=0
     with ThreadPoolExecutor(max_workers=6) as pool:
-        for acq_id, pixel_mm in pool.map(fetch_one, todo):
-            w.writerow([acq_id, acquisitions_seen[acq_id], '\\N' if pixel_mm is None else pixel_mm]); n+=1
-    if n:
-        sql=["""CREATE TEMP TABLE stage_ecotaxa_acquisition(acquisition_id text,sample_id bigint,pixel_size_mm double precision)""",
-             """COPY stage_ecotaxa_acquisition FROM STDIN WITH (FORMAT csv,DELIMITER E'\\t',NULL '\\N')""",
-             """INSERT INTO warehouse.ecotaxa_acquisition(acquisition_id,sample_id,pixel_size_mm) SELECT acquisition_id,sample_id,pixel_size_mm FROM stage_ecotaxa_acquisition ON CONFLICT (acquisition_id) DO UPDATE SET pixel_size_mm=EXCLUDED.pixel_size_mm"""]
-        psql(db,sql,stdin=buf.getvalue())
-        print(f'[objects] calibration pixel: {n} acquisitions',flush=True)
+        for start in range(0, len(ids), batch):
+            results=list(pool.map(fetch_one, ids[start:start+batch]))
+            flush(results); done+=len(results)
+            print(f'[objects] projet {pid}: calibration pixel {done}/{len(ids)} acquisitions',flush=True)
 
 def main():
     ap=argparse.ArgumentParser(); ap.add_argument('--project-id',type=int); ap.add_argument('--all-projects',action='store_true'); ap.add_argument('--database-url'); ap.add_argument('--state-file',default='data/warehouse_staging/ecotaxa_objects_state.json'); args=ap.parse_args()
