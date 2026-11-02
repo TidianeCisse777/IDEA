@@ -253,6 +253,10 @@ class LoaderChainTests(unittest.TestCase):
                                           {"103": {"evidence": [{"method": "fixture"}]}})
             conn.commit()
         self.assertEqual(result["mapped_objects"], 3)
+        # The real loader (ingest) replays the EcoPart migration after all others: it must apply cleanly.
+        with psycopg.connect(self.dsn) as conn:
+            conn.execute((ROOT / "docs/warehouse_ecopart_migration.sql").read_text())
+            conn.commit()
         # 4. Amundsen CTD (ERDDAP simulated), then 5. CTD zones from coordinates.
         ctd = load_module("populate_amundsen_ctd")
         with mock.patch.object(ctd.requests, "get", side_effect=fake_erddap), \
@@ -322,6 +326,9 @@ class LoaderChainTests(unittest.TestCase):
         self.assertEqual(scoped("SELECT major_um FROM explore.uvp_object_sizes WHERE object_id = '40000'"), "200")
         self.assertEqual(scoped("SELECT pixel_size_mm FROM explore.uvp_object_sizes WHERE object_id = '40000'"), "0.01")
         self.assertEqual(scoped("SELECT count(*) FROM explore.uvp_taxon_abundance WHERE n_objects_taxon > 0") != "0", True)
+        # Read-time zeros: every bin of the profile carries each observed taxon, even without objects.
+        self.assertNotEqual(scoped("SELECT count(*) FROM explore.uvp_taxon_abundance WHERE n_objects_taxon = 0"), "0")
+        self.assertEqual(scoped("SELECT count(*) FROM explore.uvp_projects WHERE ecotaxa_project_id = 103"), "1")
         self.assertEqual(scoped("SELECT my_scope FROM explore.my_datasets WHERE dataset_key = '102'"), "aucun")
         reader = self.as_role("warehouse_reader", "SELECT count(*) FROM explore.uvp_objects", "reader-pw")
         self.assertEqual(reader, "4")  # only project 103 has a UVP profile; the reader sees it all

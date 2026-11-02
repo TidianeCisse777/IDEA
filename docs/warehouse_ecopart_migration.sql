@@ -42,6 +42,8 @@ LEFT JOIN (warehouse.uvp_object_bin ob
     ON ob.ecotaxa_object_id=o.id AND b.profile_id=u.id;
 
 -- Multiple EcoTaxa projects can refer to one EcoPart project.
+-- Kept identical to its copy in warehouse_ecotaxa_project_title_migration.sql (tests/test_warehouse_schema.py checks it):
+-- populate_ecopart.py replays the EcoPart migration at load time, after the always-applied migrations.
 CREATE OR REPLACE VIEW explore.uvp_projects AS
 SELECT e.project_id AS ecotaxa_project_id,u.ecopart_project_id,u.cruise_key,
     MIN(u.sampled_at) AS start_at,MAX(u.sampled_at) AS end_at,
@@ -50,10 +52,12 @@ SELECT e.project_id AS ecotaxa_project_id,u.ecopart_project_id,u.cruise_key,
     COALESCE(MIN(e.marine_zone_key),MIN(u.marine_zone_key)) AS marine_zone_key,
     COALESCE(MIN(e.marine_zone_name),MIN(u.marine_zone_name)) AS marine_zone_name,
     MIN(u.latitude) AS latitude_min,MAX(u.latitude) AS latitude_max,
-    MIN(u.longitude) AS longitude_min,MAX(u.longitude) AS longitude_max
+    MIN(u.longitude) AS longitude_min,MAX(u.longitude) AS longitude_max,
+    MIN(ep.title) AS ecotaxa_project_title
 FROM warehouse.uvp_profile u
 LEFT JOIN warehouse.uvp_ecotaxa l ON l.uvp_profile_id=u.id
 LEFT JOIN warehouse.ecotaxa_sample e ON e.id=l.ecotaxa_sample_id
+LEFT JOIN warehouse.ecotaxa_project ep ON ep.project_id=e.project_id
 GROUP BY e.project_id,u.ecopart_project_id,u.cruise_key;
 
 -- All sampled bins, including bins without objects; raw CTD and particle fields
@@ -68,6 +72,8 @@ JOIN warehouse.ecopart_bin_source s ON s.bin_id=b.id;
 
 -- Densify on read, without millions of redundant stored zero values.
 -- Taxon universe: taxa observed in this profile and this EcoTaxa project.
+-- Kept identical to its copy in warehouse_uvp_abundance_zone_migration.sql (tests/test_warehouse_schema.py checks it):
+-- populate_ecopart.py replays the EcoPart migration at load time, after the always-applied migrations.
 CREATE OR REPLACE VIEW explore.uvp_taxon_abundance AS
 WITH taxa AS (
     SELECT DISTINCT dataset_version_id,profile_id,taxon_key,annotation_policy
@@ -76,7 +82,8 @@ WITH taxa AS (
 SELECT t.dataset_version_id,t.profile_id,b.id AS bin_id,t.taxon_key,t.annotation_policy,
        COALESCE(a.n_objects_taxon,0::bigint) AS n_objects_taxon,b.sampled_volume_l,
        COALESCE(a.n_objects_taxon,0)::numeric / b.sampled_volume_l * 1000 AS abundance_uvp_ind_m3,
-       b.depth_min_m,b.depth_max_m,u.sample_name,u.cruise_key,u.station_key,u.sampled_at
+       b.depth_min_m,b.depth_max_m,u.sample_name,u.cruise_key,u.station_key,u.sampled_at,
+       u.marine_zone_key,u.marine_zone_name,u.marine_zone_assignment_status,u.ecotaxa_project_id
 FROM taxa t
 JOIN warehouse.uvp_profile u ON u.id=t.profile_id
 JOIN warehouse.uvp_bin b ON b.profile_id=t.profile_id

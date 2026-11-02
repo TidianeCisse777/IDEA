@@ -170,6 +170,35 @@ class WarehouseSchemaContractTests(unittest.TestCase):
         self.assertIn("CREATE VIEW explore.filet_totals AS", self.sql)
 
 
+def view_definition(path, name):
+    text = (ROOT / "docs" / path).read_text(encoding="utf-8")
+    match = re.search(rf"CREATE OR REPLACE VIEW {re.escape(name)} AS(.*?);", text, re.S)
+    return " ".join(match.group(1).split()) if match else None
+
+
+class ReplayedViewDefinitionTests(unittest.TestCase):
+    """populate_ecopart.py replays the EcoPart migration after every always-applied
+    migration: a later migration that redefines one of its views with other columns
+    makes that replay fail ("cannot drop columns from view") or silently regress it."""
+
+    def test_later_migrations_keep_ecopart_view_definitions(self):
+        for name, later in (("explore.uvp_taxon_abundance", "warehouse_uvp_abundance_zone_migration.sql"),
+                            ("explore.uvp_projects", "warehouse_ecotaxa_project_title_migration.sql")):
+            with self.subTest(view=name):
+                ecopart = view_definition("warehouse_ecopart_migration.sql", name)
+                self.assertIsNotNone(ecopart)
+                self.assertEqual(ecopart, view_definition(later, name))
+
+    def test_taxon_abundance_keeps_read_time_zeros(self):
+        definition = view_definition("warehouse_ecopart_migration.sql", "explore.uvp_taxon_abundance")
+        self.assertIn("COALESCE(a.n_objects_taxon,0::bigint)", definition)
+        self.assertIn("LEFT JOIN warehouse.uvp_taxon_abundance a", definition)
+
+    def test_object_sizes_scopes_bins_to_profile(self):
+        definition = view_definition("warehouse_ecotaxa_object_size_migration.sql", "explore.uvp_object_sizes")
+        self.assertIn("b.profile_id = u.id", definition)
+
+
 class AbundanceFormulaContractTests(unittest.TestCase):
     def test_uvp_bin_formula_converts_litres_to_cubic_metres(self):
         n_objects = 25

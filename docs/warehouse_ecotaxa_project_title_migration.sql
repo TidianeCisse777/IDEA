@@ -47,28 +47,23 @@ JOIN warehouse.uvp_ecotaxa l ON l.uvp_profile_id = u.id
 JOIN warehouse.ecotaxa_sample e ON e.id = l.ecotaxa_sample_id
 LEFT JOIN warehouse.ecotaxa_project ep ON ep.project_id = e.project_id;
 
+-- Kept identical to its copy in warehouse_ecopart_migration.sql (tests/test_warehouse_schema.py checks it):
+-- populate_ecopart.py replays the EcoPart migration at load time, after the always-applied migrations.
 CREATE OR REPLACE VIEW explore.uvp_projects AS
-SELECT
-    u.ecotaxa_project_id,
-    u.ecopart_project_id,
-    u.cruise_key,
-    MIN(u.sampled_at) AS start_at,
-    MAX(u.sampled_at) AS end_at,
-    COUNT(DISTINCT u.id) AS n_profiles,
-    COUNT(DISTINCT e.id) AS n_ecotaxa_samples,
+SELECT e.project_id AS ecotaxa_project_id,u.ecopart_project_id,u.cruise_key,
+    MIN(u.sampled_at) AS start_at,MAX(u.sampled_at) AS end_at,
+    COUNT(DISTINCT u.id) AS n_profiles,COUNT(DISTINCT e.id) AS n_ecotaxa_samples,
     COUNT(DISTINCT u.cast_key) AS n_casts,
-    COALESCE(MIN(e.marine_zone_key), MIN(u.marine_zone_key)) AS marine_zone_key,
-    COALESCE(MIN(e.marine_zone_name), MIN(u.marine_zone_name)) AS marine_zone_name,
-    MIN(u.latitude) AS latitude_min,
-    MAX(u.latitude) AS latitude_max,
-    MIN(u.longitude) AS longitude_min,
-    MAX(u.longitude) AS longitude_max,
+    COALESCE(MIN(e.marine_zone_key),MIN(u.marine_zone_key)) AS marine_zone_key,
+    COALESCE(MIN(e.marine_zone_name),MIN(u.marine_zone_name)) AS marine_zone_name,
+    MIN(u.latitude) AS latitude_min,MAX(u.latitude) AS latitude_max,
+    MIN(u.longitude) AS longitude_min,MAX(u.longitude) AS longitude_max,
     MIN(ep.title) AS ecotaxa_project_title
 FROM warehouse.uvp_profile u
-LEFT JOIN warehouse.uvp_ecotaxa l ON l.uvp_profile_id = u.id
-LEFT JOIN warehouse.ecotaxa_sample e ON e.id = l.ecotaxa_sample_id
-LEFT JOIN warehouse.ecotaxa_project ep ON ep.project_id = u.ecotaxa_project_id
-GROUP BY u.ecotaxa_project_id, u.ecopart_project_id, u.cruise_key;
+LEFT JOIN warehouse.uvp_ecotaxa l ON l.uvp_profile_id=u.id
+LEFT JOIN warehouse.ecotaxa_sample e ON e.id=l.ecotaxa_sample_id
+LEFT JOIN warehouse.ecotaxa_project ep ON ep.project_id=e.project_id
+GROUP BY e.project_id,u.ecopart_project_id,u.cruise_key;
 
 COMMENT ON VIEW explore.uvp_samples IS
     'Un sample/profil UVP par ligne, metadonnees EcoTaxa et EcoPart. ecotaxa_project_title est le nom natif du projet EcoTaxa (NULL si le projet n''a pas ete charge dans warehouse.ecotaxa_project); ecotaxa_project_id reste l''identifiant stable a utiliser pour grouper ou joindre, le titre peut changer ou manquer.';

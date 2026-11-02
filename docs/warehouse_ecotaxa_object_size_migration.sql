@@ -67,8 +67,11 @@ JOIN warehouse.uvp_ecotaxa ul ON ul.uvp_profile_id = u.id
 JOIN warehouse.ecotaxa_sample e ON e.id = ul.ecotaxa_sample_id
 JOIN warehouse.ecotaxa_object o ON o.sample_id = e.id
 LEFT JOIN warehouse.ecotaxa_acquisition ac ON ac.acquisition_id = o.acquisition_id
-LEFT JOIN warehouse.uvp_object_bin ob ON ob.ecotaxa_object_id = o.id
-LEFT JOIN warehouse.uvp_bin b ON b.id = ob.uvp_bin_id;
+-- Bin scoped to this row's profile, as in explore.uvp_objects (EcoPart migration):
+-- an EcoTaxa sample linked to several profiles or versions must not fan out.
+LEFT JOIN (warehouse.uvp_object_bin ob
+    JOIN warehouse.uvp_bin b ON b.id = ob.uvp_bin_id)
+    ON ob.ecotaxa_object_id = o.id AND b.profile_id = u.id;
 
 COMMENT ON VIEW explore.uvp_object_sizes IS
     'Un objet EcoTaxa identifie par ligne, avec sa taille reelle (esd_um/major_um/minor_um/area_um2) quand la calibration pixel de son acquisition est connue (NULL sinon : ne pas supposer une taille absente egale a zero). '
