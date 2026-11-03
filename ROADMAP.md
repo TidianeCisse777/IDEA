@@ -22,7 +22,10 @@
   `backup_warehouse.py --restore` → `--check` = `PRÊT`, comptes identiques, lecteur opérationnel). Zip remis :
   sauvegarde + SHA-256 + code au commit + `LISEZMOI` de restauration; aucun mot de passe; identifiants EcoTaxa
   supprimés de l'environnement de chargement.
-- Limites : FILET non chargé; tailles LOKI sans calibration (restent en pixels); EcoTaxa 17808 sans EcoPart lié;
+- `LISEZMOI` du zip complété par le branchement d'un agent (compte lecture seule, `init`, `install-dbhub`,
+  `check`, `config <agent>`); étapes 1 à 3 rejouées sur la base réelle : `check` = `PASS` (3 outils MCP, lecture
+  seule, 36 jeux lisibles), compte de test révoqué ensuite.
+- Limites : FILET non chargé (prévu le 4 novembre); tailles LOKI sans calibration (restent en pixels); EcoTaxa 17808 sans EcoPart lié;
   aucun contrat d'accès posé; le zip complet contourne le contrôle d'accès par personne (choix assumé de
   l'utilisateur) et contient les métadonnées sources dont les contacts `DataOwner`.
 
