@@ -16,6 +16,13 @@
 - Défauts observés : un agent a écrit sa figure dans un chemin mal recopié (tiret au lieu d'une barre oblique);
   l'agent carte n'a pas relu son dernier rendu; le profil vertical utilise tous les objets (prédits compris),
   ce qu'il indique sur la figure. Page de démonstration publiée (artifact privé).
+- Correction : consigne `graphs` du contexte (fichiers en chemins relatifs vérifiés, relecture de l'image après
+  la dernière modification, `validated_only` tracé à côté de `all_loaded_objects`), test de contexte ajouté.
+  Trois tests relancés avec les mêmes questions : fichiers au bon endroit et chemins exacts, image finale relue
+  après la dernière retouche (3/3), profil vertical tracé en deux politiques sans le demander (19 982 objets /
+  64 profils contre 1 105 validés / 58 profils, recalculé). Cause du chemin fautif : le chemin inhabituel du
+  dossier de test, que l'agent confond avec le nommage interne de Claude Code. Coûts de la page présentés
+  comme estimation au tarif API (aucune clé API utilisée, modèle Claude Sonnet 5.5).
 
 ### 3 novembre 2026 — Statut d'annotation EcoTaxa et filtre de zone complet (phase 2)
 
