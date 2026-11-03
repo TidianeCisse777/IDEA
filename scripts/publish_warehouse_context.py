@@ -140,6 +140,54 @@ def publish(conn):
             for column, description in cols.items():
                 conn.execute(sql.SQL('COMMENT ON COLUMN explore.{}.{} IS {}').format(
                     sql.Identifier(name), sql.Identifier(column), sql.Literal(description)))
+        # Service views a person opens first (rights, catalog, release): their columns are
+        # described too, so a SQL client (DBeaver, pgAdmin) shows what each one means.
+        service_columns = {
+            'my_access': dict(grantee='Compte concerné par ce droit.', source_instance='Source autorisée (ecotaxa, ecopart, filet, amundsen_ctd…); vide = toutes.',
+                contract='Contrat de données autorisé (C1, C2…); vide = tous.', zone_key='Zone maritime autorisée; vide = toutes.',
+                year_min='Première année autorisée; vide = sans limite.', year_max='Dernière année autorisée; vide = sans limite.',
+                note='Précision sur le droit (ex. « member of warehouse_all_access » pour un accès complet).', granted_at='Date d’attribution du droit.'),
+            'my_datasets': dict(dataset_version_id='Clé technique de la version (dataset_versions, dataset_catalog).', source_instance='Source de la version.',
+                dataset_key='Identifiant du jeu dans sa source (ex. numéro de projet EcoTaxa ou EcoPart).', version_key='Version du jeu.',
+                title='Titre lisible du jeu de données (nom du projet source quand il est connu).', access_contract='Contrat de données de la version; vide = non attribué.',
+                my_scope='Mon accès à cette version : complet, partiel ou aucun.', scope_detail='Ce qui limite l’accès (zone, années…).',
+                note='Avertissement éventuel, ex. une source associée manquante pour les vues UVP.'),
+            'dataset_catalog': dict(dataset_version_id='Clé technique de la version.', source_instance='Source de la version.',
+                dataset_key='Identifiant du jeu dans sa source.', version_key='Version du jeu.', sha256='Empreinte du fichier ou manifeste source.',
+                title='Titre lisible du jeu de données.', description='Description du jeu; « à compléter » tant qu’elle n’a pas été rédigée.',
+                creators_json='Auteurs (liste JSON).', keywords_json='Mots-clés (liste JSON).', persistent_identifier='Identifiant pérenne (DOI…) s’il existe.',
+                license='Licence.', license_uri='Adresse de la licence.', access_level='Niveau d’accès déclaré (internal, open…).',
+                access_conditions='Conditions d’accès.', publication_status='draft, validated, published ou retired.',
+                temporal_start='Début de la couverture temporelle déclarée.', temporal_end='Fin de la couverture temporelle déclarée.',
+                spatial_extent_json='Couverture spatiale déclarée (JSON).', taxonomic_scope='Couverture taxonomique déclarée.',
+                methodology='Méthode d’acquisition ou de calcul déclarée.', software_version='Version du logiciel ou du chargeur.',
+                schema_version='Version du schéma warehouse.', metadata_standard='Standard de métadonnées déclaré.',
+                related_identifiers_json='Identifiants liés (JSON).', file_count='Nombre de fichiers source enregistrés.',
+                access_contract='Contrat de données (C1, C2…) qui décide qui peut lire la version.'),
+            'fair_readiness': dict(dataset_version_id='Clé technique de la version.', source_instance='Source.', dataset_key='Identifiant du jeu.',
+                version_key='Version.', f1_persistent_identifier='F1 : identifiant pérenne présent.', f2_rich_metadata='F2 : titre, description et auteurs renseignés.',
+                f4_searchable='F4 : mots-clés présents.', a1_access_declared='A1 : niveau et conditions d’accès déclarés.',
+                i1_standard_declared='I1 : standard de métadonnées déclaré.', i3_related_references='I3 : références liées présentes.',
+                r1_license='R1 : licence présente.', r2_provenance='R2 : méthode, logiciel et fichiers source présents.',
+                r3_validated='R3 : une validation enregistrée a réussi.', missing_criteria='Critères FAIR manquants.',
+                fair_ready='Vrai quand tous les critères sont remplis (métadonnées, pas validité scientifique).'),
+            'fair_column_coverage': dict(table_name='Table brute du warehouse.', column_count='Nombre de colonnes.',
+                documented_count='Colonnes décrites dans column_metadata.', with_unit_count='Colonnes avec unité.',
+                with_standard_uri_count='Colonnes reliées à un terme standard.'),
+            'warehouse_release': dict(release='Version du warehouse déployée.', method='Mode de déploiement.',
+                applied_at='Date du déploiement.', migration_count='Nombre de migrations appliquées.',
+                migrations='Migrations appliquées et leur empreinte SHA-256.'),
+            'access_audit': dict(problem='Problème de sécurité détecté (vide = aucun).', object_name='Objet concerné.'),
+        }
+        existing = {r[0] for r in conn.execute("SELECT table_name FROM information_schema.views WHERE table_schema='explore'").fetchall()}
+        for name, cols in service_columns.items():
+            if name not in existing:
+                continue
+            present = {r[0] for r in conn.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='explore' AND table_name=%s", (name,)).fetchall()}
+            for column, description in cols.items():
+                if column in present:
+                    conn.execute(sql.SQL('COMMENT ON COLUMN explore.{}.{} IS {}').format(
+                        sql.Identifier(name), sql.Identifier(column), sql.Literal(description)))
         for role in ('warehouse_reader', 'warehouse_navigator', 'warehouse_explore_reader'):
             if conn.execute('SELECT 1 FROM pg_roles WHERE rolname=%s', (role,)).fetchone():
                 conn.execute(sql.SQL('GRANT SELECT ON explore.warehouse_context,explore.warehouse_dictionary,explore.dataset_versions TO {}').format(sql.Identifier(role)))

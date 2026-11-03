@@ -110,8 +110,8 @@ def load_project(args,s,pid):
     if loaded or offset>=total:
         # Sample-level annotation counts, derived from this project's loaded objects
         # (EcoTaxa's own per-sample statistics are not loaded).
-        psql(db,f"""UPDATE warehouse.ecotaxa_sample s SET nb_validated=a.v,nb_predicted=a.p,nb_dubious=a.d,nb_unclassified=a.u
-            FROM (SELECT o.sample_id,count(*) FILTER (WHERE annotation_status='validated') v,
+        psql(db,f"""UPDATE warehouse.ecotaxa_sample s SET object_count=a.n,nb_validated=a.v,nb_predicted=a.p,nb_dubious=a.d,nb_unclassified=a.u
+            FROM (SELECT o.sample_id,count(*) n,count(*) FILTER (WHERE annotation_status='validated') v,
                          count(*) FILTER (WHERE annotation_status='predicted') p,count(*) FILTER (WHERE annotation_status='dubious') d,
                          count(*) FILTER (WHERE annotation_status IS NULL) u
                   FROM warehouse.ecotaxa_object o JOIN warehouse.ecotaxa_sample es ON es.id=o.sample_id

@@ -161,14 +161,16 @@ COMMENT ON VIEW explore.fair_column_coverage IS
 
 -- Versions loaded after the first deploy get a draft catalog entry on the next
 -- deploy, so they can carry a contract (access) and be described (FAIR). Same
--- placeholders as warehouse_metadata_migration.sql; existing entries are kept.
+-- description placeholder as warehouse_metadata_migration.sql; existing entries are kept.
 INSERT INTO warehouse.dataset_metadata (
     dataset_version_id, title, description, source_method,
     schema_version, access_level, publication_status, metadata_json
 )
 SELECT
     v.id,
-    format('%s dataset %s (%s)', v.source_instance, v.dataset_key, v.version_key),
+    -- The source's own name when known (warehouse_explore_catalog_migration.sql), else a placeholder.
+    COALESCE(warehouse.dataset_native_title(v.id),
+             format('%s dataset %s (%s)', v.source_instance, v.dataset_key, v.version_key)),
     format('Version %s/%s enregistree dans le warehouse; description scientifique a completer.', v.source_instance, v.dataset_key),
     v.source_instance,
     'warehouse-v1',

@@ -397,6 +397,19 @@ class LoaderChainTests(unittest.TestCase):
         self.assertNotEqual(scoped("SELECT count(*) FROM explore.uvp_taxon_abundance WHERE n_objects_taxon = 0"), "0")
         self.assertEqual(scoped("SELECT count(*) FROM explore.uvp_projects WHERE ecotaxa_project_id = 103"), "1")
         self.assertEqual(scoped("SELECT my_scope FROM explore.my_datasets WHERE dataset_key = '102'"), "aucun")
+        # Views over every EcoTaxa project and CTD profile, not only the UVP-linked ones
+        # (3 novembre 2026): the owner sees all three projects and their 16 objects, with
+        # object_count filled; the scoped account sees only its C1/Baffin/2024 samples
+        # (1001 and 100) and no CTD (source not granted).
+        self.assertEqual(self.owner_sql("SELECT count(*) || '/' || sum(n_objects) || '/' || sum(n_validated) FROM explore.ecotaxa_projects"), "3/16/8")
+        self.assertEqual(self.owner_sql("SELECT count(*) FROM explore.ecotaxa_samples WHERE object_count = 4"), "4")
+        self.assertEqual(self.owner_sql("SELECT count(*) FROM explore.ctd_profiles"), "1")
+        self.assertEqual(self.owner_sql("SELECT count(DISTINCT variable_name) FROM explore.ctd_measurements"), "8")
+        self.assertEqual(scoped("SELECT string_agg(ecotaxa_native_sample_id, ',' ORDER BY ecotaxa_native_sample_id) FROM explore.ecotaxa_samples"), "100,1001")
+        self.assertEqual(scoped("SELECT count(*) FROM explore.ecotaxa_objects"), "8")
+        self.assertEqual(scoped("SELECT count(*) FROM explore.ctd_profiles"), "0")
+        # Catalog titles name the source instead of a placeholder.
+        self.assertEqual(scoped("SELECT title FROM explore.my_datasets WHERE dataset_key = '101'"), "EcoTaxa 101 — Projet C1")
         reader = self.as_role("warehouse_reader", "SELECT count(*) FROM explore.uvp_objects", "reader-pw")
         self.assertEqual(reader, "4")  # only project 103 has a UVP profile; the reader sees it all
         verify = subprocess.run([sys.executable, str(DEPLOY), "--verify"], env=self.deploy_env, capture_output=True, text=True)
