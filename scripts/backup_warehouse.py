@@ -8,6 +8,7 @@ attendant un hébergement permanent (voir docs/WAREHOUSE_RELEASE_V1.md).
     python scripts/backup_warehouse.py
     python scripts/backup_warehouse.py --copy-to "~/OneDrive/NeoLab/warehouse-backups"
     python scripts/backup_warehouse.py --keep 10
+    python scripts/backup_warehouse.py --compress zstd:12           # fichier plus petit, à partager
     python scripts/backup_warehouse.py --restore data/warehouse_backups/neolab_warehouse_20261030_183000.dump
 
 Connexion: WAREHOUSE_POSTGRES_HOST|PORT|DB|USER|PASSWORD (le rôle propriétaire),
@@ -69,7 +70,8 @@ def backup(env, args):
     target = BACKUP_DIR / f"{env['PGDATABASE']}_{stamp}.dump"
     print(f"Sauvegarde de {env['PGDATABASE']}@{env['PGHOST']}:{env['PGPORT']}...")
     result = subprocess.run(
-        ['pg_dump', '-Fc', '--no-owner', '--no-acl', '-h', env['PGHOST'], '-p', env['PGPORT'],
+        ['pg_dump', '-Fc', *(['--compress', args.compress] if args.compress else []),
+         '--no-owner', '--no-acl', '-h', env['PGHOST'], '-p', env['PGPORT'],
          '-U', env['PGUSER'], '-d', env['PGDATABASE'], '-f', str(target)],
         env=env, text=True, capture_output=True)
     if result.returncode:
@@ -144,6 +146,8 @@ def restore(env, args):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--copy-to', help='dossier supplémentaire où copier la sauvegarde (ex. un dossier cloud synchronisé)')
+    parser.add_argument('--compress', help='compression pg_dump, ex. zstd:12 (environ 20 %% plus petit que le défaut; '
+                        'pg_restore 16+ compilé avec zstd requis pour restaurer)')
     parser.add_argument('--keep', type=int, default=0, help='ne garder que les N sauvegardes locales les plus récentes (0 = toutes les garder)')
     parser.add_argument('--restore', help='restaurer depuis ce fichier .dump au lieu de sauvegarder')
     parser.add_argument('--yes', action='store_true', help='restaurer sans demander de confirmation')

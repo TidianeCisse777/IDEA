@@ -22,6 +22,10 @@
 - Test agent réel (Claude Code, MCP, dossier vide) : chiffres exacts recalculés, filtre par `zone_membership`,
   comparaison des politiques avec nombre de profils, cause d'am_leg3 identifiée. Il a révélé l'absence de nom
   de taxon (requêtes de recherche au-delà de 30 s), corrigée ensuite.
+- Sauvegarde v2 (`backup_warehouse.py --compress zstd:12`, nouvelle option) : 326 Mo au lieu de 402 Mo, sous la
+  limite d'envoi; restauration testée sur base neuve (0 erreur, `PRÊT`, comptes identiques, `pg_restore` local et
+  du conteneur PostGIS). Un premier essai a échoué faute d'espace disque dans l'environnement de test, pas à cause
+  du fichier.
 - Problèmes de données relevés : 197 profils GreenEdge 2016 sans coordonnées propres (samples EcoTaxa 149 et
   20890 en désaccord, ex. longitude +58,5 / −58,5 pour ge_2016_001); 3 profils `assigned` sans zone.
 
