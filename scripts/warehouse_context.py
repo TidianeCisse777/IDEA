@@ -66,14 +66,14 @@ GRAPHICS = view(
 # owner cannot always create (see deploy_warehouse_postgres.py's
 # ensure_postgis and docs/warehouse_marine_zone_migration.sql). publish()
 # treats every other VIEWS entry as mandatory; this is the one exception.
-OPTIONAL_VIEWS = {'marine_zone_boundaries'}
+OPTIONAL_VIEWS = {'marine_zone_boundaries', 'zone_membership'}
 
 VIEWS = {
     'uvp_projects': view(
         'Inventaire agrégé des projets UVP liés à EcoTaxa/EcoPart.',
         'Projet EcoTaxa × projet EcoPart × campagne; EcoTaxa peut être NULL.',
         'Navigation vers uvp_samples par ecotaxa_project_id et ecopart_project_id; sélectionner la campagne.',
-        'Ne pas sommer des projets qui réutilisent les mêmes profils. La zone MIN est un libellé représentatif, pas toute la couverture. Pas de dataset_version_id dans cette vue : auditer les versions dans dataset_versions et les vues détaillées. '
+        'Ne pas sommer des projets qui réutilisent les mêmes profils. marine_zone_key/name (MIN) ne montrent qu’UNE zone : pour savoir si un projet touche une zone, filtrer sur marine_zone_keys (toutes les zones attribuées à ses profils/samples), ex. WHERE \'Baie de Baffin\' = ANY(marine_zone_keys); les points en chevauchement de zones (AMBIGUOUS) se retrouvent par explore.zone_membership. Pas de dataset_version_id dans cette vue : auditer les versions dans dataset_versions et les vues détaillées. '
         'ecotaxa_project_title est le nom natif du projet EcoTaxa, pour affichage (légende, étiquette) : NULL si le projet n’a pas été chargé dans warehouse.ecotaxa_project, et ne pas l’utiliser comme clé (deux projets pourraient en théorie partager un titre) — grouper/joindre sur ecotaxa_project_id.',
         'SELECT * FROM explore.uvp_projects LIMIT 20;'),
     'uvp_samples': view(
@@ -100,7 +100,7 @@ VIEWS = {
         'Version dérivée × profil × bin × taxon_key × annotation_policy.',
         'profile_id vers uvp_samples.uvp_profile_id; bin_id vers ecopart_bins.bin_id. Isoler annotation_policy et dataset_version_id. '
         'ecotaxa_project_id vers uvp_projects.ecotaxa_project_id.',
-        'Formule : n_objects_taxon / sampled_volume_l × 1000, individus/m³. Agréger par SUM(n_objects_taxon)/SUM(sampled_volume_l)*1000, pas par moyenne simple. La vue ajoute des zéros sur tous les bins uniquement pour les taxons observés dans ce profil et cette annotation_policy; un taxon absent du profil entier ne reçoit pas de zéro. all_loaded_objects inclut les objets non validés. Ne pas sommer le même volume sur plusieurs taxons. '
+        'Formule : n_objects_taxon / sampled_volume_l × 1000, individus/m³. Agréger par SUM(n_objects_taxon)/SUM(sampled_volume_l)*1000, pas par moyenne simple. Filtre de zone complet (y compris points AMBIGUOUS) : JOIN explore.zone_membership m ON m.row_kind=\'uvp_profile\' AND m.row_id=profile_id. La vue ajoute des zéros sur tous les bins uniquement pour les taxons observés dans ce profil et cette annotation_policy; un taxon absent du profil entier ne reçoit pas de zéro. annotation_policy vaut all_loaded_objects:ecotaxa_project=N (tous les objets chargés : validés, prédits, douteux et jamais classés) ou validated_only:ecotaxa_project=N (validés seulement, statut V d’EcoTaxa) : toujours filtrer une seule politique et la nommer dans la réponse; comparer les deux pour montrer la part du prédit. Ne pas sommer le même volume sur plusieurs taxons. '
         'marine_zone_key/name/assignment_status viennent directement de uvp_profile : disponibles même quand explore.uvp_samples est vide pour ce profil (pas de sample EcoTaxa lié) — ne pas passer par uvp_samples pour la zone, elle est déjà ici.',
         'SELECT profile_id,taxon_key,annotation_policy,SUM(n_objects_taxon)/SUM(sampled_volume_l)*1000 AS ind_m3 FROM explore.uvp_taxon_abundance GROUP BY 1,2,3 LIMIT 20;'),
     'uvp_particle_sizes': view(
@@ -163,6 +163,12 @@ VIEWS = {
         'Parser geometry_geojson côté client (ex. Python : json.loads puis shapely.geometry.shape). '
         'Table de référence, non datée ni contractuelle : pas de filtre d’accès par contrat/zone/année.',
         'SELECT zone_key, geometry_geojson FROM explore.marine_zone_boundaries WHERE zone_key = \'Baie de Baffin\';'),
+    'zone_membership': view(
+        'Toutes les zones maritimes qui couvrent chaque point localisé (profil UVP, sample EcoTaxa, profil CTD, sample FILET), chevauchements compris.',
+        'Ligne localisée (row_kind × row_id) × zone qui la couvre; un point dans trois zones superposées = trois lignes.',
+        'row_kind=uvp_profile : row_id = uvp_taxon_abundance.profile_id = uvp_samples.uvp_profile_id; ecotaxa_sample : row_id = ecotaxa_sample_id; ctd_profile, filet_sample : id de la table. zone_key = marine_zone_boundaries.zone_key.',
+        'Calculée en PostGIS (ST_Covers) sur les coordonnées et les contours à pleine résolution. marine_zone_key des autres vues porte UNE zone choisie au chargement : une zone NeoLab/IHO l’emporte sur une écorégion MEOW (un point de la Baie de Baffin peut aussi être dans « MEOW: West Greenland Shelf »), et AMBIGUOUS signale plusieurs zones NeoLab superposées (ex. Baie d’Ungava dans le composite Nunavik). Un filtre marine_zone_key = X perd donc les points AMBIGUOUS et ne trouve jamais une écorégion MEOW écartée; un filtre par cette vue garde tout. Dire dans la réponse quel filtre est utilisé. Zones de sources différentes superposées : ne pas additionner des résultats de plusieurs zones sans dédoublonner row_id. Ligne sans coordonnées propres mais zone attribuée en amont (ex. profil UVP dont les samples EcoTaxa liés divergent sur la position) : présente avec cette seule zone, geometry_resolution = assigned_without_coordinates; sans coordonnées ni zone, pas de ligne. Vue absente sans PostGIS.',
+        "SELECT a.taxon_key, SUM(a.n_objects_taxon)/SUM(a.sampled_volume_l)*1000 AS ind_m3 FROM explore.uvp_taxon_abundance a JOIN explore.zone_membership m ON m.row_kind='uvp_profile' AND m.row_id=a.profile_id WHERE m.zone_key='Baie de Baffin' AND a.annotation_policy LIKE 'validated_only:%' GROUP BY 1 LIMIT 20;"),
     'copepod_stages': view(
         'Stades de développement des copépodes : signification, ordre et agrégats des codes de stade FILET, '
         'et ce que l’UVP permet (ou non) sur les stades.',
@@ -285,8 +291,13 @@ COLUMNS = {
     'taxon_name': 'Libellé taxonomique EcoTaxa fourni; ne prouve pas un mapping FILET ni une validation.',
     'uvp_taxon': 'Clé taxonomique UVP du mapping accepté; même convention que taxon_key.',
     'taxon_filet': 'Identifiant taxonomique FILET source du mapping; pas un AphiaID supposé.',
-    'annotation_status': 'Statut d’annotation EcoTaxa chargé; NULL signifie inconnu, pas validated.',
-    'annotation_policy': 'Politique de sélection des objets et projet EcoTaxa; all_loaded_objects inclut tous les objets chargés, pas uniquement les validés.',
+    'annotation_status': 'Statut d’annotation EcoTaxa (classif_qual) : validated (V, validé par un humain), predicted (P, classification automatique), dubious (D); NULL = objet jamais classé (ou chargé avant l’ajout du statut), pas validated.',
+    'annotation_policy': 'Politique de sélection des objets et projet EcoTaxa : all_loaded_objects:ecotaxa_project=N (tous les objets chargés, validés ou non) ou validated_only:ecotaxa_project=N (annotation_status = validated seulement). Filtrer une seule politique.',
+    'marine_zone_keys': 'Toutes les zones attribuées aux profils/samples du projet (tableau, AMBIGUOUS compris); filtrer avec = ANY(marine_zone_keys).',
+    'row_kind': 'Type de ligne localisée : uvp_profile, ecotaxa_sample, ctd_profile ou filet_sample.',
+    'row_id': 'Identifiant de la ligne dans sa table (uvp_profile_id, ecotaxa_sample_id, id CTD ou FILET), selon row_kind.',
+    'assigned_zone_key': 'Zone unique attribuée au chargement à cette ligne (marine_zone_key), AMBIGUOUS si plusieurs zones se chevauchent.',
+    'geometry_resolution': 'full : appartenance calculée sur le contour à pleine résolution; simplified : contour simplifié (recharger les zones); assigned_without_coordinates : pas de coordonnées propres, zone reprise de l’attribution amont, non recalculée.',
     'stage': 'Stade FILET source; distinguer détails et agrégats COPEPODID, NAUPLIUS, ALL_STAGES. Signification et ordre : explore.copepod_stages.',
     'filet_stage': 'Stade FILET conservé dans la comparaison; ne pas additionner agrégats et détails. Signification : explore.copepod_stages.',
     'stage_code': 'Code de stade FILET (N1-N6, NAUP_NS, C1-C5, COP_NS, M, F, COPEPODID, NAUPLIUS, ALL_STAGES); même valeur que filet_data.stage.',
@@ -375,10 +386,10 @@ COLUMNS = {
     'n_casts': 'Nombre de clés de cast DISTINCT non NULL dans le groupe.',
     'n_analyses': 'Nombre d’analyses FILET DISTINCT liées à l’échantillon.',
     'object_count': 'Nombre d’objets déclaré par les métadonnées source, pas un recomptage de tous les objets chargés.',
-    'nb_validated': 'Nombre validé déclaré dans les métadonnées EcoTaxa; ne qualifie pas chaque objet chargé.',
-    'nb_predicted': 'Nombre prédit déclaré dans les métadonnées EcoTaxa.',
-    'nb_dubious': 'Nombre douteux déclaré dans les métadonnées EcoTaxa.',
-    'nb_unclassified': 'Nombre non classé déclaré dans les métadonnées EcoTaxa.',
+    'nb_validated': 'Nombre d’objets chargés de ce sample avec annotation_status = validated (recalculé depuis les objets).',
+    'nb_predicted': 'Nombre d’objets chargés de ce sample avec annotation_status = predicted (recalculé depuis les objets).',
+    'nb_dubious': 'Nombre d’objets chargés de ce sample avec annotation_status = dubious (recalculé depuis les objets).',
+    'nb_unclassified': 'Nombre d’objets chargés de ce sample sans statut (jamais classés), recalculé depuis les objets.',
     'marine_zone_key': 'Clé de zone maritime attribuée; consulter source, version et statut.',
     'marine_zone_name': 'Libellé de zone; dans uvp_projects, MIN ne représente pas toutes les zones du projet.',
     'marine_zone_source': 'Référentiel utilisé pour l’attribution de zone.',

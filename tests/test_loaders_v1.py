@@ -85,12 +85,19 @@ class FakeEcoTaxa:
         # A requested fre.<label> is appended in request order, exactly like the real
         # API: the loader itself only ever requests labels this project's obj_free_cols
         # has, so nothing here needs to be dropped to reproduce that behaviour.
-        size_labels = [f.split(".", 1)[1] for f in params["fields"].split(",") if f.startswith("fre.")]
+        # Each requested field is answered in request order, like the real API.
+        self.fields = params["fields"].split(",")
+        def value(o, field):
+            prefix, name = field.split(".", 1)
+            if prefix == "fre":
+                return o["sizes"][name]
+            return {"obj.orig_id": f"o{o['objid']}", "obj.objdate": o["date"], "obj.depth_min": o["depth"],
+                    "obj.depth_max": o["depth"] + 1, "obj.latitude": None, "obj.longitude": None,
+                    "txo.display_name": o["taxon"], "obj.classif_id": o["classif_id"],
+                    "obj.classif_qual": o["qual"]}[field]
         return FakeResponse({"object_ids": [o["objid"] for o in page], "sample_ids": [o["sampleid"] for o in page],
                              "acquisition_ids": [f"acq{o['sampleid']}" for o in page],
-                             "details": [[f"o{o['objid']}", o["date"], o["depth"], o["depth"] + 1, None, None, o["taxon"],
-                                         *[o["sizes"][lbl] for lbl in size_labels]]
-                                         for o in page]})
+                             "details": [[value(o, f) for f in self.fields] for o in page]})
 
 
 def erddap_csv(columns, units, rows):
@@ -118,11 +125,13 @@ def ecotaxa_fixture():
         return {"sampleid": sid, "orig_id": orig, "latitude": lat, "longitude": lon,
                 "free_columns": {"stationid": "G1", "cruise": "AM2024", "profileid": orig,
                                  "ctdrosettefilename": "2024_001.int.nc", "note": contract_note}}
+    # One validated, one predicted, one dubious, one validated object per sample (classif_qual V/P/D).
+    taxon_ids = {"Calanus": 45072, "Oithona": 61993}
     objects = lambda sid, base: [{"objid": base + i, "sampleid": sid, "date": "2024-07-01",
-                                  "depth": d, "taxon": t,
+                                  "depth": d, "taxon": t, "classif_id": taxon_ids[t], "qual": q,
                                   "sizes": {"area": 90.0 + i, "esd": 10.0 + i, "major": 20.0 + i, "minor": 5.0 + i}}
-                                 for i, (d, t) in enumerate([(0, "Calanus"), (4.999, "Calanus"),
-                                                             (5, "Oithona"), (15, "Calanus")])]
+                                 for i, (d, t, q) in enumerate([(0, "Calanus", "V"), (4.999, "Calanus", "P"),
+                                                                (5, "Oithona", "D"), (15, "Calanus", "V")])]
     return {
         # 101 and 102 are under contract C1 and C2; 103 carries the EcoPart fixture profile.
         # obj_free_cols differs per project, as it does for real EcoTaxa projects: 101 has
@@ -266,6 +275,16 @@ class LoaderChainTests(unittest.TestCase):
         zones_script = load_module("assign_filet_zones")
         counts = zones_script.assign(database_url=self.dsn, table="ctd_profile")
         self.assertEqual(counts.get("assigned"), 1)
+        # Zone contours (full resolution kept for explore.zone_membership), as load_warehouse.py does.
+        # Without PostGIS (non-superuser managed hosting) the table does not exist and
+        # load_marine_zones.py skips; zone_membership is then absent too.
+        self.postgis = self.owner_sql("SELECT to_regclass('warehouse.marine_zone') IS NOT NULL") == "t"
+        zones_loader = load_module("load_marine_zones")
+        if self.postgis:
+          with psycopg.connect(self.dsn) as conn:
+            self.assertGreater(zones_loader.load(conn, ROOT / "shared_data/geo/zones_registry.geojson",
+                                                 zones_loader.DEFAULT_TOLERANCE_DEG,
+                                                 zones_loader.DEFAULT_MIN_HOLE_AREA_DEG2), 60)
         # 6. FILET from a minimal export, then 7. FILET-UVP candidates.
         samples_csv, abundance_csv, dictionary_csv = filet_fixture(self.tmp)
         filet = load_module("populate_filet")
@@ -296,6 +315,52 @@ class LoaderChainTests(unittest.TestCase):
         self.assertEqual(self.owner_sql("SELECT count(*) FROM warehouse.ecotaxa_object WHERE area_px IS NOT NULL"), "12")
         self.assertEqual(self.owner_sql("SELECT count(*) FROM warehouse.ecotaxa_object WHERE esd_px IS NOT NULL"), "4")
         self.assertEqual(self.owner_sql("SELECT count(*) FROM warehouse.ecotaxa_acquisition"), "4")
+        # Annotation status and taxon id from classif_qual/classif_id (V, P, D, V per sample).
+        self.assertEqual(self.owner_sql("SELECT string_agg(annotation_status || '=' || n, ',' ORDER BY annotation_status) FROM "
+                                        "(SELECT annotation_status, count(*) n FROM warehouse.ecotaxa_object GROUP BY 1) c"),
+                         "dubious=4,predicted=4,validated=8")
+        self.assertEqual(self.owner_sql("SELECT count(*) FROM warehouse.ecotaxa_object WHERE category_id IS NULL"), "0")
+        self.assertEqual(self.owner_sql("SELECT nb_validated || '/' || nb_predicted || '/' || nb_dubious || '/' || nb_unclassified "
+                                        "FROM warehouse.ecotaxa_sample WHERE sample_id = '100'"), "2/1/1/0")
+        # Abundance under both policies: profile 001 has 3 mapped objects (Calanus V at 0 m and P at 4.999 m,
+        # Oithona D at 5 m): validated_only keeps the one validated Calanus.
+        self.assertEqual(self.owner_sql("SELECT string_agg(split_part(annotation_policy, ':', 1) || '=' || n, ',' ORDER BY annotation_policy) FROM "
+                                        "(SELECT annotation_policy, sum(n_objects_taxon) n FROM warehouse.uvp_taxon_abundance GROUP BY 1) c"),
+                         "all_loaded_objects=3,validated_only=1")
+        self.assertEqual(self.owner_sql("SELECT DISTINCT taxon_key FROM warehouse.uvp_taxon_abundance "
+                                        "WHERE annotation_policy LIKE 'validated_only:%'"), "ecotaxa:id:45072")
+        # Recomputing from loaded objects (after a --refresh) gives the same rows.
+        before = self.owner_sql("SELECT md5(string_agg(concat_ws('|', bin_id, taxon_key, annotation_policy, n_objects_taxon), ',' "
+                                "ORDER BY bin_id, taxon_key, annotation_policy)) FROM warehouse.uvp_taxon_abundance")
+        import psycopg
+        from psycopg.rows import dict_row
+        with psycopg.connect(self.dsn, row_factory=dict_row) as conn, contextlib.redirect_stdout(io.StringIO()):
+            load_module("populate_ecopart").recompute_abundance(conn)
+        self.assertEqual(before, self.owner_sql("SELECT md5(string_agg(concat_ws('|', bin_id, taxon_key, annotation_policy, n_objects_taxon), ',' "
+                                                "ORDER BY bin_id, taxon_key, annotation_policy)) FROM warehouse.uvp_taxon_abundance"))
+        # Zones: every zone covering a point, computed in PostGIS on the full-resolution contour.
+        self.assertEqual(self.owner_sql("SELECT array_to_string(marine_zone_keys, ',') FROM explore.uvp_projects "
+                                        "WHERE ecotaxa_project_id = 103"), "Baie de Baffin")
+        if not self.postgis:
+            self.assertEqual(self.owner_sql("SELECT to_regclass('explore.zone_membership') IS NULL"), "t")
+        else:
+          # The fixture point is in Baie de Baffin and in the MEOW West Greenland Shelf ecoregion: the
+          # loaders keep the NeoLab zone (priority over MEOW), the view lists both.
+          self.assertEqual(self.owner_sql("SELECT string_agg(zone_key || ':' || geometry_resolution, ',' ORDER BY zone_key) "
+                                          "FROM explore.zone_membership WHERE row_kind = 'uvp_profile'"),
+                           "Baie de Baffin:full,MEOW: West Greenland Shelf:full")
+          # A row without coordinates keeps its upstream zone, flagged as such (sample 1003 has none
+          # and no zone, so it stays out).
+          self.assertEqual(self.owner_sql("SELECT count(*) FROM explore.zone_membership m JOIN warehouse.ecotaxa_sample s "
+                                          "ON m.row_kind = 'ecotaxa_sample' AND m.row_id = s.id WHERE s.sample_id = '1003'"), "0")
+          self.owner_sql("UPDATE warehouse.uvp_profile SET latitude = NULL")
+          self.assertEqual(self.owner_sql("SELECT string_agg(zone_key || ':' || geometry_resolution, ',') FROM explore.zone_membership "
+                                          "WHERE row_kind = 'uvp_profile'"), "Baie de Baffin:assigned_without_coordinates")
+          self.owner_sql(f"UPDATE warehouse.uvp_profile SET latitude = {BAFFIN[0]}")
+          # Every zone a loader assigned is among the zones PostGIS finds for that point.
+          self.assertEqual(self.owner_sql("SELECT count(*) FROM warehouse.ecotaxa_sample s WHERE s.marine_zone_assignment_status = 'assigned' "
+                                          "AND NOT EXISTS (SELECT 1 FROM explore.zone_membership m WHERE m.row_kind = 'ecotaxa_sample' "
+                                          "AND m.row_id = s.id AND m.zone_key = s.marine_zone_key)"), "0")
         self.assertEqual(self.owner_sql("SELECT count(DISTINCT pixel_size_mm) FROM warehouse.ecotaxa_acquisition"), "1")
         self.assertEqual(self.owner_sql("SELECT count(*) FROM warehouse.ecotaxa_ctd"), "5")
         self.assertEqual(self.owner_sql("SELECT count(*) FROM warehouse.ctd_measurement"), "24")
@@ -365,7 +430,7 @@ class LoadRunbookTests(unittest.TestCase):
         labels = [label for label, _ in module.steps(args, "host=h dbname=d")]
         self.assertEqual(labels[:5], ["échantillons EcoTaxa", "objets EcoTaxa", "profils EcoPart liés",
                                       "profils CTD Amundsen", "zones des profils CTD"])
-        self.assertEqual(labels[-1], "rejeu du déploiement et rapport")
+        self.assertEqual(labels[-2:], ["contours des zones maritimes", "rejeu du déploiement et rapport"])
         self.assertNotIn("FILET", labels)
 
     def test_filet_runs_only_when_its_three_exports_are_present(self):

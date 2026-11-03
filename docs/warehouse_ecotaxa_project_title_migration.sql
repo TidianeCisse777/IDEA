@@ -58,7 +58,9 @@ SELECT e.project_id AS ecotaxa_project_id,u.ecopart_project_id,u.cruise_key,
     COALESCE(MIN(e.marine_zone_name),MIN(u.marine_zone_name)) AS marine_zone_name,
     MIN(u.latitude) AS latitude_min,MAX(u.latitude) AS latitude_max,
     MIN(u.longitude) AS longitude_min,MAX(u.longitude) AS longitude_max,
-    MIN(ep.title) AS ecotaxa_project_title
+    MIN(ep.title) AS ecotaxa_project_title,
+    ARRAY_AGG(DISTINCT COALESCE(e.marine_zone_key,u.marine_zone_key) ORDER BY COALESCE(e.marine_zone_key,u.marine_zone_key))
+        FILTER (WHERE COALESCE(e.marine_zone_key,u.marine_zone_key) IS NOT NULL) AS marine_zone_keys
 FROM warehouse.uvp_profile u
 LEFT JOIN warehouse.uvp_ecotaxa l ON l.uvp_profile_id=u.id
 LEFT JOIN warehouse.ecotaxa_sample e ON e.id=l.ecotaxa_sample_id
@@ -68,4 +70,5 @@ GROUP BY e.project_id,u.ecopart_project_id,u.cruise_key;
 COMMENT ON VIEW explore.uvp_samples IS
     'Un sample/profil UVP par ligne, metadonnees EcoTaxa et EcoPart. ecotaxa_project_title est le nom natif du projet EcoTaxa (NULL si le projet n''a pas ete charge dans warehouse.ecotaxa_project); ecotaxa_project_id reste l''identifiant stable a utiliser pour grouper ou joindre, le titre peut changer ou manquer.';
 COMMENT ON VIEW explore.uvp_projects IS
-    'Navigation EcoTaxa/EcoPart : une ligne par projet (ecotaxa_project_id, ecopart_project_id, campagne). ecotaxa_project_title est le nom natif du projet EcoTaxa, pour l''affichage; ne pas l''utiliser comme cle, deux projets pourraient en theorie partager un titre.';
+    'Navigation EcoTaxa/EcoPart : une ligne par projet (ecotaxa_project_id, ecopart_project_id, campagne). ecotaxa_project_title est le nom natif du projet EcoTaxa, pour l''affichage; ne pas l''utiliser comme cle, deux projets pourraient en theorie partager un titre. '
+    'marine_zone_key/marine_zone_name ne montrent qu''UNE des zones du projet (la premiere par ordre alphabetique) : pour savoir si un projet touche une zone, utiliser marine_zone_keys (toutes les zones attribuees a ses profils/samples, AMBIGUOUS compris), ex. WHERE ''Baie de Baffin'' = ANY(marine_zone_keys); pour des points en zone de chevauchement (AMBIGUOUS), explore.zone_membership.';

@@ -53,7 +53,9 @@ SELECT e.project_id AS ecotaxa_project_id,u.ecopart_project_id,u.cruise_key,
     COALESCE(MIN(e.marine_zone_name),MIN(u.marine_zone_name)) AS marine_zone_name,
     MIN(u.latitude) AS latitude_min,MAX(u.latitude) AS latitude_max,
     MIN(u.longitude) AS longitude_min,MAX(u.longitude) AS longitude_max,
-    MIN(ep.title) AS ecotaxa_project_title
+    MIN(ep.title) AS ecotaxa_project_title,
+    ARRAY_AGG(DISTINCT COALESCE(e.marine_zone_key,u.marine_zone_key) ORDER BY COALESCE(e.marine_zone_key,u.marine_zone_key))
+        FILTER (WHERE COALESCE(e.marine_zone_key,u.marine_zone_key) IS NOT NULL) AS marine_zone_keys
 FROM warehouse.uvp_profile u
 LEFT JOIN warehouse.uvp_ecotaxa l ON l.uvp_profile_id=u.id
 LEFT JOIN warehouse.ecotaxa_sample e ON e.id=l.ecotaxa_sample_id

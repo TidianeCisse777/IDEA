@@ -479,6 +479,58 @@ def particle_values(raw: dict) -> list[tuple]:
     return values
 
 
+
+def insert_abundance(conn: psycopg.Connection, version: int) -> int:
+    """Positive counts per bin, taxon and annotation policy for one EcoPart version.
+
+    All sampled bins remain in uvp_bin; explore.uvp_taxon_abundance exposes the
+    zeros for each taxon observed in that profile/source/policy. Two policies:
+    all_loaded_objects (every object, validated or not) and validated_only
+    (annotation_status = 'validated', i.e. EcoTaxa classif_qual V). An object
+    never classified has no status and only counts in all_loaded_objects.
+    """
+    return conn.execute(
+        """INSERT INTO warehouse.uvp_taxon_abundance
+        (dataset_version_id,profile_id,bin_id,taxon_key,annotation_policy,
+         n_objects_taxon,sampled_volume_l,calculation_version)
+        SELECT %s,b.profile_id,b.id,
+            CASE WHEN o.category_id IS NOT NULL THEN 'ecotaxa:id:'||o.category_id
+                 WHEN o.category_name IS NOT NULL THEN 'ecotaxa:name:'||o.category_name
+                 ELSE 'warehouse:unclassified' END,
+            pol.policy||':ecotaxa_project='||s.project_id,
+            count(*),b.sampled_volume_l,'ecopart-warehouse-v1-sparse'
+        FROM warehouse.uvp_bin b
+        JOIN warehouse.uvp_profile p ON p.id=b.profile_id
+        JOIN warehouse.uvp_object_bin m ON m.uvp_bin_id=b.id
+        JOIN warehouse.ecotaxa_object o ON o.id=m.ecotaxa_object_id
+        JOIN warehouse.ecotaxa_sample s ON s.id=o.sample_id
+        CROSS JOIN LATERAL (VALUES ('all_loaded_objects', true),
+                                   ('validated_only', o.annotation_status = 'validated')) pol(policy, keep)
+        WHERE p.dataset_version_id=%s AND pol.keep
+        GROUP BY 2,3,4,5""",
+        (version, version),
+    ).rowcount
+
+
+def recompute_abundance(conn: psycopg.Connection) -> dict:
+    """Rebuild uvp_taxon_abundance for every loaded EcoPart version, one
+    transaction per version, from objects already in the warehouse (no download).
+    Run after objects were refreshed (taxon id, annotation status)."""
+    versions = [row["id"] for row in conn.execute(
+        """SELECT DISTINCT v.id FROM warehouse.dataset_version v
+        JOIN warehouse.uvp_profile p ON p.dataset_version_id=v.id
+        WHERE v.source_instance='ecopart' ORDER BY v.id""").fetchall()]
+    conn.commit()
+    counts = {}
+    for version in versions:
+        with conn.transaction():
+            conn.execute("SELECT pg_advisory_xact_lock(4172026)")
+            conn.execute("DELETE FROM warehouse.uvp_taxon_abundance WHERE dataset_version_id=%s", (version,))
+            counts[version] = insert_abundance(conn, version)
+        log(f"version {version}: {counts[version]} lignes d'abondance recalculées")
+    return counts
+
+
 def load_project(
     conn: psycopg.Connection,
     path: Path,
@@ -669,27 +721,7 @@ def load_project(
             (version,),
         ).rowcount
         log(f"projet {ep_id}: {mapped} objets reliés; abondances par source EcoTaxa")
-        # Persist positive counts; all sampled bins remain in uvp_bin. The view
-        # below exposes zeros for each taxon observed in that profile/source.
-        abundance = conn.execute(
-            """INSERT INTO warehouse.uvp_taxon_abundance
-            (dataset_version_id,profile_id,bin_id,taxon_key,annotation_policy,
-             n_objects_taxon,sampled_volume_l,calculation_version)
-            SELECT %s,b.profile_id,b.id,
-                CASE WHEN o.category_id IS NOT NULL THEN 'ecotaxa:id:'||o.category_id
-                     WHEN o.category_name IS NOT NULL THEN 'ecotaxa:name:'||o.category_name
-                     ELSE 'warehouse:unclassified' END,
-                'all_loaded_objects:ecotaxa_project='||s.project_id,
-                count(*),b.sampled_volume_l,'ecopart-warehouse-v1-sparse'
-            FROM warehouse.uvp_bin b
-            JOIN warehouse.uvp_profile p ON p.id=b.profile_id
-            JOIN warehouse.uvp_object_bin m ON m.uvp_bin_id=b.id
-            JOIN warehouse.ecotaxa_object o ON o.id=m.ecotaxa_object_id
-            JOIN warehouse.ecotaxa_sample s ON s.id=o.sample_id
-            WHERE p.dataset_version_id=%s
-            GROUP BY 2,3,4,5""",
-            (version, version),
-        ).rowcount
+        abundance = insert_abundance(conn, version)
         ctd = conn.execute(
             """INSERT INTO warehouse.uvp_ctd
             (uvp_profile_id,ctd_profile_id,source_evidence)
@@ -778,10 +810,21 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--discover-only", action="store_true")
     parser.add_argument(
+        "--recompute-abundance",
+        action="store_true",
+        help="recalculer les abondances depuis les objets déjà chargés, sans EcoPart",
+    )
+    parser.add_argument(
         "--directory", type=Path, default=ROOT / "data/warehouse_ecopart"
     )
     args = parser.parse_args()
     args.directory.mkdir(parents=True, exist_ok=True)
+    if args.recompute_abundance:
+        with connection() as conn:
+            conn.execute((ROOT / "docs/warehouse_ecopart_migration.sql").read_text())
+            conn.commit()
+            recompute_abundance(conn)
+        return
     with connection() as conn:
         client = Client()
         client.login()

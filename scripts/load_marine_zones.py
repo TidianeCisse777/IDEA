@@ -68,15 +68,16 @@ def load(conn, registry_path: Path, tolerance_deg: float, min_hole_area_deg2: fl
             geometry = shape(feature['geometry'])
             if not geometry.is_valid:
                 geometry = geometry.buffer(0)
+            full = as_multipolygon(geometry)
             geometry = drop_tiny_holes(geometry, min_hole_area_deg2)
             simplified = as_multipolygon(geometry.simplify(tolerance_deg, preserve_topology=True))
             cur.execute(
-                """INSERT INTO warehouse.marine_zone(zone_key, zone_source, geom, simplify_tolerance_deg, loaded_at)
-                VALUES (%s, %s, ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326), %s, now())
+                """INSERT INTO warehouse.marine_zone(zone_key, zone_source, geom, geom_full, simplify_tolerance_deg, loaded_at)
+                VALUES (%s, %s, ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326), ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326), %s, now())
                 ON CONFLICT (zone_key) DO UPDATE SET
-                    zone_source = EXCLUDED.zone_source, geom = EXCLUDED.geom,
+                    zone_source = EXCLUDED.zone_source, geom = EXCLUDED.geom, geom_full = EXCLUDED.geom_full,
                     simplify_tolerance_deg = EXCLUDED.simplify_tolerance_deg, loaded_at = EXCLUDED.loaded_at""",
-                (zone_key, source, json.dumps(simplified.__geo_interface__), tolerance_deg))
+                (zone_key, source, json.dumps(simplified.__geo_interface__), json.dumps(full.__geo_interface__), tolerance_deg))
             n += 1
     conn.commit()
     return n
@@ -92,6 +93,10 @@ def main():
     ap.add_argument('--database-url')
     args = ap.parse_args()
     with psycopg.connect(args.database_url or default_database_url()) as conn:
+        if conn.execute("SELECT to_regclass('warehouse.marine_zone')").fetchone()[0] is None:
+            print('[marine_zone] table absente (PostGIS indisponible au déploiement) : contours non chargés, '
+                  'le reste du warehouse fonctionne.')
+            return
         n = load(conn, args.registry, args.tolerance_deg, args.min_hole_area_deg2)
     print(f'[marine_zone] {n} zones chargées depuis {args.registry} '
           f'(tolérance {args.tolerance_deg}°, îles < {args.min_hole_area_deg2}°² retirées)')

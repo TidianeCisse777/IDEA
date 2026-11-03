@@ -114,6 +114,8 @@ def steps(args, conninfo):
         ('profils EcoPart liés', ['populate_ecopart.py']),
         ('profils CTD Amundsen', ['populate_amundsen_ctd.py', '--database-url', conninfo]),
         ('zones des profils CTD', ['assign_filet_zones.py', '--table', 'ctd_profile', '--database-url', conninfo]),
+        # Zone contours in the database (display + explore.zone_membership); skipped without PostGIS.
+        ('contours des zones maritimes', ['load_marine_zones.py', '--database-url', conninfo]),
     ]
     files = filet_files(args.filet_dir)
     if files and all(files.values()):
