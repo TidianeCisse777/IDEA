@@ -189,3 +189,14 @@ def test_real_sql_failure_rolls_back_whole_project(warehouse_db, tmp_path, monke
         == 0
     )
     conn.commit()
+
+
+def test_task_identity_from_creation_confirmation_without_link():
+    # Real EcoPart answer for project 61 (2026-11-02): the task id, no href.
+    url = "https://ecopart.obs-vlfr.fr/Task/Create/TaskPartExport"
+    html = "<h3>Task 61970 subprocess Created</h3><script>x='/Task/Show/61970'</script>"
+    assert task_link_from_response(url, html) == "/Task/Show/61970"
+    with pytest.raises(ValueError):
+        task_link_from_response(url, "Task 1 subprocess Created Task 2 subprocess Created")
+    with pytest.raises(ValueError):
+        task_link_from_response(url, "<p>rien</p>")

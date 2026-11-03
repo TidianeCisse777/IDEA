@@ -117,6 +117,12 @@ def task_link_from_response(url: str, html: str) -> str:
     if match:
         return match.group()
     links = set(re.findall(r"""href=['"](/Task/Show/\d+)['"]""", html))
+    if not links:
+        # EcoPart's confirmation page names the task it just created
+        # ("Task 61970 subprocess Created") without a link to it. That is this
+        # request's own answer, not the account's global list; the polling loop
+        # still checks the task's project and export mode (task_parameters).
+        links = {f"/Task/Show/{n}" for n in re.findall(r"Task (\d+) subprocess Created", html)}
     if len(links) != 1:
         raise ValueError("Identité de la tâche export absente ou ambiguë")
     return links.pop()
