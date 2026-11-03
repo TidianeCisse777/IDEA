@@ -72,20 +72,25 @@ FROM warehouse.uvp_profile u
 JOIN warehouse.uvp_bin b ON b.profile_id=u.id
 JOIN warehouse.ecopart_bin_source s ON s.bin_id=b.id;
 
+-- Taxon display name next to its key (ecotaxa:id:N says nothing to a reader); set by
+-- populate_ecopart.insert_abundance from the objects' EcoTaxa display name.
+ALTER TABLE warehouse.uvp_taxon_abundance ADD COLUMN IF NOT EXISTS taxon_name text;
 -- Densify on read, without millions of redundant stored zero values.
 -- Taxon universe: taxa observed in this profile and this EcoTaxa project.
 -- Kept identical to its copy in warehouse_uvp_abundance_zone_migration.sql (tests/test_warehouse_schema.py checks it):
 -- populate_ecopart.py replays the EcoPart migration at load time, after the always-applied migrations.
 CREATE OR REPLACE VIEW explore.uvp_taxon_abundance AS
 WITH taxa AS (
-    SELECT DISTINCT dataset_version_id,profile_id,taxon_key,annotation_policy
+    SELECT dataset_version_id,profile_id,taxon_key,annotation_policy,MIN(taxon_name) AS taxon_name
     FROM warehouse.uvp_taxon_abundance
+    GROUP BY 1,2,3,4
 )
 SELECT t.dataset_version_id,t.profile_id,b.id AS bin_id,t.taxon_key,t.annotation_policy,
        COALESCE(a.n_objects_taxon,0::bigint) AS n_objects_taxon,b.sampled_volume_l,
        COALESCE(a.n_objects_taxon,0)::numeric / b.sampled_volume_l * 1000 AS abundance_uvp_ind_m3,
        b.depth_min_m,b.depth_max_m,u.sample_name,u.cruise_key,u.station_key,u.sampled_at,
-       u.marine_zone_key,u.marine_zone_name,u.marine_zone_assignment_status,u.ecotaxa_project_id
+       u.marine_zone_key,u.marine_zone_name,u.marine_zone_assignment_status,u.ecotaxa_project_id,
+       t.taxon_name
 FROM taxa t
 JOIN warehouse.uvp_profile u ON u.id=t.profile_id
 JOIN warehouse.uvp_bin b ON b.profile_id=t.profile_id

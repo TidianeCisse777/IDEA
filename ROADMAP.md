@@ -4,6 +4,27 @@
 
 **Dernière mise à jour :** 3 novembre 2026
 
+### 3 novembre 2026 — Statut d'annotation EcoTaxa et filtre de zone complet (phase 2)
+
+- Trou trouvé par un test agent réel (question Baie de Baffin) : `annotation_status` et `category_id` vides sur
+  les 15 M objets (jamais demandés à l'API). Le chargeur lit désormais `obj.classif_qual` (V/P/D) et
+  `obj.classif_id`; `--refresh` a relu les 15 050 002 objets en place (≈ 1 h, aucun doublon) : 6 645 676
+  validés, 7 700 806 prédits, 14 319 douteux, 689 201 jamais classés. Compteurs par sample recalculés.
+- Abondances UVP sous deux politiques (`all_loaded_objects`, `validated_only`), recalculables sans EcoPart
+  (`populate_ecopart.py --recompute-abundance`); `taxon_name` ajouté à la vue (les clés sont maintenant des
+  identifiants EcoTaxa). Cas am_leg3 (14859), Baie de Baffin, Copepoda 0–200 m : 750,9 ind/m³ tous objets,
+  135 objets validés seulement (moins de 1 %) — la valeur haute vient d'objets prédits.
+- Zones : contours pleine résolution en base et `explore.zone_membership` (PostGIS `ST_Covers`, toutes les
+  zones couvrant un point, MEOW et chevauchements compris; lignes sans coordonnées gardent leur zone amont,
+  signalées). `uvp_projects.marine_zone_keys` liste toutes les zones d'un projet (18084 retrouvé en Baie de
+  Baffin). Règle de chargement documentée : zone NeoLab/IHO prioritaire sur MEOW, AMBIGUOUS si plusieurs zones
+  NeoLab. Chargement des contours ajouté à `load_warehouse.py`.
+- Test agent réel (Claude Code, MCP, dossier vide) : chiffres exacts recalculés, filtre par `zone_membership`,
+  comparaison des politiques avec nombre de profils, cause d'am_leg3 identifiée. Il a révélé l'absence de nom
+  de taxon (requêtes de recherche au-delà de 30 s), corrigée ensuite.
+- Problèmes de données relevés : 197 profils GreenEdge 2016 sans coordonnées propres (samples EcoTaxa 149 et
+  20890 en désaccord, ex. longitude +58,5 / −58,5 pour ge_2016_001); 3 profils `assigned` sans zone.
+
 ### 3 novembre 2026 — Chargement complet réel et sauvegarde partageable (phase 2)
 
 - Chargement réel de tous les projets accessibles (`load_warehouse.py --all-projects`) : 23 projets EcoTaxa,

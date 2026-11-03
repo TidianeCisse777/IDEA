@@ -329,6 +329,8 @@ class LoaderChainTests(unittest.TestCase):
                          "all_loaded_objects=3,validated_only=1")
         self.assertEqual(self.owner_sql("SELECT DISTINCT taxon_key FROM warehouse.uvp_taxon_abundance "
                                         "WHERE annotation_policy LIKE 'validated_only:%'"), "ecotaxa:id:45072")
+        self.assertEqual(self.owner_sql("SELECT string_agg(DISTINCT taxon_key || '=' || taxon_name, ',') FROM explore.uvp_taxon_abundance"),
+                         "ecotaxa:id:45072=Calanus,ecotaxa:id:61993=Oithona")
         # Recomputing from loaded objects (after a --refresh) gives the same rows.
         before = self.owner_sql("SELECT md5(string_agg(concat_ws('|', bin_id, taxon_key, annotation_policy, n_objects_taxon), ',' "
                                 "ORDER BY bin_id, taxon_key, annotation_policy)) FROM warehouse.uvp_taxon_abundance")

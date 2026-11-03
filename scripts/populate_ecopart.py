@@ -492,13 +492,14 @@ def insert_abundance(conn: psycopg.Connection, version: int) -> int:
     return conn.execute(
         """INSERT INTO warehouse.uvp_taxon_abundance
         (dataset_version_id,profile_id,bin_id,taxon_key,annotation_policy,
-         n_objects_taxon,sampled_volume_l,calculation_version)
+         n_objects_taxon,sampled_volume_l,calculation_version,taxon_name)
         SELECT %s,b.profile_id,b.id,
             CASE WHEN o.category_id IS NOT NULL THEN 'ecotaxa:id:'||o.category_id
                  WHEN o.category_name IS NOT NULL THEN 'ecotaxa:name:'||o.category_name
                  ELSE 'warehouse:unclassified' END,
             pol.policy||':ecotaxa_project='||s.project_id,
-            count(*),b.sampled_volume_l,'ecopart-warehouse-v1-sparse'
+            count(*),b.sampled_volume_l,'ecopart-warehouse-v1-sparse',
+            MIN(o.category_name)
         FROM warehouse.uvp_bin b
         JOIN warehouse.uvp_profile p ON p.id=b.profile_id
         JOIN warehouse.uvp_object_bin m ON m.uvp_bin_id=b.id
