@@ -4,6 +4,15 @@
 
 **Dernière mise à jour :** 3 novembre 2026
 
+### 3 novembre 2026 — Tableau de bord annotation et carte interactive (phase 2)
+
+- Tableau de bord privé (type Dashboard) : chiffres clés d'annotation (15 050 002 objets, 44,2 % validés,
+  51,2 % prédits), statuts par projet EcoTaxa, 25 catégories les plus fréquentes avec part validée, carte d3
+  zoomable des 488 points de profils UVP localisés (couleur = part validée, infobulle avec copépodes 0–200 m tous
+  objets / validés), 456 profils CTD, contours des zones NeoLab et MEOW, filtre par projet.
+- Données : instantané du warehouse (fichiers JSON joints, non live : la base est locale), trait de côte
+  Natural Earth 50m. Totaux des fichiers recoupés avec la base.
+
 ### 3 novembre 2026 — Tests visuels des agents sur la base réelle (phase 2)
 
 - Quatre questions de chercheur à Claude Code (MCP, lecture seule, dossiers vides, lancées en parallèle) :
