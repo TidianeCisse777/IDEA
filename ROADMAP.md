@@ -4,6 +4,19 @@
 
 **Dernière mise à jour :** 3 novembre 2026
 
+### 3 novembre 2026 — Tests visuels des agents sur la base réelle (phase 2)
+
+- Quatre questions de chercheur à Claude Code (MCP, lecture seule, dossiers vides, lancées en parallèle) :
+  carte des profils UVP en Baie de Baffin avec contours de zones (37 tours, 3 min 42, 0,67 $), abondance des
+  copépodes tous objets vs validés (21 tours, 1 min 48, 0,36 $), profil vertical am_leg4 (21 tours, 1 min 52,
+  0,46 $), profils moyens T/S des CTD par année (32 tours, 3 min 55, 0,55 $). 4/4 figures livrées avec CSV,
+  script et provenance; 39 requêtes SQL.
+- Recoupements indépendants : 802,6 ind/m³ (am_leg3, taxons copépodes de l'agent) et 49/13/31/94 profils CTD
+  par année, identiques.
+- Défauts observés : un agent a écrit sa figure dans un chemin mal recopié (tiret au lieu d'une barre oblique);
+  l'agent carte n'a pas relu son dernier rendu; le profil vertical utilise tous les objets (prédits compris),
+  ce qu'il indique sur la figure. Page de démonstration publiée (artifact privé).
+
 ### 3 novembre 2026 — Statut d'annotation EcoTaxa et filtre de zone complet (phase 2)
 
 - Trou trouvé par un test agent réel (question Baie de Baffin) : `annotation_status` et `category_id` vides sur
