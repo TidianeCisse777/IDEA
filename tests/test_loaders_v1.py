@@ -408,6 +408,10 @@ class LoaderChainTests(unittest.TestCase):
         self.assertEqual(scoped("SELECT string_agg(ecotaxa_native_sample_id, ',' ORDER BY ecotaxa_native_sample_id) FROM explore.ecotaxa_samples"), "100,1001")
         self.assertEqual(scoped("SELECT count(*) FROM explore.ecotaxa_objects"), "8")
         self.assertEqual(scoped("SELECT count(*) FROM explore.ctd_profiles"), "0")
+        # A person opening explore in a SQL client finds every view and column described.
+        self.assertEqual(self.owner_sql("SELECT count(*) FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid "
+                                        "AND a.attnum > 0 AND NOT a.attisdropped WHERE c.relnamespace = 'explore'::regnamespace "
+                                        "AND c.relkind = 'v' AND col_description(c.oid, a.attnum) IS NULL"), "0")
         # Catalog titles name the source instead of a placeholder.
         self.assertEqual(scoped("SELECT title FROM explore.my_datasets WHERE dataset_key = '101'"), "EcoTaxa 101 — Projet C1")
         reader = self.as_role("warehouse_reader", "SELECT count(*) FROM explore.uvp_objects", "reader-pw")

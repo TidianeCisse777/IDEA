@@ -22,7 +22,7 @@ SELECT t.dataset_version_id,t.profile_id,b.id AS bin_id,t.taxon_key,t.annotation
        COALESCE(a.n_objects_taxon,0)::numeric / b.sampled_volume_l * 1000 AS abundance_uvp_ind_m3,
        b.depth_min_m,b.depth_max_m,u.sample_name,u.cruise_key,u.station_key,u.sampled_at,
        u.marine_zone_key,u.marine_zone_name,u.marine_zone_assignment_status,u.ecotaxa_project_id,
-       t.taxon_name
+       t.taxon_name,t.profile_id AS uvp_profile_id,b.id AS uvp_bin_id
 FROM taxa t
 JOIN warehouse.uvp_profile u ON u.id=t.profile_id
 JOIN warehouse.uvp_bin b ON b.profile_id=t.profile_id

@@ -4,6 +4,25 @@
 
 **Dernière mise à jour :** 3 novembre 2026
 
+### 3 novembre 2026 — Vues exhaustives et base lisible par un humain (phase 2)
+
+- Trou trouvé par un test agent (stats d'annotation EcoTaxa) : seuls les 13 projets liés à un profil UVP étaient
+  visibles dans `explore` (10 projets et 4,4 M objets absents, dont les 689 201 jamais classés); les profils CTD
+  et leurs variables n'étaient visibles qu'à travers un lien EcoTaxa. Revue de couverture table par table, puis
+  5 vues : `ecotaxa_projects`, `ecotaxa_samples`, `ecotaxa_objects`, `ctd_profiles`, `ctd_measurements`, sous la
+  même sécurité par ligne (testé : compte restreint limité à ses 2 samples, 0 CTD hors source accordée).
+- `object_count` était vide pour les 6 138 samples : rempli depuis les objets (chargeur + base réelle), cohérent
+  avec les compteurs par statut sur tous les samples.
+- Lisibilité humaine : titres du catalogue nommés d'après la source (« EcoTaxa 42 — UVP5 GREEN EDGE Ice Camp
+  2015 » au lieu de « ecotaxa dataset 42 (current) »), colonnes décrites pour les vues de service (563/563
+  colonnes des 37 vues décrites, test ajouté), clés `uvp_profile_id`/`uvp_bin_id` ajoutées à `ecopart_bins` et
+  `uvp_taxon_abundance` (anciens noms conservés), guide `WAREHOUSE_SQL_GUIDE.md` (connexion DBeaver/psql, vue
+  par question, clés, pièges, 7 requêtes testées avec le compte lecteur en 0,1 à 6,6 s).
+- Test agent relancé (même question, environnement sans aucun mot de passe de la base, vérifié) : 23 projets
+  couverts, totaux exacts (15 050 002 objets), doublons 149/20880/20890 repérés, 14669/2331 signalé non vérifié.
+  Écart relevé : l'agent affirme que 13224 est un extrait de 149, non établi (aucun objet commun). Le chemin du
+  dossier de test provoque encore une copie des fichiers dans un dossier mal nommé (artefact du montage).
+
 ### 3 novembre 2026 — Tableau de bord annotation et carte interactive (phase 2)
 
 - Tableau de bord privé (type Dashboard) : chiffres clés d'annotation (15 050 002 objets, 44,2 % validés,

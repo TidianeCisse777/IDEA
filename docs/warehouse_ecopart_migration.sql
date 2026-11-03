@@ -67,7 +67,9 @@ GROUP BY e.project_id,u.ecopart_project_id,u.cruise_key;
 CREATE OR REPLACE VIEW explore.ecopart_bins AS
 SELECT u.dataset_version_id,u.ecopart_project_id,u.id AS profile_id,u.sample_name,
        b.id AS bin_id,b.depth_min_m,b.depth_max_m,b.sampled_volume_l,
-       s.source_depth_m,s.source_row_json
+       s.source_depth_m,s.source_row_json,
+       -- Same keys under the names the other explore views use (uvp_profile_id, uvp_bin_id).
+       u.id AS uvp_profile_id,b.id AS uvp_bin_id
 FROM warehouse.uvp_profile u
 JOIN warehouse.uvp_bin b ON b.profile_id=u.id
 JOIN warehouse.ecopart_bin_source s ON s.bin_id=b.id;
@@ -90,7 +92,7 @@ SELECT t.dataset_version_id,t.profile_id,b.id AS bin_id,t.taxon_key,t.annotation
        COALESCE(a.n_objects_taxon,0)::numeric / b.sampled_volume_l * 1000 AS abundance_uvp_ind_m3,
        b.depth_min_m,b.depth_max_m,u.sample_name,u.cruise_key,u.station_key,u.sampled_at,
        u.marine_zone_key,u.marine_zone_name,u.marine_zone_assignment_status,u.ecotaxa_project_id,
-       t.taxon_name
+       t.taxon_name,t.profile_id AS uvp_profile_id,b.id AS uvp_bin_id
 FROM taxa t
 JOIN warehouse.uvp_profile u ON u.id=t.profile_id
 JOIN warehouse.uvp_bin b ON b.profile_id=t.profile_id
