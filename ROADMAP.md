@@ -2,7 +2,29 @@
 
 **Période proposée :** du 14 septembre au 30 novembre 2026
 
-**Dernière mise à jour :** 1ᵉʳ novembre 2026
+**Dernière mise à jour :** 3 novembre 2026
+
+### 3 novembre 2026 — Chargement complet réel et sauvegarde partageable (phase 2)
+
+- Chargement réel de tous les projets accessibles (`load_warehouse.py --all-projects`) : 23 projets EcoTaxa,
+  6 138 samples, 15 050 002 objets (taille Zooprocess en pixels), 82 757 acquisitions dont 1 104 calibrées;
+  12 projets EcoPart, 686 profils, 71 520 bins, 12 151 035 objets rattachés; 456 profils CTD Amundsen
+  (5 130 421 mesures), tous en zone `assigned`; 65 zones, 18 stades de copépodes. Rejeu final : `PRÊT`.
+- Échecs observés et corrigés : (1) rejeu de la migration EcoPart en cours de chargement refusé (« cannot drop
+  columns from view ») — régression de mes migrations récentes qui avaient redéfini `uvp_taxon_abundance` (zéros
+  densifiés perdus) et `uvp_projects` depuis d'anciennes définitions; définitions rendues identiques et testées
+  (identité entre fichiers, rejeu dans la chaîne de chargement, zéros présents : 2 550 577 lignes à zéro sur
+  3 042 992 en réel). `uvp_object_sizes` rattache le bin au profil de la ligne (0 doublon vérifié). (2) Projet
+  EcoPart 61 : tâche d'export non identifiée (page de confirmation sans lien); le numéro de tâche est lu dans la
+  confirmation, puis vérifié comme avant; repris et chargé. (3) Calibration pixel : 53 142 acquisitions LOKI,
+  lot unique non reprenable; traitement par lots de 1 000 reprenable.
+- Sauvegarde `pg_dump` 392 Mo (7,2 Go restaurée), restauration testée sur une base neuve (déploiement →
+  `backup_warehouse.py --restore` → `--check` = `PRÊT`, comptes identiques, lecteur opérationnel). Zip remis :
+  sauvegarde + SHA-256 + code au commit + `LISEZMOI` de restauration; aucun mot de passe; identifiants EcoTaxa
+  supprimés de l'environnement de chargement.
+- Limites : FILET non chargé; tailles LOKI sans calibration (restent en pixels); EcoTaxa 17808 sans EcoPart lié;
+  aucun contrat d'accès posé; le zip complet contourne le contrôle d'accès par personne (choix assumé de
+  l'utilisateur) et contient les métadonnées sources dont les contacts `DataOwner`.
 
 ### 1ᵉʳ novembre 2026 — Les agents montrent les requêtes derrière leurs chiffres
 
