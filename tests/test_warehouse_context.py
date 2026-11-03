@@ -35,6 +35,14 @@ class WarehouseContextTests(unittest.TestCase):
                             'PNG', 'SVG', 'CSV', 'SQL', 'vide', 'NULL'):
             self.assertIn(requirement, text)
 
+    def test_graphics_guard_against_defects_seen_in_real_agent_runs(self):
+        # 3 novembre 2026: a figure saved under a mistyped absolute path, a final render
+        # never re-read, an abundance figure built on predicted objects only.
+        text = ' '.join(GRAPHICS.values())
+        for requirement in ('chemins relatifs', 'vérifier qu’ils existent', 'APRÈS la dernière modification',
+                            'validated_only', 'all_loaded_objects'):
+            self.assertIn(requirement, text)
+
     def test_graphics_express_confidence_without_inventing_scientific_validation(self):
         text = ' '.join(GRAPHICS.values())
         for requirement in ('confirmed', 'exploratory', 'uncertain', 'Exploratoire',

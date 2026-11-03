@@ -56,7 +56,13 @@ GRAPHICS = view(
     'd’incertitude inventé. Conserver requête SQL, paramètres, versions, méthode, exclusions et limites '
     'dans un fichier de provenance accompagnant la figure. Produire un PNG à 300 dpi et un SVG pour '
     'les figures statiques, le CSV exact tracé et le script Python reproductible; indiquer les chemins '
-    'réels des fichiers créés. Inspecter le rendu avant livraison et signaler toute limite restante.',
+    'réels des fichiers créés. Fichiers : les écrire dans le dossier de travail courant avec des chemins '
+    'relatifs (jamais un chemin absolu recopié à la main), puis vérifier qu’ils existent (ex. ls) et donner '
+    'le chemin absolu réellement affiché par cette vérification. Rendu : relire l’image finale APRÈS la '
+    'dernière modification du script, pas une version antérieure; si une retouche suit la relecture, '
+    'relire de nouveau. Abondance par taxon : tracer la politique validated_only à côté de '
+    'all_loaded_objects (ou expliquer pourquoi une seule), avec le nombre de profils de chacune, car '
+    'all_loaded_objects inclut les objets prédits non validés. Signaler toute limite restante.',
     "SELECT topic,purpose,grain,relations,caveats FROM explore.warehouse_context WHERE topic='graphs';",
 )
 
