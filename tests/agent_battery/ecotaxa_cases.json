@@ -1,0 +1,67 @@
+{
+  "description": "Questions de chercheur sur les données EcoTaxa, chacune avec un piège connu. Les valeurs attendues sont recalculées dans la base à chaque lancement (expect_sql), pas écrites en dur.",
+  "cases": [
+    {
+      "id": "loki2015_validated",
+      "question": "Combien d'objets compte le projet LOKI ArcticNet 2015, et combien sont validés ?",
+      "expect_sql": "SELECT n_objects, n_validated FROM explore.ecotaxa_projects WHERE ecotaxa_project_id = 14622"
+    },
+    {
+      "id": "most_unclassified",
+      "question": "Quel projet EcoTaxa a le plus d'objets jamais classés ?",
+      "expect_sql": "SELECT ecotaxa_project_id, n_unclassified FROM explore.ecotaxa_projects ORDER BY n_unclassified DESC NULLS LAST LIMIT 1"
+    },
+    {
+      "id": "leg4_top5_validated",
+      "question": "Quels sont les 5 taxons les plus fréquents parmi les objets validés de am_leg4 ?",
+      "expect_sql": "SELECT count(*) FROM explore.ecotaxa_objects WHERE ecotaxa_project_id = 17498 AND annotation_status = 'validated' GROUP BY taxon_name ORDER BY 1 DESC LIMIT 5",
+      "trap": "objets validés seulement"
+    },
+    {
+      "id": "baffin_samples",
+      "question": "Combien de samples EcoTaxa sont en Baie de Baffin, tous projets confondus ?",
+      "expect_sql": "SELECT count(DISTINCT row_id) FROM explore.zone_membership WHERE row_kind = 'ecotaxa_sample' AND zone_key = 'Baie de Baffin'",
+      "trap": "tous les projets, pas seulement ceux liés à l'UVP"
+    },
+    {
+      "id": "leg3_calanus_validated",
+      "question": "Quelle est l'abondance de Calanus entre 0 et 100 m pour am_leg3, en ne gardant que les objets validés ?",
+      "expect_sql": "SELECT count(*) FROM explore.ecotaxa_objects WHERE ecotaxa_project_id = 14859 AND taxon_name = 'Calanus' AND annotation_status = 'validated'",
+      "must_mention": ["(?i)aucun|pas de calanus valid|0 objet|zéro"],
+      "trap": "aucun Calanus validé : ne pas présenter une abondance calculée sur des prédictions"
+    },
+    {
+      "id": "amundsen2023_copepod_size",
+      "question": "Quelle est la taille moyenne des copépodes validés du projet Amundsen 2023, en mm ?",
+      "expect_sql": "SELECT round((avg(major_um) / 1000)::numeric, 2) FROM explore.ecotaxa_objects WHERE ecotaxa_project_id = 10101 AND annotation_status = 'validated' AND taxon_name = 'Copepoda<Multicrustacea'",
+      "tolerance": 0.02,
+      "must_mention": ["(?i)esd|diamètre"],
+      "trap": "pas d'ESD en UVP6 ; tailles UVP6 en mm, pas en mètres"
+    },
+    {
+      "id": "greenedge2016_total",
+      "question": "Combien d'objets au total pour GreenEdge 2016 ?",
+      "expect_sql": "SELECT n_objects FROM explore.ecotaxa_projects WHERE ecotaxa_project_id = 149",
+      "must_not_sql": "SELECT sum(n_objects) FROM explore.ecotaxa_projects WHERE ecotaxa_project_id IN (149, 20880, 20890)",
+      "trap": "149 porte les mêmes images que 20880 + 20890 : ne pas additionner"
+    },
+    {
+      "id": "loki_size_share",
+      "question": "Quelle part des objets LOKI ont une taille en micromètres ?",
+      "expect_sql": "SELECT count(major_um) FROM explore.ecotaxa_objects WHERE instrument ILIKE 'loki'",
+      "must_mention": ["(?i)0 ?%|aucun"],
+      "trap": "pas de calibration pixel pour LOKI"
+    },
+    {
+      "id": "leg5_profiles",
+      "question": "Combien de profils UVP compte la campagne am_leg5, et sur quelle période ?",
+      "expect_sql": "SELECT count(DISTINCT uvp_profile_id) FROM explore.uvp_samples WHERE cruise_key = 'am_leg5'",
+      "must_mention": ["(?i)4 octobre|2024-10-04|04/10", "(?i)28 octobre|2024-10-28|28/10"]
+    },
+    {
+      "id": "zooscan_annotation",
+      "question": "Le Zooscan GreenEdge est-il bien annoté ? Donne la répartition des statuts.",
+      "expect_sql": "SELECT n_validated FROM explore.ecotaxa_projects WHERE instrument = 'Zooscan' ORDER BY ecotaxa_project_id"
+    }
+  ]
+}

@@ -160,6 +160,7 @@ cython_debug/
 *.pkl
 *.json
 !assistants/manifest.json
+!tests/agent_battery/*.json
 *.csv
 *.png
 !assistants/assets/*.png

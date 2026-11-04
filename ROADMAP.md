@@ -4,6 +4,20 @@
 
 **Dernière mise à jour :** 4 novembre 2026
 
+### 4 novembre 2026 — Batterie de tests agent rejouable et zip v5 (phase 2)
+
+- `scripts/agent_battery.py` + `tests/agent_battery/ecotaxa_cases.json` : 10 questions de chercheur à pièges,
+  réponses de référence recalculées en base à chaque lancement, compte temporaire en lecture seule supprimé à la
+  fin, environnement de l'agent sans mot de passe, notation automatique (nombres attendus, motifs obligatoires,
+  valeurs interdites comme la somme des doublons GreenEdge) et rapport `report.md`/`report.json`. Notation
+  validée sur les 10 réponses notées à la main (concordance 10/10) et par 9 tests unitaires sur des erreurs
+  plausibles (valeur manquante, doublons additionnés, taille dans la mauvaise unité, abondance sur prédictions).
+  Guide : `docs/WAREHOUSE_AGENT_TESTS.md`.
+- Zip v5 (dump avec tailles UVP6 corrigées, code, LISEZMOI débutant) : parcours de partage rejoué sur machine
+  vidée (`PRÊT`, `PASS`, Connected), puis batterie lancée depuis l'installation du zip : 10/10, 1 min 37,
+  114 tours, 47 requêtes SQL, environ 1,63 $ estimés. Le test a révélé que `.gitignore` excluait tous les
+  `*.json`, donc le fichier des cas : exception ajoutée. Zips v2 à v4 supprimés (tailles UVP6 fausses).
+
 ### 4 novembre 2026 — Batterie de 10 tests agent EcoTaxa et correction des tailles UVP6 (phase 2)
 
 - En préparant les réponses de référence : les tailles UVP6 étaient 1 000 fois trop grandes (copépode moyen à

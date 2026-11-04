@@ -9,8 +9,8 @@ Compter environ 1 h la première fois (dont une bonne part de téléchargements)
 
 | Fichier | Rôle |
 |---|---|
-| `neolab_warehouse_20261104_065231.dump` | la base de données, 311 Mo (environ 7 Go une fois installée) |
-| `neolab_warehouse_20261104_065231.dump.sha256` | l'empreinte qui permet de vérifier que le fichier n'est pas abîmé |
+| `neolab_warehouse_20261104_194551.dump` | la base de données, 311 Mo (environ 7 Go une fois installée) |
+| `neolab_warehouse_20261104_194551.dump.sha256` | l'empreinte qui permet de vérifier que le fichier n'est pas abîmé |
 | `IDEA-code.tar.gz` | les programmes et la documentation |
 | `LISEZMOI.md` | ce fichier |
 
@@ -51,8 +51,8 @@ ensuite telles quelles, dans le terminal Ubuntu.
 4. **Copier le dossier dans Ubuntu.** Le zip téléchargé est côté Windows (par exemple dans Téléchargements).
    Dans le terminal Ubuntu, en remplaçant `VotreNom` par votre nom d'utilisateur Windows :
    ```bash
-   cp /mnt/c/Users/VotreNom/Downloads/neolab_warehouse_20261104_v4.zip ~/
-   cd ~ && unzip neolab_warehouse_20261104_v4.zip
+   cp /mnt/c/Users/VotreNom/Downloads/neolab_warehouse_20261104_v5.zip ~/
+   cd ~ && unzip neolab_warehouse_20261104_v5.zip
    ```
    Le dossier `~/neolab_warehouse_20261104` est celui des parties suivantes.
 
@@ -95,7 +95,7 @@ ensuite telles quelles, dans le terminal Ubuntu.
    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
    sudo apt install -y nodejs
    ```
-5. Décompresser : `cd` vers le dossier du zip, puis `unzip neolab_warehouse_20261104_v4.zip` et
+5. Décompresser : `cd` vers le dossier du zip, puis `unzip neolab_warehouse_20261104_v5.zip` et
    `cd neolab_warehouse_20261104`.
 
 ### Vérifier (tous les systèmes)
@@ -130,7 +130,7 @@ Toutes les commandes se tapent dans le terminal, **depuis le dossier `neolab_war
 ### 3.1 Vérifier le fichier et décompresser le code
 
 ```bash
-sha256sum -c neolab_warehouse_20261104_065231.dump.sha256        # macOS : shasum -a 256 -c …
+sha256sum -c neolab_warehouse_20261104_194551.dump.sha256        # macOS : shasum -a 256 -c …
 tar xzf IDEA-code.tar.gz
 cd IDEA
 ```
@@ -176,7 +176,7 @@ docker compose --env-file .env.warehouse -f docker-compose.warehouse.yml ps
 ### 3.5 Installer les données
 
 ```bash
-python scripts/backup_warehouse.py --restore ../neolab_warehouse_20261104_065231.dump --yes
+python scripts/backup_warehouse.py --restore ../neolab_warehouse_20261104_194551.dump --yes
 python scripts/deploy_warehouse_postgres.py --check
 ```
 
@@ -267,6 +267,9 @@ soi-même (DBeaver, pgAdmin, R, Python) : `IDEA/docs/WAREHOUSE_SQL_GUIDE.md`.
   copépodes 0–200 m en Baie de Baffin, am_leg3 2024 : 750,9 ind/m³ tous objets, 2,1 avec les seuls validés.
 - **Projets en double** : 149 porte les mêmes images que 20880 + 20890 ; ne pas les additionner.
 - **Non chargé** : FILET. **Tailles LOKI** : en pixels seulement (pas de calibration).
+- **Tailles UVP6** : corrigées dans cette version (EcoTaxa donne le pixel UVP6 en µm, lu par erreur en mm
+  dans les versions précédentes, d'où des tailles 1 000 fois trop grandes). Ne pas réutiliser un résultat de
+  taille UVP6 obtenu avec une copie antérieure au 4 novembre 2026 (zips v1 à v4).
 - **Positions** : 197 profils GreenEdge 2016 sans position propre (sources contradictoires) ; le projet
   17808 n'a pas de projet EcoPart lié.
 - **Statut** : données exploratoires.
@@ -283,6 +286,6 @@ soi-même (DBeaver, pgAdmin, R, Python) : `IDEA/docs/WAREHOUSE_SQL_GUIDE.md`.
 | `No module named psycopg` | même cause : activer `.venv` |
 | `port is already allocated` | un autre logiciel utilise le port : changer `WAREHOUSE_POSTGRES_PORT` (55432) ou `WAREHOUSE_NAVIGATOR_PORT` (8090) dans `.env.warehouse`, puis relancer 3.4 |
 | `psql: command not found` ou version < 16 | réinstaller le client PostgreSQL (partie 1) ; macOS : `brew link --force libpq`, puis fermer et rouvrir le Terminal |
-| erreur de version ou de compression pendant la restauration | client PostgreSQL trop ancien : installer la version 16+, ou restaurer depuis le conteneur : `docker exec -i neolab-warehouse-db sh -c 'cat > /tmp/w.dump && pg_restore --clean --if-exists --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB" /tmp/w.dump; rm /tmp/w.dump' < ../neolab_warehouse_20261104_065231.dump`, puis `python scripts/deploy_warehouse_postgres.py --check` |
+| erreur de version ou de compression pendant la restauration | client PostgreSQL trop ancien : installer la version 16+, ou restaurer depuis le conteneur : `docker exec -i neolab-warehouse-db sh -c 'cat > /tmp/w.dump && pg_restore --clean --if-exists --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB" /tmp/w.dump; rm /tmp/w.dump' < ../neolab_warehouse_20261104_194551.dump`, puis `python scripts/deploy_warehouse_postgres.py --check` |
 | `check` ne finit pas par `PASS` | `IDEA/docs/WAREHOUSE_CONNECT.md`, section Dépannage |
 | tout recommencer | `docker compose --env-file .env.warehouse -f docker-compose.warehouse.yml down -v` (efface la base locale), puis reprendre à 3.4 |
