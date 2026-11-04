@@ -4,6 +4,23 @@
 
 **Dernière mise à jour :** 4 novembre 2026
 
+### 4 novembre 2026 — Batterie de 10 tests agent EcoTaxa et correction des tailles UVP6 (phase 2)
+
+- En préparant les réponses de référence : les tailles UVP6 étaient 1 000 fois trop grandes (copépode moyen à
+  2,26 m). EcoTaxa donne la taille du pixel en mm pour UVP5/Zooscan (0,085–0,174) mais en µm pour UVP6 (73);
+  le chargeur lisait tout en mm. Corrigé dans le chargeur (valeur source et unité retenue conservées) et en base
+  (400 acquisitions UVP6 converties, 704 UVP5 inchangées); copépodes validés 10101 : grand axe moyen 2,23 mm.
+  Les résultats antérieurs utilisant des tailles UVP6 (dont la comparaison FILET/UVP par taille du 30 octobre)
+  sont à refaire; le zip v4 contient encore les tailles fausses.
+- 10 questions de chercheur à Claude Code via DbHub (dossiers vides, compte lecture seule, aucun mot de passe
+  dans l'environnement), réponses de référence calculées à part : 10/10 chiffres exacts (LOKI 2015 187 567
+  validés sur 1 687 393; 12063 688 643 jamais classés; 5 taxons validés am_leg4; 480 samples en Baie de Baffin;
+  aucun Calanus validé dans am_leg3, l'agent refuse de calculer sur des prédictions sans le dire; grand axe des
+  copépodes 10101, ESD absent en UVP6 signalé; GreenEdge 2016 sans addition des doublons; 0 % de tailles LOKI;
+  am_leg5 73 profils du 4 au 28 octobre 2024; Zooscan 100 % validé). Une imprécision : les 13 565 objets
+  douteux de 14622 décrits comme « ni validés ni prédits » au lieu de « douteux ». 103 tours, 45 requêtes SQL,
+  environ 1,37 $ estimés au total.
+
 ### 4 novembre 2026 — LISEZMOI de partage pour débutant (phase 2)
 
 - `docs/WAREHOUSE_PARTAGE_LISEZMOI.md` (copié comme LISEZMOI du zip v4) : installation de zéro sur Windows
