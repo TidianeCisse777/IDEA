@@ -14,6 +14,7 @@ couvrent (source, contrat, zone, années); le **contexte MCP** est l'ensemble de
 |---|---|
 | **la version stable v1** : contenu, procédure, vérification, décisions, risques | [Version 1.0.0](WAREHOUSE_RELEASE_V1.md) |
 | **charger les données réelles** (EcoTaxa, EcoPart, CTD, FILET) | [Chargement](WAREHOUSE_LOADING.md) |
+| **installer une copie du warehouse chez moi depuis le zip partagé**, de zéro (Windows, macOS, Linux; Claude Code, Codex ou Copilot) | [LISEZMOI du partage](WAREHOUSE_PARTAGE_LISEZMOI.md) |
 | **interroger la base moi-même en SQL** (DBeaver, pgAdmin, psql, R, Python) | [Guide SQL](WAREHOUSE_SQL_GUIDE.md) |
 | comprendre ce que contient la base | [Architecture](WAREHOUSE_ARCHITECTURE.md), [diagramme de classes](WAREHOUSE_CLASS_DIAGRAM.md), [dictionnaire MCP](WAREHOUSE_MCP_DICTIONARY.md) |
 | **déployer** sur Docker ou sur un PostgreSQL existant | [Déploiement](WAREHOUSE_DOCKER.md) et la section ci-dessous |

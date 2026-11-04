@@ -4,6 +4,21 @@
 
 **Dernière mise à jour :** 4 novembre 2026
 
+### 4 novembre 2026 — LISEZMOI de partage pour débutant (phase 2)
+
+- `docs/WAREHOUSE_PARTAGE_LISEZMOI.md` (copié comme LISEZMOI du zip v4) : installation de zéro sur Windows
+  (WSL Ubuntu + Docker Desktop), macOS (Homebrew + Docker Desktop) et Linux (Ubuntu 22.04/24.04), vérification
+  des versions, choix de l'assistant (Claude Code, Codex, GitHub Copilot dans VS Code) avec le compte requis,
+  Python en environnement virtuel (le `pip install` système est refusé sur Ubuntu 24.04 et Homebrew), branchement
+  MCP pour chacun, relance quotidienne, dépannage par symptôme.
+- Vérifié : commandes Linux (Python, venv, client PostgreSQL 16 via PGDG, Node.js 22 via NodeSource) dans des
+  conteneurs Ubuntu 22.04 et 24.04 neufs; parcours complet du zip v4 rejoué sur machine vidée (venv, `PRÊT`,
+  `PASS`, Claude Code Connected, réponse exacte en 26 s); `config codex` et `config vscode` produisent des
+  configurations pointant vers le Python du venv.
+- Non vérifié ici : Windows et macOS réels, l'installateur de Codex (exécution de script distant refusée par
+  les permissions de la session), Copilot dans VS Code; l'accès réseau des builds Docker a demandé la même
+  adaptation d'environnement que le 4 novembre (image de base avec le certificat du proxy).
+
 ### 4 novembre 2026 — Deux schémas de lecture et test de partage du zip (phase 2)
 
 - Organisation : `explore` ne contient plus que les 27 vues de données; les 10 vues de service (droits
