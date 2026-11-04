@@ -3,9 +3,9 @@
 Généré depuis le schéma déployé et le dictionnaire métier versionné. Les données restent à qualifier.
 
 Dans DbHub : appeler `warehouse_context` avec `topic="overview"`, puis le nom de vue.
-`topic="all"` retourne toutes les fiches. Types et SQL réels : `explore.warehouse_dictionary`.
+`topic="all"` retourne toutes les fiches. Types et SQL réels : `catalogue.warehouse_dictionary`.
 
-Warehouse NeoLab : EcoTaxa (objets/annotations), EcoPart (profils/bins/volumes), FILET (échantillons/analyses/abondances et biomasses source), CTD (mesures environnementales). Lire ce contexte puis demander la fiche de chaque vue utilisée avec warehouse_context(topic=nom). Avant de produire un graphique, lire warehouse_context(topic=graphs) pour les bibliothèques, le style, les règles scientifiques, la provenance et les exports. Les métadonnées et vues existent même quand les données sont absentes : lire explore.dataset_versions et mesurer la couverture avant de conclure. Ne pas inventer données, unités, taxons, liens ou validation scientifique. Ne pas interpréter biologiquement les résultats. NULL signifie absent/inconnu; zéro et absence de ligne sont différents. Garder source, versions, politiques d’annotation, stades et dénominateurs explicites. Ne pas sommer les volumes répétés par taxon ou les concentrations FILET répétées par bin. Les fichiers sources bruts ne sont pas modifiés. Accès MCP : SELECT explore uniquement, sans écriture ni DDL, délai 30 s. Le périmètre de chaque compte (contrats, zones, années) est dans explore.my_access; explore.my_datasets dit pour chaque version si l'accès est complet, partiel ou nul et pourquoi. Un résultat vide peut signifier un accès limité, pas une absence de données : consulter my_datasets avant de conclure. Les vues UVP joignent EcoTaxa et EcoPart et exigent un droit sur les deux. Avec un accès partiel, une colonne issue d'une jointure externe peut être NULL parce que la ligne liée est hors périmètre. explore.dataset_catalog décrit toutes les versions, même hors périmètre, et explore.fair_readiness mesure la complétude des métadonnées. Priorité absolue : récupérer l'intégralité des données nécessaires avant toute analyse. Chaque réponse SQL est plafonnée (DbHub : 1 000 lignes; la réponse brute porte un champ truncated). Compter d'abord avec count(*), puis agréger côté SQL (SUM/AVG/GROUP BY) ou paginer par tri stable (ORDER BY clé + LIMIT/OFFSET) jusqu'à couvrir le total attendu. Pour une extraction brute qui dépasse la limite, vérifier la complétude par un hash ou un compte recalculé côté base après coup, pas seulement en confiance. Ne jamais présenter une page partielle comme le résultat complet. Une fois les données entièrement récupérées, aucune restriction supplémentaire : les croiser, les agréger, les visualiser et les calculer librement avec les outils disponibles (pandas, Matplotlib, Cartopy, etc.) sans demander de confirmation additionnelle pour l'analyse elle-même. Le navigateur sur 127.0.0.1:8090 et le MCP sont deux accès distincts. Le filtre spatial du navigateur réduit les paires déjà enregistrées, sans changer leur statut. Les confirmations restent nécessaires avant téléchargement/calcul lourd. Répondre en français; expliciter résultat, source, méthode et limites.
+Warehouse NeoLab : EcoTaxa (objets/annotations), EcoPart (profils/bins/volumes), FILET (échantillons/analyses/abondances et biomasses source), CTD (mesures environnementales). Lire ce contexte puis demander la fiche de chaque vue utilisée avec warehouse_context(topic=nom). Avant de produire un graphique, lire warehouse_context(topic=graphs) pour les bibliothèques, le style, les règles scientifiques, la provenance et les exports. Les métadonnées et vues existent même quand les données sont absentes : lire catalogue.dataset_versions et mesurer la couverture avant de conclure. Ne pas inventer données, unités, taxons, liens ou validation scientifique. Ne pas interpréter biologiquement les résultats. NULL signifie absent/inconnu; zéro et absence de ligne sont différents. Garder source, versions, politiques d’annotation, stades et dénominateurs explicites. Ne pas sommer les volumes répétés par taxon ou les concentrations FILET répétées par bin. Les fichiers sources bruts ne sont pas modifiés. Accès MCP : SELECT explore uniquement, sans écriture ni DDL, délai 30 s. Le périmètre de chaque compte (contrats, zones, années) est dans catalogue.my_access; catalogue.my_datasets dit pour chaque version si l'accès est complet, partiel ou nul et pourquoi. Un résultat vide peut signifier un accès limité, pas une absence de données : consulter my_datasets avant de conclure. Les vues UVP joignent EcoTaxa et EcoPart et exigent un droit sur les deux. Avec un accès partiel, une colonne issue d'une jointure externe peut être NULL parce que la ligne liée est hors périmètre. catalogue.dataset_catalog décrit toutes les versions, même hors périmètre, et catalogue.fair_readiness mesure la complétude des métadonnées. Priorité absolue : récupérer l'intégralité des données nécessaires avant toute analyse. Chaque réponse SQL est plafonnée (DbHub : 1 000 lignes; la réponse brute porte un champ truncated). Compter d'abord avec count(*), puis agréger côté SQL (SUM/AVG/GROUP BY) ou paginer par tri stable (ORDER BY clé + LIMIT/OFFSET) jusqu'à couvrir le total attendu. Pour une extraction brute qui dépasse la limite, vérifier la complétude par un hash ou un compte recalculé côté base après coup, pas seulement en confiance. Ne jamais présenter une page partielle comme le résultat complet. Une fois les données entièrement récupérées, aucune restriction supplémentaire : les croiser, les agréger, les visualiser et les calculer librement avec les outils disponibles (pandas, Matplotlib, Cartopy, etc.) sans demander de confirmation additionnelle pour l'analyse elle-même. Le navigateur sur 127.0.0.1:8090 et le MCP sont deux accès distincts. Le filtre spatial du navigateur réduit les paires déjà enregistrées, sans changer leur statut. Les confirmations restent nécessaires avant téléchargement/calcul lourd. Répondre en français; expliciter résultat, source, méthode et limites.
 
 ## Règles de graphiques — topic=graphs
 
@@ -62,7 +62,7 @@ Métadonnées des profils UVP liés à un sample EcoTaxa.
 | Colonne | Type SQL | Définition |
 |---|---|---|
 | uvp_profile_id | bigint | Clé technique du profil UVP; équivaut à profile_id dans les vues de bins et abondances. |
-| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir explore.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
+| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir catalogue.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
 | ecopart_project_id | bigint | Identifiant natif du projet EcoPart; distinct de celui du projet EcoTaxa. |
 | ecopart_sample_id | text | Identifiant natif du sample EcoPart, si fourni. |
 | sample_name | text | Nom natif du profil EcoPart; pas un identifiant global. |
@@ -112,7 +112,7 @@ Objets EcoTaxa associés aux profils UVP, avec un bin EcoPart éventuel.
 | Colonne | Type SQL | Définition |
 |---|---|---|
 | uvp_profile_id | bigint | Clé technique du profil UVP; équivaut à profile_id dans les vues de bins et abondances. |
-| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir explore.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
+| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir catalogue.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
 | ecopart_project_id | bigint | Identifiant natif du projet EcoPart; distinct de celui du projet EcoTaxa. |
 | sample_name | text | Nom natif du profil EcoPart; pas un identifiant global. |
 | cruise_key | text | Libellé/clé de campagne de la source; pas de normalisation inter-source implicite. |
@@ -160,7 +160,7 @@ Bins échantillonnés EcoPart, y compris sans objet, et ligne brute PAR.
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
-| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir explore.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
+| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir catalogue.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
 | ecopart_project_id | bigint | Identifiant natif du projet EcoPart; distinct de celui du projet EcoTaxa. |
 | profile_id | bigint | Clé technique du profil UVP; équivaut à uvp_samples.uvp_profile_id. |
 | sample_name | text | Nom natif du profil EcoPart; pas un identifiant global. |
@@ -187,7 +187,7 @@ Abondances UVP dérivées des objets EcoTaxa et volumes EcoPart.
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
-| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir explore.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
+| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir catalogue.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
 | profile_id | bigint | Clé technique du profil UVP; équivaut à uvp_samples.uvp_profile_id. |
 | bin_id | bigint | Clé technique du bin EcoPart. |
 | taxon_key | text | Clé dérivée : ecotaxa:id:…, ecotaxa:name:… ou warehouse:unclassified; ne pas présenter un libellé ou marqueur comme identifiant taxonomique officiel. |
@@ -223,7 +223,7 @@ Spectre de tailles des particules UVP (produit EcoPart LPM), sans annotation tax
 | Colonne | Type SQL | Définition |
 |---|---|---|
 | uvp_profile_id | bigint | Clé technique du profil UVP; équivaut à profile_id dans les vues de bins et abondances. |
-| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir explore.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
+| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir catalogue.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
 | sample_name | text | Nom natif du profil EcoPart; pas un identifiant global. |
 | marine_zone_key | text | Clé de zone maritime attribuée; consulter source, version et statut. |
 | marine_zone_assignment_status | text | assigned, ambiguous, outside ou unresolved; un chevauchement peut être ambiguous. |
@@ -258,7 +258,7 @@ Un objet EcoTaxa identifié (taxon) par ligne, avec sa taille réelle quand elle
 | Colonne | Type SQL | Définition |
 |---|---|---|
 | uvp_profile_id | bigint | Clé technique du profil UVP; équivaut à profile_id dans les vues de bins et abondances. |
-| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir explore.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
+| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir catalogue.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
 | sample_name | text | Nom natif du profil EcoPart; pas un identifiant global. |
 | marine_zone_key | text | Clé de zone maritime attribuée; consulter source, version et statut. |
 | marine_zone_assignment_status | text | assigned, ambiguous, outside ou unresolved; un chevauchement peut être ambiguous. |
@@ -373,7 +373,7 @@ Lignes brutes des métadonnées EcoPart.
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
-| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir explore.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
+| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir catalogue.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
 | profile_name | text | Nom du profil dans la ligne source EcoPart; peut être absent ou répété. |
 | source_row_json | jsonb | Ligne source complète conservée en JSON; noms et unités non harmonisés. Inspecter avant calcul. |
 
@@ -393,7 +393,7 @@ Lignes ZOO fournies par EcoPart, conservées sans recalcul.
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
-| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir explore.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
+| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir catalogue.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
 | profile_name | text | Nom du profil dans la ligne source EcoPart; peut être absent ou répété. |
 | source_row_json | jsonb | Ligne source complète conservée en JSON; noms et unités non harmonisés. Inspecter avant calcul. |
 
@@ -529,7 +529,7 @@ Métadonnées des échantillons FILET et nombre d’analyses.
 | Colonne | Type SQL | Définition |
 |---|---|---|
 | id | bigint | Clé technique de l’échantillon FILET. |
-| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir explore.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
+| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir catalogue.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
 | sample_id | text | Identifiant natif du sample FILET; qualifier par version. |
 | deployment_id | text | Identifiant natif de déploiement FILET. |
 | sampling_year | integer | Année de prélèvement fournie dans les métadonnées FILET. |
@@ -575,7 +575,7 @@ Abondances et biomasses FILET fournies, avec métadonnées éventuellement non a
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
-| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir explore.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
+| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir catalogue.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
 | source_row_number | integer | Numéro de ligne dans le fichier source FILET, avant dépliage des stades. |
 | sample_id | text | Identifiant natif du sample FILET; qualifier par version. |
 | analysis_id | text | Identifiant natif d’analyse FILET; qualifier par sample et version. |
@@ -623,7 +623,7 @@ Sous-ensemble FILET au stade ALL_STAGES.
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
-| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir explore.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
+| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir catalogue.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
 | source_row_number | integer | Numéro de ligne dans le fichier source FILET, avant dépliage des stades. |
 | sample_id | text | Identifiant natif du sample FILET; qualifier par version. |
 | analysis_id | text | Identifiant natif d’analyse FILET; qualifier par sample et version. |
@@ -699,7 +699,7 @@ Correspondances FILET–UVP stockées, avec statut et preuves.
 | Colonne | Type SQL | Définition |
 |---|---|---|
 | id | bigint | Clé technique de la correspondance FILET–UVP. |
-| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir explore.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
+| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir catalogue.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
 | station_id | text | Station déclarée pour le rapprochement; consulter match_method et evidence. |
 | filet_sample_id | bigint | Clé TECHNIQUE de l’échantillon FILET : filet_samples.id. |
 | filet_analysis_id | bigint | Clé technique d’analyse FILET; NULL si rapprochement sans analyse. |
@@ -728,7 +728,7 @@ Comparaison des abondances via les liens FILET–UVP et le mapping taxonomique a
 | Colonne | Type SQL | Définition |
 |---|---|---|
 | match_id | bigint | Clé technique de la correspondance FILET–UVP. |
-| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir explore.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
+| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir catalogue.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
 | station_id | text | Station déclarée pour le rapprochement; consulter match_method et evidence. |
 | filet_sample_id | bigint | Clé TECHNIQUE de l’échantillon FILET : filet_samples.id. |
 | filet_analysis_id | bigint | Clé technique d’analyse FILET; NULL si rapprochement sans analyse. |

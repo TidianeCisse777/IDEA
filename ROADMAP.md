@@ -2,7 +2,30 @@
 
 **Période proposée :** du 14 septembre au 30 novembre 2026
 
-**Dernière mise à jour :** 3 novembre 2026
+**Dernière mise à jour :** 4 novembre 2026
+
+### 4 novembre 2026 — Deux schémas de lecture et test de partage du zip (phase 2)
+
+- Organisation : `explore` ne contient plus que les 27 vues de données; les 10 vues de service (droits
+  `my_access`/`my_datasets`, `dataset_catalog`, `dataset_versions`, `fair_readiness`, `fair_column_coverage`,
+  `warehouse_dictionary`, `warehouse_context`, `warehouse_release`, `access_audit`) passent dans un schéma
+  `catalogue` (`warehouse_catalogue_schema_migration.sql`, appliquée en premier; les vues existantes sont
+  déplacées avec leurs droits et dépendances). Droits, propriété, déclencheur d'adoption, audit d'accès,
+  DbHub (`search_path = explore,catalogue`), `warehouse_connect check`, déploiement, docs et tests mis à jour;
+  le dictionnaire couvre les deux schémas (`schema_name`). Base réelle redéployée : `PRÊT`, audit vide;
+  135 tests réussis sur base réelle.
+- Consignes agents : partir de `explore.ecotaxa_projects` pour toute question sur les projets ou objets en
+  général et dire le périmètre; ne pas affirmer qu'un projet est la copie d'un autre sans comparer les comptes
+  par profil ou sample (cause de l'erreur 13224 du 3 novembre).
+- Test de partage, en suivant seulement le `LISEZMOI` du zip v3 (dump zstd 311 Mo + code + notice), sur une
+  machine vidée (conteneur et volume supprimés, aucun compte, aucune configuration MCP, aucun mot de passe
+  dans l'environnement), dans un dossier ordinaire : vérification SHA-256, base Docker `healthy`, restauration
+  3 min 52, `--check` = `PRÊT`, compte personnel, DbHub installé, `check` = `PASS`, `claude mcp list` =
+  Connected, puis question du LISEZMOI à Claude Code dans un dossier vide : réponse exacte (23 projets,
+  15 050 002 objets, 44,2 % validés; 37,9 % sans le doublon 149), 8 tours, 50 s.
+- Limites de l'environnement de test, pas du produit : Docker Hub a répondu « 429 Too Many Requests » et le
+  proxy TLS du conteneur cloud empêchait `pip` dans le build; l'image de base a été prise sur `mirror.gcr.io`
+  et complétée du certificat du proxy, sans modifier le Dockerfile ni le compose du zip.
 
 ### 3 novembre 2026 — Vues exhaustives et base lisible par un humain (phase 2)
 

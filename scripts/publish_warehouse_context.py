@@ -15,19 +15,19 @@ OVERVIEW = (
     'Avant de produire un graphique, lire warehouse_context(topic=graphs) pour les bibliothèques, '
     'le style, les règles scientifiques, la provenance et les exports. '
     'Les métadonnées et vues existent même quand les données sont absentes : lire '
-    'explore.dataset_versions et mesurer la couverture avant de conclure. '
+    'catalogue.dataset_versions et mesurer la couverture avant de conclure. '
     'Ne pas inventer données, unités, taxons, liens ou validation scientifique. '
     'Ne pas interpréter biologiquement les résultats. NULL signifie absent/inconnu; zéro et absence '
     'de ligne sont différents. Garder source, versions, politiques d’annotation, stades et '
     'dénominateurs explicites. Ne pas sommer les volumes répétés par taxon ou les '
     'concentrations FILET répétées par bin. Les fichiers sources bruts ne sont pas modifiés. '
-    'Accès MCP : SELECT explore uniquement, sans écriture ni DDL, délai 30 s. Le périmètre de chaque '
-    'compte (contrats, zones, années) est dans explore.my_access; explore.my_datasets dit pour chaque '
+    'Accès MCP : SELECT sur deux schémas seulement, explore (les données) et catalogue (droits, catalogue des jeux de données, dictionnaire, ces fiches), sans écriture ni DDL, délai 30 s. Pour une question sur les projets ou les objets EcoTaxa en général, partir de explore.ecotaxa_projects (tous les projets), pas des seules vues uvp_*; dire dans la réponse le périmètre couvert. Le périmètre de chaque '
+    'compte (contrats, zones, années) est dans catalogue.my_access; catalogue.my_datasets dit pour chaque '
     'version si l\'accès est complet, partiel ou nul et pourquoi. Un résultat vide peut signifier un '
     'accès limité, pas une absence de données : consulter my_datasets avant de conclure. Les vues UVP '
     'joignent EcoTaxa et EcoPart et exigent un droit sur les deux. Avec un accès partiel, une colonne '
     'issue d\'une jointure externe peut être NULL parce que la ligne liée est hors périmètre. '
-    'explore.dataset_catalog décrit toutes les versions, même hors périmètre, et explore.fair_readiness '
+    'catalogue.dataset_catalog décrit toutes les versions, même hors périmètre, et catalogue.fair_readiness '
     'mesure la complétude des métadonnées. '
     'Priorité absolue : récupérer l\'intégralité des données nécessaires avant toute analyse. Chaque '
     'réponse SQL est plafonnée (DbHub : 1 000 lignes; la réponse brute porte un champ truncated). '
@@ -78,7 +78,7 @@ def publish(conn):
         rows = [('overview', OVERVIEW, 'Contexte général; aucune ligne scientifique.',
                  'Consulter dataset_versions puis warehouse_dictionary et les fiches des vues.',
                  'Un catalogue documenté ne prouve ni peuplement ni validation scientifique.',
-                 'SELECT * FROM explore.dataset_versions LIMIT 20;')]
+                 'SELECT * FROM catalogue.dataset_versions LIMIT 20;')]
         rows.append(('graphs', GRAPHICS['purpose'], GRAPHICS['grain'], GRAPHICS['joins'],
                      GRAPHICS['caveats'], GRAPHICS['example']))
         rows += [(name, item['purpose'], item['grain'], item['joins'], item['caveats'], item['example'])
@@ -86,42 +86,43 @@ def publish(conn):
         for name, purpose, grain, example in (
             ('dataset_versions', 'Inventaire vivant des versions enregistrées, sans URI de fichier local.',
              'Une version identifiée par source_instance, dataset_key et version_key.',
-             'SELECT * FROM explore.dataset_versions LIMIT 20;'),
+             'SELECT * FROM catalogue.dataset_versions LIMIT 20;'),
             ('my_access', 'Périmètre de lecture du compte connecté: source, contrat, zone et années autorisés.',
              'Une ligne par droit actif du compte; une ligne « all data » pour un accès sans filtre.',
-             'SELECT * FROM explore.my_access;'),
+             'SELECT * FROM catalogue.my_access;'),
             ('my_datasets', 'Accès du compte connecté à chaque version de jeu de données: complet, partiel ou aucun, la raison, et une note si une source associée manque (EcoTaxa/EcoPart pour les vues UVP).',
              'Une ligne par version; aucune donnée scientifique et aucun comptage de lignes masquées.',
-             "SELECT dataset_key, my_scope, scope_detail, note FROM explore.my_datasets ORDER BY my_scope;"),
+             "SELECT dataset_key, my_scope, scope_detail, note FROM catalogue.my_datasets ORDER BY my_scope;"),
             ('dataset_catalog', 'Catalogue FAIR des versions de jeux de données: identifiant, licence, accès, couverture, méthode. Lisible même pour les données hors périmètre.',
              'Une ligne par version, y compris retirée.',
-             'SELECT dataset_version_id, title, access_level, license, publication_status FROM explore.dataset_catalog LIMIT 20;'),
+             'SELECT dataset_version_id, title, access_level, license, publication_status FROM catalogue.dataset_catalog LIMIT 20;'),
             ('fair_readiness', 'Complétude FAIR des métadonnées par version (critères manquants listés).',
              'Une ligne par version; mesure le catalogue, pas la validité scientifique.',
-             'SELECT dataset_key, version_key, missing_criteria FROM explore.fair_readiness;'),
+             'SELECT dataset_key, version_key, missing_criteria FROM catalogue.fair_readiness;'),
             ('warehouse_dictionary', 'Colonnes réelles, types SQL, commentaires métier et définition SQL des vues.',
-             'Une colonne de vue explore; répète sa définition SQL par colonne.',
-             "SELECT * FROM explore.warehouse_dictionary WHERE view_name='uvp_objects';"),
+             'Une colonne de vue des schémas explore et catalogue; répète sa définition SQL par colonne.',
+             "SELECT * FROM catalogue.warehouse_dictionary WHERE view_name='uvp_objects';"),
             ('warehouse_context', 'Fiches métier lisibles via MCP.', 'Une fiche par topic.',
-             'SELECT topic,purpose FROM explore.warehouse_context;'),
+             'SELECT topic,purpose FROM catalogue.warehouse_context;'),
         ):
             rows.append((name, purpose, grain, 'Surface de métadonnées en lecture seule.',
                          'Pas de données scientifiques et pas de garantie de couverture des sources externes.', example))
         literals = sql.SQL(',').join(sql.SQL('({})').format(sql.SQL(',').join(map(sql.Literal, row))) for row in rows)
-        conn.execute(sql.SQL('CREATE OR REPLACE VIEW explore.warehouse_context '
+        conn.execute(sql.SQL('CREATE OR REPLACE VIEW catalogue.warehouse_context '
                             '(topic,purpose,grain,relations,caveats,sql_example) AS SELECT * FROM (VALUES {}) AS entries').format(literals))
-        conn.execute('''CREATE OR REPLACE VIEW explore.dataset_versions AS
+        conn.execute('''CREATE OR REPLACE VIEW catalogue.dataset_versions AS
             SELECT id AS dataset_version_id,source_instance,dataset_key,version_key,sha256
             FROM warehouse.dataset_version''')
-        conn.execute('''CREATE OR REPLACE VIEW explore.warehouse_dictionary AS
+        conn.execute('''CREATE OR REPLACE VIEW catalogue.warehouse_dictionary AS
             SELECT c.relname::text AS view_name,a.attname::text AS column_name,
                 format_type(a.atttypid,a.atttypmod) AS data_type,
                 col_description(c.oid,a.attnum) AS column_description,
                 obj_description(c.oid,'pg_class') AS view_description,
-                pg_get_viewdef(c.oid,true) AS sql_definition
+                pg_get_viewdef(c.oid,true) AS sql_definition,
+                n.nspname::text AS schema_name
             FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
             JOIN pg_attribute a ON a.attrelid=c.oid
-            WHERE n.nspname='explore' AND c.relkind='v' AND a.attnum>0 AND NOT a.attisdropped''')
+            WHERE n.nspname IN ('explore','catalogue') AND c.relkind='v' AND a.attnum>0 AND NOT a.attisdropped''')
         metadata_columns = {
             'warehouse_context': dict(topic='Nom de fiche; overview pour le contexte global.', purpose='Usage et périmètre métier.',
                 grain='Grain des lignes; ne pas supposer leur unicité sans lire la fiche.', relations='Clés et précautions de jointure.',
@@ -130,15 +131,16 @@ def publish(conn):
                 source_instance='Source enregistrée; derived désigne des résultats calculés.',
                 dataset_key='Identifiant du jeu de données dans sa source.', version_key='Version native/enregistrée du jeu.',
                 sha256='Empreinte conservée du fichier/manifeste source, pas une certification scientifique.'),
-            'warehouse_dictionary': dict(view_name='Nom de vue dans explore.', column_name='Colonne exposée par la vue.',
+            'warehouse_dictionary': dict(view_name='Nom de la vue (dans le schéma indiqué par schema_name).', column_name='Colonne exposée par la vue.',
                 data_type='Type SQL effectivement déployé.', column_description='Définition métier de la colonne.',
-                view_description='Usage, grain, relations et limites de la vue.', sql_definition='SELECT réel de la vue; révèle la transformation technique, sans autoriser l’accès aux tables brutes.'),
+                view_description='Usage, grain, relations et limites de la vue.', sql_definition='SELECT réel de la vue; révèle la transformation technique, sans autoriser l’accès aux tables brutes.',
+                schema_name='explore pour les données, catalogue pour les droits, le catalogue et ce dictionnaire.'),
         }
         for name, cols in metadata_columns.items():
-            conn.execute(sql.SQL('COMMENT ON VIEW explore.{} IS {}').format(sql.Identifier(name),
+            conn.execute(sql.SQL('COMMENT ON VIEW catalogue.{} IS {}').format(sql.Identifier(name),
                 sql.Literal(next(row[1] for row in rows if row[0] == name))))
             for column, description in cols.items():
-                conn.execute(sql.SQL('COMMENT ON COLUMN explore.{}.{} IS {}').format(
+                conn.execute(sql.SQL('COMMENT ON COLUMN catalogue.{}.{} IS {}').format(
                     sql.Identifier(name), sql.Identifier(column), sql.Literal(description)))
         # Service views a person opens first (rights, catalog, release): their columns are
         # described too, so a SQL client (DBeaver, pgAdmin) shows what each one means.
@@ -179,18 +181,18 @@ def publish(conn):
                 migrations='Migrations appliquées et leur empreinte SHA-256.'),
             'access_audit': dict(problem='Problème de sécurité détecté (vide = aucun).', object_name='Objet concerné.'),
         }
-        existing = {r[0] for r in conn.execute("SELECT table_name FROM information_schema.views WHERE table_schema='explore'").fetchall()}
+        existing = {r[0] for r in conn.execute("SELECT table_name FROM information_schema.views WHERE table_schema='catalogue'").fetchall()}
         for name, cols in service_columns.items():
             if name not in existing:
                 continue
-            present = {r[0] for r in conn.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='explore' AND table_name=%s", (name,)).fetchall()}
+            present = {r[0] for r in conn.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='catalogue' AND table_name=%s", (name,)).fetchall()}
             for column, description in cols.items():
                 if column in present:
-                    conn.execute(sql.SQL('COMMENT ON COLUMN explore.{}.{} IS {}').format(
+                    conn.execute(sql.SQL('COMMENT ON COLUMN catalogue.{}.{} IS {}').format(
                         sql.Identifier(name), sql.Identifier(column), sql.Literal(description)))
         for role in ('warehouse_reader', 'warehouse_navigator', 'warehouse_explore_reader'):
             if conn.execute('SELECT 1 FROM pg_roles WHERE rolname=%s', (role,)).fetchone():
-                conn.execute(sql.SQL('GRANT SELECT ON explore.warehouse_context,explore.warehouse_dictionary,explore.dataset_versions TO {}').format(sql.Identifier(role)))
+                conn.execute(sql.SQL('GRANT SELECT ON catalogue.warehouse_context,catalogue.warehouse_dictionary,catalogue.dataset_versions TO {}').format(sql.Identifier(role)))
     return scientific, descriptions
 
 
@@ -198,7 +200,7 @@ def markdown(columns, descriptions):
     lines = ['# Dictionnaire des vues accessibles via MCP', '',
              'Généré depuis le schéma déployé et le dictionnaire métier versionné. Les données restent à qualifier.', '',
              'Dans DbHub : appeler `warehouse_context` avec `topic="overview"`, puis le nom de vue.',
-             '`topic="all"` retourne toutes les fiches. Types et SQL réels : `explore.warehouse_dictionary`.', '',
+             '`topic="all"` retourne toutes les fiches. Types et SQL réels : `catalogue.warehouse_dictionary`.', '',
              OVERVIEW, '', '## Règles de graphiques — topic=graphs', '']
     for key, label in (('purpose', 'Bibliothèques'), ('grain', 'Données et calcul'),
                        ('joins', 'Style'), ('caveats', 'Statut et livraison')):

@@ -535,17 +535,17 @@ def check(_args):
         steps.append(('outils MCP', not missing, 'manquants: %s' % ', '.join(sorted(missing)) if missing else ', '.join(sorted(tools))))
         who = session.sql("SELECT current_user AS role, current_setting('transaction_read_only') AS read_only")[0]
         steps.append(('compte et lecture seule', who['read_only'] == 'on', '%s, lecture seule=%s' % (who['role'], who['read_only'])))
-        scope = session.sql('SELECT grantee, source_instance, contract, zone_key, year_min, year_max FROM explore.my_access')
-        steps.append(('périmètre (explore.my_access)', True, '; '.join(
+        scope = session.sql('SELECT grantee, source_instance, contract, zone_key, year_min, year_max FROM catalogue.my_access')
+        steps.append(('périmètre (catalogue.my_access)', True, '; '.join(
             ' / '.join(str(row[k]) for k in ('grantee', 'source_instance', 'contract', 'zone_key', 'year_min', 'year_max') if row.get(k) is not None)
             for row in scope) or 'aucun droit accordé: aucune donnée lisible'))
-        readable = session.sql('SELECT my_scope, count(*) AS n FROM explore.my_datasets GROUP BY 1 ORDER BY 1')
-        notes = session.sql('SELECT DISTINCT note FROM explore.my_datasets WHERE note IS NOT NULL')
-        steps.append(('jeux lisibles (explore.my_datasets)', True, (', '.join(
+        readable = session.sql('SELECT my_scope, count(*) AS n FROM catalogue.my_datasets GROUP BY 1 ORDER BY 1')
+        notes = session.sql('SELECT DISTINCT note FROM catalogue.my_datasets WHERE note IS NOT NULL')
+        steps.append(('jeux lisibles (catalogue.my_datasets)', True, (', '.join(
             '%s: %s' % (row['my_scope'], row['n']) for row in readable) or 'aucune version chargée dans la base')
             + ''.join('. ' + row['note'] for row in notes)))
-        catalog = session.sql('SELECT count(*) AS n FROM explore.dataset_catalog')[0]['n']
-        steps.append(('catalogue (explore.dataset_catalog)', True, '%s version(s) décrite(s)' % catalog))
+        catalog = session.sql('SELECT count(*) AS n FROM catalogue.dataset_catalog')[0]['n']
+        steps.append(('catalogue (catalogue.dataset_catalog)', True, '%s version(s) décrite(s)' % catalog))
         context = session.request('tools/call', {'name': 'warehouse_context', 'arguments': {'topic': 'overview'}})
         steps.append(('contexte métier (warehouse_context)', not context.get('isError'), 'fiche overview lue'))
     except Exception as error:  # noqa: BLE001 - toute erreur est un échec de recette, sans détail secret

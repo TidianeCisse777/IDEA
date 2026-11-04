@@ -3,7 +3,7 @@
 Première version stable du warehouse : schéma, rôles, contrôle d'accès par contrat, zone et année, catalogue
 FAIR, connexion des agents par DbHub (Codex, Claude), et déploiement Docker ou sur un PostgreSQL existant.
 Le numéro de version est défini à un seul endroit, [`warehouse_release.sql`](warehouse_release.sql), et chaque
-déploiement l'enregistre dans la base avec l'empreinte SHA-256 des migrations (`explore.warehouse_release`).
+déploiement l'enregistre dans la base avec l'empreinte SHA-256 des migrations (`catalogue.warehouse_release`).
 
 ## Contenu
 
@@ -59,7 +59,7 @@ Créer d'abord le compte administrateur, puis passer `ENABLE_SIGNUP=false`.
    **avec le même `.env.warehouse`** que les conteneurs : le rejeu remet les mots de passe des rôles de service, et
    un autre mot de passe couperait le navigateur et `warehouse_reader` (vérifié).
    Les migrations sont additives et rejouables; une base existante n'est jamais réécrite.
-3. Comparer `explore.warehouse_release` avant et après (version, empreintes).
+3. Comparer `catalogue.warehouse_release` avant et après (version, empreintes).
 4. Retour arrière : restaurer la sauvegarde. Les migrations n'ont pas de script inverse.
 
 Pour publier une nouvelle version : modifier `\set release` dans `warehouse_release.sql` (`1.0.x` correction,

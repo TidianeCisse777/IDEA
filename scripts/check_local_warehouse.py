@@ -23,10 +23,10 @@ for role, key, raw_allowed in (
                                 "FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
                                 "WHERE n.nspname='warehouse' AND c.relname='dataset_version'").fetchone()[0]
         conn.execute('SELECT * FROM explore.uvp_projects LIMIT 1')
-        assert conn.execute('SELECT count(*) FROM explore.warehouse_context').fetchone()[0] == 21
-        assert conn.execute('SELECT count(*) FROM explore.warehouse_dictionary '
+        assert conn.execute('SELECT count(*) FROM catalogue.warehouse_context').fetchone()[0] == 21
+        assert conn.execute('SELECT count(*) FROM catalogue.warehouse_dictionary '
                             'WHERE column_description IS NULL OR view_description IS NULL').fetchone()[0] == 0
-        conn.execute('SELECT * FROM explore.dataset_versions LIMIT 1')
+        conn.execute('SELECT * FROM catalogue.dataset_versions LIMIT 1')
         try:
             conn.execute('SELECT * FROM warehouse.dataset_version LIMIT 1')
             assert raw_allowed, 'Le lecteur MCP ne doit pas lire les tables brutes'

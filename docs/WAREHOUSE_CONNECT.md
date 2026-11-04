@@ -157,7 +157,7 @@ Une fois l'agent redémarré, demandez-lui :
 
 > « Lis le contexte du warehouse NeoLab, puis dis-moi ce que mon compte a le droit de voir. »
 
-Un agent bien branché appelle l'outil `warehouse_context`, puis lit `explore.my_access`, et vous répond avec
+Un agent bien branché appelle l'outil `warehouse_context`, puis lit `catalogue.my_access`, et vous répond avec
 vos droits (sources, contrats, zones, années). S'il dit ne pas avoir d'outil `neolab-warehouse` : l'agent n'a
 pas été redémarré, ou l'enregistrement a échoué (voir [Dépannage](#dépannage)).
 
@@ -175,11 +175,11 @@ Ce que l'agent consulte, et que vous pouvez aussi lui demander directement :
 
 | Pour savoir… | Lire |
 |---|---|
-| ce que **mon compte** peut lire | `SELECT * FROM explore.my_access` |
-| quels jeux existent, y compris hors de mon périmètre | `SELECT * FROM explore.dataset_catalog` |
-| à quel point les métadonnées sont complètes | `SELECT * FROM explore.fair_readiness` |
+| ce que **mon compte** peut lire | `SELECT * FROM catalogue.my_access` |
+| quels jeux existent, y compris hors de mon périmètre | `SELECT * FROM catalogue.dataset_catalog` |
+| à quel point les métadonnées sont complètes | `SELECT * FROM catalogue.fair_readiness` |
 | comment utiliser une vue (grain, limites, exemple) | outil `warehouse_context` (`topic=overview`, puis le nom de la vue) |
-| les colonnes, types et définitions | `SELECT * FROM explore.warehouse_dictionary` |
+| les colonnes, types et définitions | `SELECT * FROM catalogue.warehouse_dictionary` |
 
 Un résultat vide peut signifier **un accès limité**, pas une absence de données : vérifier `my_access` d'abord.
 
@@ -243,7 +243,7 @@ L'agent n'est pas plus honnête qu'un autre par principe : c'est le warehouse qu
 que le signalement de l'incertitude. Trois mécanismes concrets, pas une promesse :
 
 - **Le contrôle d'accès (RLS) l'empêche physiquement de voir ce qu'il n'a pas le droit de voir.** Un résultat vide
-  peut vouloir dire « aucun droit sur ce jeu », pas « aucune donnée » — `explore.my_access` et `explore.my_datasets`
+  peut vouloir dire « aucun droit sur ce jeu », pas « aucune donnée » — `catalogue.my_access` et `catalogue.my_datasets`
   distinguent les deux (voir plus haut). Un agent qui confond les deux fait une erreur vérifiable : `my_datasets`
   dit explicitement « masqué » pour ce cas.
 - **NULL n'est jamais recodé en zéro.** Une taille d'objet non calculable (calibration pixel inconnue), un taxon

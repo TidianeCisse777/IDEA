@@ -23,15 +23,15 @@ Tests : `tests/test_warehouse_roles_fair.py` (`WAREHOUSE_TEST_LIVE=1` pour la ba
   particules et liens. Les tables de liens exigent que les deux côtés soient visibles.
 - Les rôles du groupe `warehouse_all_access` voient tout (chargeur, navigateur, `warehouse_reader`).
   Les superusers et rôles `BYPASSRLS` ne sont jamais filtrés ; `enroll_access_role` les refuse.
-- Le catalogue (`explore.dataset_catalog`, `dataset_versions`, `fair_readiness`) reste lisible
+- Le catalogue (`catalogue.dataset_catalog`, `dataset_versions`, `fair_readiness`) reste lisible
   par tous : les métadonnées restent accessibles même quand les données ne le sont pas (FAIR A2).
 
 ## Savoir ce qu'on peut lire
 
 | Vue | Réponse |
 |---|---|
-| `explore.my_access` | les droits actifs du compte (source, contrat, zone, années) |
-| `explore.my_datasets` | pour chaque version de jeu de données : accès `complet`, `partiel` ou `aucun`, la raison (« données masquées, pas absentes »), et une note si une source associée manque |
+| `catalogue.my_access` | les droits actifs du compte (source, contrat, zone, années) |
+| `catalogue.my_datasets` | pour chaque version de jeu de données : accès `complet`, `partiel` ou `aucun`, la raison (« données masquées, pas absentes »), et une note si une source associée manque |
 
 `my_datasets` distingue « masqué » de « absent » au niveau de la version, **sans compter les lignes masquées**.
 Un agent doit la lire avant de conclure qu'un résultat vide signifie une absence de données.
@@ -72,7 +72,7 @@ Un droit peut viser un groupe de rôles : `grantee` accepte tout rôle dont la c
 Une vue qui joint plusieurs sources ne renvoie une ligne que si **chaque** côté est lisible. Les vues UVP
 (`explore.uvp_samples`, `uvp_objects`…) joignent un profil EcoPart à son échantillon EcoTaxa : un compte limité
 à une seule des deux sources y voit 0 ligne. Donner les deux : `--source ecotaxa,ecopart` crée un droit par source.
-L'outil d'administration avertit quand une seule des deux est accordée, et `explore.my_datasets` le signale
+L'outil d'administration avertit quand une seule des deux est accordée, et `catalogue.my_datasets` le signale
 au compte dans sa colonne `note`.
 
 ## Zone des profils CTD
@@ -120,7 +120,7 @@ Trois corrections :
 - **Une vue créée plus tard par le chargeur** contournerait le filtre si elle n'appartenait pas à
   `warehouse_data_owner`. Quand le déploiement tourne en superuser (cas Docker), un déclencheur
   d'événement (`warehouse_adopt_explore_views`) la transfère **dès sa création**. Sans superuser (hébergeur
-  géré), le déploiement l'annonce; `explore.access_audit` signale alors la vue et rejouer
+  géré), le déploiement l'annonce; `catalogue.access_audit` signale alors la vue et rejouer
   `scripts/deploy_warehouse_postgres.py` lui transfère la propriété (`--check` renvoie le code 3 s'il reste un écart).
 - Une table ajoutée sans politique est aussi signalée par `access_audit`.
 

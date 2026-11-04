@@ -9,7 +9,7 @@
 -- Roles (see docs/WAREHOUSE_ROLES.md):
 --   neolab               owner and loader. The only role that writes.
 --   warehouse_navigator  navigator API. SELECT on warehouse and explore.
---   warehouse_reader     DbHub / agents. SELECT on explore only.
+--   warehouse_reader     DbHub / agents. SELECT on explore and catalogue only.
 -- Both are members of warehouse_all_access (see every row). Scoped readers are
 -- created separately and enrolled with warehouse.enroll_access_role().
 -- Both read roles are read-only, time-bounded and cannot create objects.
@@ -75,8 +75,8 @@ DO $$ BEGIN PERFORM warehouse.enable_query_audit('warehouse_reader'); END $$;
 -- The reader sees the curated surface only; raw tables stay out of reach.
 REVOKE ALL ON SCHEMA warehouse FROM warehouse_reader;
 REVOKE ALL ON ALL TABLES IN SCHEMA warehouse FROM warehouse_reader;
-GRANT USAGE ON SCHEMA explore TO warehouse_reader, warehouse_navigator, warehouse_explore_reader;
-GRANT SELECT ON ALL TABLES IN SCHEMA explore TO warehouse_reader, warehouse_navigator, warehouse_explore_reader;
+GRANT USAGE ON SCHEMA explore, catalogue TO warehouse_reader, warehouse_navigator, warehouse_explore_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA explore, catalogue TO warehouse_reader, warehouse_navigator, warehouse_explore_reader;
 
 GRANT USAGE ON SCHEMA warehouse TO warehouse_navigator;
 GRANT SELECT ON ALL TABLES IN SCHEMA warehouse TO warehouse_navigator;
@@ -85,11 +85,11 @@ GRANT SELECT ON ALL TABLES IN SCHEMA warehouse TO warehouse_navigator;
 -- without a re-grant; the reader still never gets the warehouse schema.
 -- Views are created by the loader or, once ownership is transferred, by the
 -- data owner: cover both.
-ALTER DEFAULT PRIVILEGES IN SCHEMA explore
+ALTER DEFAULT PRIVILEGES IN SCHEMA explore, catalogue
     GRANT SELECT ON TABLES TO warehouse_reader, warehouse_navigator, warehouse_explore_reader;
 ALTER DEFAULT PRIVILEGES IN SCHEMA warehouse
     GRANT SELECT ON TABLES TO warehouse_navigator;
-ALTER DEFAULT PRIVILEGES FOR ROLE warehouse_data_owner IN SCHEMA explore
+ALTER DEFAULT PRIVILEGES FOR ROLE warehouse_data_owner IN SCHEMA explore, catalogue
     GRANT SELECT ON TABLES TO warehouse_reader, warehouse_navigator, warehouse_explore_reader;
 ALTER DEFAULT PRIVILEGES FOR ROLE warehouse_data_owner IN SCHEMA warehouse
     GRANT SELECT ON TABLES TO warehouse_navigator;

@@ -33,7 +33,7 @@ const timeout=setTimeout(()=>{child.kill();console.error('FAIL : délai MCP dép
   for(const library of ['Cartopy','Folium','oceans','TEOS-10','cmocean'])assert.ok(JSON.stringify(graphContext).includes(library));
   const sampleContext=await rpc('tools/call',{name:contextTool.name,arguments:{topic:'filet_ctd'}});
   assert.ok(!sampleContext.isError);assert.match(JSON.stringify(sampleContext),/NATIF/);
-  const dictionary=await rpc('tools/call',{name:tool.name,arguments:{sql:"SELECT column_description,view_description,sql_definition FROM explore.warehouse_dictionary WHERE view_name='uvp_taxon_abundance' AND column_name='sampled_volume_l'"}});
+  const dictionary=await rpc('tools/call',{name:tool.name,arguments:{sql:"SELECT column_description,view_description,sql_definition FROM catalogue.warehouse_dictionary WHERE view_name='uvp_taxon_abundance' AND column_name='sampled_volume_l'"}});
   assert.ok(!dictionary.isError);assert.match(JSON.stringify(dictionary),/litres/);
   const discovery=list.tools.find(tool=>tool.name==='search_objects');assert.ok(discovery);
   const schema=await rpc('tools/call',{name:discovery.name,arguments:{object_type:'column',schema:'explore',table:'uvp_taxon_abundance',pattern:'sampled_volume_l',detail_level:'full'}});

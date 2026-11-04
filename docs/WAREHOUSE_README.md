@@ -37,13 +37,13 @@ avec `scripts/backup_warehouse.py` ([Déploiement](WAREHOUSE_DOCKER.md#sauvegard
 
 Une personne ou un agent connecté découvre la base dans cet ordre :
 
-1. `explore.my_access` — ce que **ce compte** peut lire (source, contrat, zone, années).
-   `explore.my_datasets` — pour chaque version : accès complet, partiel ou aucun, et pourquoi (masqué ≠ absent).
+1. `catalogue.my_access` — ce que **ce compte** peut lire (source, contrat, zone, années).
+   `catalogue.my_datasets` — pour chaque version : accès complet, partiel ou aucun, et pourquoi (masqué ≠ absent).
 2. `warehouse_context(topic=overview)` puis `topic=<vue>` — contexte métier, grain, limites, exemple SQL.
-3. `explore.dataset_catalog` — toutes les versions de jeux de données, y compris hors périmètre (identifiant,
+3. `catalogue.dataset_catalog` — toutes les versions de jeux de données, y compris hors périmètre (identifiant,
    licence, accès, couverture, méthode). Les métadonnées restent lisibles même quand les données sont restreintes.
-4. `explore.warehouse_dictionary` — colonnes, types, définitions et SQL réel des vues.
-5. `explore.fair_readiness` et `explore.fair_column_coverage` — ce qui manque pour être FAIR.
+4. `catalogue.warehouse_dictionary` — colonnes, types, définitions et SQL réel des vues.
+5. `catalogue.fair_readiness` et `catalogue.fair_column_coverage` — ce qui manque pour être FAIR.
 
 ## Variables d'environnement
 

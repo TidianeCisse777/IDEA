@@ -121,7 +121,7 @@ class ClientConfigurationTests(unittest.TestCase):
         self.assertIn('dsn = "${WAREHOUSE_DSN}"', toml)
         self.assertNotRegex(toml, r"password\s*=")
         self.assertEqual(toml.count("readonly = true"), 2)  # execute_sql et warehouse_context
-        self.assertIn("explore.my_access", toml)
+        self.assertIn("catalogue.my_access", toml)
 
     def test_connection_failures_are_explained_from_real_dbhub_messages(self):
         # Messages captured from DbHub 1.5.0 against PostgreSQL 16 (password masked by DbHub).
@@ -191,7 +191,7 @@ class RelayAndTraceTests(unittest.TestCase):
                         "clientInfo": {"name": "codex-mcp-client", "version": "0.166"}}},
             {"jsonrpc": "2.0", "method": "notifications/initialized"},
             {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-             "params": {"name": "execute_sql", "arguments": {"sql": "SELECT * FROM explore.my_access"}}},
+             "params": {"name": "execute_sql", "arguments": {"sql": "SELECT * FROM catalogue.my_access"}}},
         ]
 
     def run_agent(self):
@@ -221,11 +221,11 @@ class RelayAndTraceTests(unittest.TestCase):
         call = [e for e in entries if e["method"] == "tools/call"][0]
         self.assertEqual((call["agent"], call["tool"], call["status"], call["rows"]),
                          ("codex-mcp-client", "execute_sql", "ok", 2))
-        self.assertEqual(call["arguments"]["sql"], "SELECT * FROM explore.my_access")
+        self.assertEqual(call["arguments"]["sql"], "SELECT * FROM catalogue.my_access")
         self.assertNotIn(SECRET, log.read_text(encoding="utf-8"))
         if os.name != "nt":
             self.assertEqual(stat.S_IMODE(log.stat().st_mode), 0o600)
-        self.assertIn("explore.my_access", self.trace_cli("show").stdout)
+        self.assertIn("catalogue.my_access", self.trace_cli("show").stdout)
         self.trace_cli("off")
         before = log.read_text(encoding="utf-8")
         self.run_agent()

@@ -6,7 +6,7 @@
 -- without this view warehouse.taxon_mapping was unreachable to them.
 --
 -- taxon_mapping is a reference/catalog table, exempt from row-level security
--- like dataset_version/dataset_metadata (see explore.access_audit's own
+-- like dataset_version/dataset_metadata (see catalogue.access_audit's own
 -- exemption list) : a mapping entry is not raw occurrence data tied to a
 -- contract, zone or year, so nothing here needs scoping.
 CREATE OR REPLACE VIEW explore.taxon_mapping AS

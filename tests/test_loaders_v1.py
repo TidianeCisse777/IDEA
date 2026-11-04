@@ -396,7 +396,7 @@ class LoaderChainTests(unittest.TestCase):
         # Read-time zeros: every bin of the profile carries each observed taxon, even without objects.
         self.assertNotEqual(scoped("SELECT count(*) FROM explore.uvp_taxon_abundance WHERE n_objects_taxon = 0"), "0")
         self.assertEqual(scoped("SELECT count(*) FROM explore.uvp_projects WHERE ecotaxa_project_id = 103"), "1")
-        self.assertEqual(scoped("SELECT my_scope FROM explore.my_datasets WHERE dataset_key = '102'"), "aucun")
+        self.assertEqual(scoped("SELECT my_scope FROM catalogue.my_datasets WHERE dataset_key = '102'"), "aucun")
         # Views over every EcoTaxa project and CTD profile, not only the UVP-linked ones
         # (3 novembre 2026): the owner sees all three projects and their 16 objects, with
         # object_count filled; the scoped account sees only its C1/Baffin/2024 samples
@@ -410,10 +410,15 @@ class LoaderChainTests(unittest.TestCase):
         self.assertEqual(scoped("SELECT count(*) FROM explore.ctd_profiles"), "0")
         # A person opening explore in a SQL client finds every view and column described.
         self.assertEqual(self.owner_sql("SELECT count(*) FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid "
-                                        "AND a.attnum > 0 AND NOT a.attisdropped WHERE c.relnamespace = 'explore'::regnamespace "
+                                        "AND a.attnum > 0 AND NOT a.attisdropped WHERE c.relnamespace IN ('explore'::regnamespace, 'catalogue'::regnamespace) "
                                         "AND c.relkind = 'v' AND col_description(c.oid, a.attnum) IS NULL"), "0")
+        # Two reading schemas: the data in explore, rights/catalog/dictionary in catalogue.
+        self.assertEqual(self.owner_sql("SELECT count(*) FROM information_schema.views WHERE table_schema = 'catalogue'"), "10")
+        self.assertEqual(self.owner_sql("SELECT count(*) FROM information_schema.views WHERE table_schema = 'explore' "
+                                        "AND table_name IN ('my_access', 'my_datasets', 'dataset_catalog', 'warehouse_context')"), "0")
+        self.assertEqual(scoped("SELECT count(*) > 0 FROM catalogue.warehouse_dictionary WHERE schema_name = 'explore'"), "t")
         # Catalog titles name the source instead of a placeholder.
-        self.assertEqual(scoped("SELECT title FROM explore.my_datasets WHERE dataset_key = '101'"), "EcoTaxa 101 — Projet C1")
+        self.assertEqual(scoped("SELECT title FROM catalogue.my_datasets WHERE dataset_key = '101'"), "EcoTaxa 101 — Projet C1")
         reader = self.as_role("warehouse_reader", "SELECT count(*) FROM explore.uvp_objects", "reader-pw")
         self.assertEqual(reader, "4")  # only project 103 has a UVP profile; the reader sees it all
         verify = subprocess.run([sys.executable, str(DEPLOY), "--verify"], env=self.deploy_env, capture_output=True, text=True)

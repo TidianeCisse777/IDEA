@@ -29,7 +29,7 @@ DOCS = ROOT / 'docs'
 # record comes last so it describes a complete deployment.
 FRESH_FILES = ('warehouse_schema_proposal.sql', 'warehouse_metadata_migration.sql',
                'warehouse_ecopart_migration.sql')
-ALWAYS_FILES = ('warehouse_ctd_zone_migration.sql', 'warehouse_uvp_particle_sizes_view.sql',
+ALWAYS_FILES = ('warehouse_catalogue_schema_migration.sql', 'warehouse_ctd_zone_migration.sql', 'warehouse_uvp_particle_sizes_view.sql',
                'warehouse_ecotaxa_object_size_migration.sql', 'warehouse_taxon_mapping_view.sql',
                'warehouse_ecotaxa_project_title_migration.sql', 'warehouse_uvp_abundance_zone_migration.sql',
                'warehouse_marine_zone_migration.sql', 'warehouse_copepod_stage_migration.sql',
@@ -152,8 +152,8 @@ def readiness(env):
         return query(env, sql) == 't'
 
     release = query(env, "SELECT coalesce((SELECT release || ' (' || method || ', ' || to_char(applied_at, "
-                         "'YYYY-MM-DD HH24:MI') || ')' FROM explore.warehouse_release), '')"
-                         " WHERE to_regclass('explore.warehouse_release') IS NOT NULL")
+                         "'YYYY-MM-DD HH24:MI') || ')' FROM catalogue.warehouse_release), '')"
+                         " WHERE to_regclass('catalogue.warehouse_release') IS NOT NULL")
     checks.append(('version enregistrée', bool(release), release or 'aucune: rejouer le déploiement', True))
     missing = [r for r in (*GROUP_ROLES, *SERVICE_ROLES)
                if not exists("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '%s')" % r)]
@@ -171,18 +171,18 @@ def readiness(env):
     public_connect = exists("SELECT has_database_privilege('public', current_database(), 'CONNECT')")
     checks.append(('base fermée à PUBLIC', not public_connect, 'CONNECT accordé par nom uniquement'
                    if not public_connect else 'PUBLIC peut se connecter', True))
-    gaps = [line for line in query(env, "SELECT problem || ': ' || object_name FROM explore.access_audit").splitlines() if line]
-    checks.append(('filtre par ligne sans contournement', not gaps, '; '.join(gaps) or 'explore.access_audit vide', True))
+    gaps = [line for line in query(env, "SELECT problem || ': ' || object_name FROM catalogue.access_audit").splitlines() if line]
+    checks.append(('filtre par ligne sans contournement', not gaps, '; '.join(gaps) or 'catalogue.access_audit vide', True))
     unsecured = query(env, "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
                            "WHERE n.nspname = 'warehouse' AND c.relrowsecurity AND NOT c.relforcerowsecurity")
     checks.append(('sécurité par ligne forcée', unsecured == '0', '%s table(s) sans FORCE' % unsecured
                    if unsecured != '0' else 'toutes les tables protégées', True))
-    context = exists("SELECT to_regclass('explore.warehouse_context') IS NOT NULL AND "
-                     "EXISTS (SELECT 1 FROM explore.warehouse_context WHERE topic = 'overview')")
+    context = exists("SELECT to_regclass('catalogue.warehouse_context') IS NOT NULL AND "
+                     "EXISTS (SELECT 1 FROM catalogue.warehouse_context WHERE topic = 'overview')")
     checks.append(('contexte MCP publié', context, 'warehouse_context(overview)' if context
                    else 'absent: publier le contexte (service warehouse-context ou ce script)', True))
     views = [v for v in ('my_access', 'my_datasets', 'dataset_catalog', 'fair_readiness', 'warehouse_dictionary')
-             if not exists("SELECT to_regclass('explore.%s') IS NOT NULL" % v)]
+             if not exists("SELECT to_regclass('catalogue.%s') IS NOT NULL" % v)]
     checks.append(('vues de découverte', not views, 'manquantes: ' + ', '.join(views) if views
                    else 'my_access, my_datasets, dataset_catalog, fair_readiness, dictionnaire', True))
     # Access follows the dataset version's contract. A FILET version whose analyses
@@ -206,7 +206,7 @@ def readiness(env):
 
 def fair_summary(env):
     rows = query(env, "SELECT source_instance||'/'||dataset_key||'/'||version_key, "
-                      "coalesce(array_to_string(missing_criteria, ','), '') FROM explore.fair_readiness ORDER BY 1")
+                      "coalesce(array_to_string(missing_criteria, ','), '') FROM catalogue.fair_readiness ORDER BY 1")
     lines = [line.split('|') for line in rows.splitlines() if line]
     incomplete = [(name, missing) for name, missing in lines if missing]
     for name, missing in incomplete[:20]:
@@ -224,7 +224,7 @@ def check(env):
         print('  %s %s: %s' % ('OK  ' if ok else ('ÉCHEC' if blocking else 'NOTE'), label, detail))
     # Kept on its own line: scripts and the docs grep for it.
     gaps = next(detail for label, ok, detail, _ in checks if label == 'filtre par ligne sans contournement')
-    print('Contrôle d\'accès:', 'aucun écart' if gaps == 'explore.access_audit vide' else 'écarts détectés')
+    print('Contrôle d\'accès:', 'aucun écart' if gaps == 'catalogue.access_audit vide' else 'écarts détectés')
     fair_incomplete = fair_summary(env)
     ready = all(ok for _, ok, _, blocking in checks if blocking)
     print('PRÊT: le warehouse peut être ouvert aux comptes.' if ready else 'NON PRÊT: corriger les lignes ÉCHEC.')

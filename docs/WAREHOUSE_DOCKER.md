@@ -34,7 +34,7 @@ Sur un serveur où le propriétaire n'est pas superuser, PostGIS doit être acti
 (`CREATE EXTENSION postgis;`); le déploiement le signale sans échouer.
 
 Le dernier script d'initialisation enregistre la version et l'empreinte des fichiers montés
-(`explore.warehouse_release`). Vérifier ensuite sans rien modifier :
+(`catalogue.warehouse_release`). Vérifier ensuite sans rien modifier :
 `python scripts/deploy_warehouse_postgres.py --verify` (dernière ligne `PRÊT`).
 Vue d'ensemble : [WAREHOUSE_README.md](WAREHOUSE_README.md).
 

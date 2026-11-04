@@ -31,7 +31,7 @@ $$;
 GRANT warehouse_data_owner TO CURRENT_USER;
 GRANT warehouse_all_access TO CURRENT_USER;
 -- CREATE is required to receive objects through ALTER ... OWNER TO.
-GRANT USAGE, CREATE ON SCHEMA warehouse, explore TO warehouse_data_owner;
+GRANT USAGE, CREATE ON SCHEMA warehouse, explore, catalogue TO warehouse_data_owner;
 
 ALTER TABLE warehouse.dataset_metadata ADD COLUMN IF NOT EXISTS access_contract text;
 
@@ -323,7 +323,7 @@ BEGIN
     FOR item IN
         SELECT n.nspname, c.relname, c.relkind
         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname IN ('warehouse', 'explore') AND c.relkind IN ('r', 'v')
+        WHERE n.nspname IN ('warehouse', 'explore', 'catalogue') AND c.relkind IN ('r', 'v')
           AND pg_get_userbyid(c.relowner) <> 'warehouse_data_owner'
     LOOP
         EXECUTE format('ALTER %s %I.%I OWNER TO warehouse_data_owner',
@@ -337,7 +337,7 @@ ALTER FUNCTION warehouse.readable_versions(boolean) OWNER TO warehouse_data_owne
 
 -- New explore views are handed to the data owner as soon as they are created, so
 -- a view written later by a superuser loader cannot bypass row security. Event
--- triggers need a superuser: elsewhere, explore.access_audit and a deploy replay
+-- triggers need a superuser: elsewhere, catalogue.access_audit and a deploy replay
 -- remain the safeguard. A failed hand-over never blocks the view's creation.
 CREATE OR REPLACE FUNCTION warehouse.adopt_new_explore_views()
 RETURNS event_trigger LANGUAGE plpgsql
@@ -347,7 +347,7 @@ DECLARE
 BEGIN
     FOR created IN
         SELECT c.objid FROM pg_event_trigger_ddl_commands() c
-        WHERE c.object_type = 'view' AND c.schema_name = 'explore'
+        WHERE c.object_type = 'view' AND c.schema_name IN ('explore', 'catalogue')
     LOOP
         IF (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid = created.objid) <> 'warehouse_data_owner' THEN
             BEGIN
@@ -369,13 +369,13 @@ BEGIN
             WHEN TAG IN ('CREATE VIEW')
             EXECUTE FUNCTION warehouse.adopt_new_explore_views();
     ELSE
-        RAISE NOTICE 'event trigger not installed (needs a superuser): rely on explore.access_audit and deploy replays';
+        RAISE NOTICE 'event trigger not installed (needs a superuser): rely on catalogue.access_audit and deploy replays';
     END IF;
 END
 $$;
 
 -- What the calling role may read, so a user can see its own scope.
-CREATE OR REPLACE VIEW explore.my_access AS
+CREATE OR REPLACE VIEW catalogue.my_access AS
 SELECT 'all data'::text AS grantee, NULL::text AS source_instance, NULL::text AS contract,
        NULL::text AS zone_key, NULL::integer AS year_min, NULL::integer AS year_max,
        'member of warehouse_all_access'::text AS note, NULL::timestamptz AS granted_at
@@ -386,14 +386,14 @@ SELECT g.grantee::text, g.source_instance, g.contract, g.zone_key, g.year_min, g
 FROM warehouse.access_grant g
 JOIN pg_roles r ON r.rolname = g.grantee
 WHERE g.revoked_at IS NULL AND pg_has_role(session_user, r.oid, 'member');
-ALTER VIEW explore.my_access OWNER TO warehouse_data_owner;
-COMMENT ON VIEW explore.my_access IS
+ALTER VIEW catalogue.my_access OWNER TO warehouse_data_owner;
+COMMENT ON VIEW catalogue.my_access IS
     'Périmètre de lecture du rôle connecté: source, contrat, zone et années autorisés. Aucune ligne = aucun accès.';
 
 -- What each dataset version means for the calling role: full, partial or no
 -- access, why, and whether a paired source is missing. It tells "hidden" from
 -- "absent" at version level without exposing any row count.
-CREATE OR REPLACE VIEW explore.my_datasets AS
+CREATE OR REPLACE VIEW catalogue.my_datasets AS
 WITH mine AS (
     SELECT g.*
     FROM warehouse.access_grant g
@@ -435,14 +435,14 @@ SELECT p.id AS dataset_version_id, p.source_instance, p.dataset_key, p.version_k
                  || CASE p.source_instance WHEN 'ecotaxa' THEN 'ecopart' ELSE 'ecotaxa' END
                  || ', elles restent vides pour ce compte.' END AS note
 FROM per_version p;
-ALTER VIEW explore.my_datasets OWNER TO warehouse_data_owner;
-COMMENT ON VIEW explore.my_datasets IS
+ALTER VIEW catalogue.my_datasets OWNER TO warehouse_data_owner;
+COMMENT ON VIEW catalogue.my_datasets IS
     'Pour chaque version de jeu de données: accès complet, partiel ou aucun pour le compte connecté, la raison, et une note si une source associée manque. Distingue « masqué » de « absent » sans compter les lignes.';
 
 -- Gaps that would silently bypass the filter: a table with no row security that
 -- is not a catalog, and a view over a protected table that does not run as the
 -- data owner (typically one created later by the loader).
-CREATE OR REPLACE VIEW explore.access_audit AS
+CREATE OR REPLACE VIEW catalogue.access_audit AS
 SELECT 'table without row security'::text AS problem, c.relname::text AS object_name
 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname = 'warehouse' AND c.relkind = 'r' AND NOT c.relrowsecurity
@@ -452,12 +452,12 @@ WHERE n.nspname = 'warehouse' AND c.relkind = 'r' AND NOT c.relrowsecurity
 UNION ALL
 SELECT DISTINCT 'view bypasses row security', v.relname::text
 FROM pg_class v
-JOIN pg_namespace vn ON vn.oid = v.relnamespace AND vn.nspname = 'explore'
+JOIN pg_namespace vn ON vn.oid = v.relnamespace AND vn.nspname IN ('explore', 'catalogue')
 JOIN pg_rewrite rw ON rw.ev_class = v.oid
 JOIN pg_depend d ON d.objid = rw.oid AND d.classid = 'pg_rewrite'::regclass
 JOIN pg_class t ON t.oid = d.refobjid AND t.relrowsecurity
 WHERE v.relkind = 'v' AND v.relname <> 'access_audit'
   AND pg_get_userbyid(v.relowner) <> 'warehouse_data_owner';
-ALTER VIEW explore.access_audit OWNER TO warehouse_data_owner;
-COMMENT ON VIEW explore.access_audit IS
+ALTER VIEW catalogue.access_audit OWNER TO warehouse_data_owner;
+COMMENT ON VIEW catalogue.access_audit IS
     'Écarts du contrôle d''accès: table sans RLS ou vue qui la contourne. Doit être vide.';

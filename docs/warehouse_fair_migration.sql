@@ -48,7 +48,7 @@ $$;
 
 -- F2/A2: the catalog stays readable whatever the access level of the data, and
 -- keeps retired versions. It exposes no file location, only the file count.
-CREATE OR REPLACE VIEW explore.dataset_catalog AS
+CREATE OR REPLACE VIEW catalogue.dataset_catalog AS
 SELECT
     v.id AS dataset_version_id,
     v.source_instance,
@@ -82,7 +82,7 @@ LEFT JOIN warehouse.dataset_metadata m ON m.dataset_version_id = v.id;
 
 -- Per-criterion readiness. A criterion is true only when the catalog proves it;
 -- the view measures metadata completeness, not scientific validity.
-CREATE OR REPLACE VIEW explore.fair_readiness AS
+CREATE OR REPLACE VIEW catalogue.fair_readiness AS
 WITH checks AS (
     SELECT
         c.dataset_version_id,
@@ -108,7 +108,7 @@ WITH checks AS (
             SELECT 1 FROM warehouse.validation_run r
             WHERE r.dataset_version_id = c.dataset_version_id AND r.status = 'passed'
         ) AS r3_validated
-    FROM explore.dataset_catalog c
+    FROM catalogue.dataset_catalog c
     LEFT JOIN warehouse.dataset_metadata m ON m.dataset_version_id = c.dataset_version_id
 )
 SELECT
@@ -131,7 +131,7 @@ FROM checks;
 
 -- I1/R: how much of the real schema is described in column_metadata. A column
 -- counts as documented when any row (global or per version) describes it.
-CREATE OR REPLACE VIEW explore.fair_column_coverage AS
+CREATE OR REPLACE VIEW catalogue.fair_column_coverage AS
 SELECT
     c.relname::text AS table_name,
     count(*) AS column_count,
@@ -152,11 +152,11 @@ LEFT JOIN (
 WHERE n.nspname = 'warehouse' AND c.relkind = 'r'
 GROUP BY c.relname;
 
-COMMENT ON VIEW explore.dataset_catalog IS
+COMMENT ON VIEW catalogue.dataset_catalog IS
     'Catalogue des versions de jeux de données: identifiant, licence, accès, couverture et provenance. Une ligne par version, y compris retirée. Lecture libre même quand les données sont restreintes.';
-COMMENT ON VIEW explore.fair_readiness IS
+COMMENT ON VIEW catalogue.fair_readiness IS
     'Complétude FAIR des métadonnées par version (F1 F2 F4 A1 I1 I3 R1 R2 R3). Mesure le catalogue, pas la validité scientifique; missing_criteria liste ce qui manque.';
-COMMENT ON VIEW explore.fair_column_coverage IS
+COMMENT ON VIEW catalogue.fair_column_coverage IS
     'Part des colonnes du schéma warehouse décrites dans column_metadata, avec unité et URI de terme standard. Une ligne par table.';
 
 -- Versions loaded after the first deploy get a draft catalog entry on the next

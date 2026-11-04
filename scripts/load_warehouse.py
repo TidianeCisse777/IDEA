@@ -80,7 +80,7 @@ def preflight(env, conninfo, args):
     checks.append(('client psql', bool(shutil.which('psql')), shutil.which('psql') or 'psql introuvable'))
     if shutil.which('psql') and env.get('WAREHOUSE_POSTGRES_PASSWORD'):
         result = subprocess.run(['psql', '-X', '-At', conninfo, '-c',
-                                 "SELECT coalesce((SELECT release FROM explore.warehouse_release), 'absente')"],
+                                 "SELECT coalesce((SELECT release FROM catalogue.warehouse_release), 'absente')"],
                                 env=env, capture_output=True, text=True)
         release = result.stdout.strip()
         checks.append(('warehouse v1 déployé', result.returncode == 0 and release not in ('', 'absente'),

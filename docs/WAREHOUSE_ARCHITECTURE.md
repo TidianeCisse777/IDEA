@@ -54,6 +54,6 @@ implémentée après validation des colonnes CTD et des règles de support verti
 
 Les tables `warehouse.*` appartiennent à `warehouse_data_owner` et sont protégées par sécurité par ligne;
 les comptes lisent `explore.*`, filtrés selon `warehouse.access_grant` (source, contrat, zone, année).
-`explore.my_access`, `dataset_catalog` et `fair_readiness` servent à découvrir son périmètre et les jeux décrits.
+`catalogue.my_access`, `dataset_catalog` et `fair_readiness` servent à découvrir son périmètre et les jeux décrits.
 Voir [rôles](WAREHOUSE_ROLES.md), [contrôle d'accès](WAREHOUSE_ACCESS_CONTROL.md) et
 [connexion DbHub](WAREHOUSE_CONNECT.md).

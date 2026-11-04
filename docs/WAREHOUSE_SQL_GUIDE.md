@@ -19,22 +19,27 @@ Le fichier remis par l'administrateur (`mon_nom.env`) contient tout ce qu'il fau
 Ne garder ce fichier que le temps de remplir la connexion (ou le passer à
 `scripts/warehouse_connect.py init`), puis le supprimer.
 
-- Dans DBeaver ou pgAdmin, ouvrir le schéma **`explore`** : c'est le seul lisible. Le schéma `warehouse`
-  (tables brutes) est fermé aux comptes de lecture.
+- Deux schémas sont lisibles : **`explore`**, les données (projets, samples, objets, profils, abondances,
+  CTD, FILET, zones), et **`catalogue`**, ce qui décrit les données et le compte (droits, catalogue des jeux
+  de données, dictionnaire des colonnes, fiches métier, version déployée). Le schéma `warehouse` (tables
+  brutes) est fermé aux comptes de lecture.
+- Noms des vues et des colonnes en anglais (convention SQL), descriptions en français.
 - Chaque vue et chaque colonne a une description (onglet « Propriétés » ou « Commentaire »).
 - Le compte est en lecture seule et une requête est arrêtée après **30 secondes** : filtrer et agréger
   dans la requête plutôt que tout télécharger.
-- On ne voit que les lignes de son périmètre (contrat, zone, années) : `SELECT * FROM explore.my_datasets;`
+- On ne voit que les lignes de son périmètre (contrat, zone, années) : `SELECT * FROM catalogue.my_datasets;`
   dit, pour chaque jeu de données, si l'accès est complet, partiel ou nul.
 
 ## Par où commencer
 
 | Vue | Pour |
 |---|---|
-| `ecotaxa_projects` | la liste de tous les projets EcoTaxa, avec instrument, période, zones et objets par statut d'annotation |
-| `my_datasets` | ce que mon compte peut lire |
-| `warehouse_dictionary` | le sens de chaque colonne de chaque vue, et la requête SQL qui la produit |
-| `warehouse_context` | les fiches détaillées : grain, jointures, pièges, exemples |
+| `explore.ecotaxa_projects` | la liste de tous les projets EcoTaxa, avec instrument, période, zones et objets par statut d'annotation |
+| `catalogue.my_datasets` | ce que mon compte peut lire |
+| `catalogue.warehouse_dictionary` | le sens de chaque colonne de chaque vue, et la requête SQL qui la produit |
+| `catalogue.warehouse_context` | les fiches détaillées : grain, jointures, pièges, exemples |
+
+Toutes les vues de la section suivante sont dans `explore` ; `dataset_catalog` est dans `catalogue`.
 
 ## Quelle vue pour quelle question
 
@@ -131,7 +136,7 @@ GROUP BY 1 ORDER BY 1;
 
 -- Le sens des colonnes d'une vue
 SELECT column_name, data_type, column_description
-FROM explore.warehouse_dictionary WHERE view_name = 'ecotaxa_samples';
+FROM catalogue.warehouse_dictionary WHERE view_name = 'ecotaxa_samples';
 ```
 
 Depuis R ou Python, la même connexion fonctionne (`RPostgres`, `psycopg`) ; lire le résultat d'une

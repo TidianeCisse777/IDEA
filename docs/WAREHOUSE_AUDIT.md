@@ -65,7 +65,7 @@ compte               requêtes erreurs sessions  première                derni�
 jtest_audit                19       1        4  2026-10-31 15:45:24.538 2026-10-31 15:47:52.545 neolab-mcp:claude-code, …
 
 2026-10-31 15:45:44  jtest_audit  ?                         ERREUR permission denied for schema warehouse | select * from warehouse.uvp_profile limit 5
-2026-10-31 15:47:52  jtest_audit  neolab-mcp:claude-code    select * from explore.my_access LIMIT 1001
+2026-10-31 15:47:52  jtest_audit  neolab-mcp:claude-code    select * from catalogue.my_access LIMIT 1001
 ```
 
 Les `BEGIN READ ONLY` / `COMMIT` que DbHub ajoute autour de chaque requête sont masqués (`--all` pour les voir).
@@ -119,7 +119,7 @@ Exemple réel :
 ```
 2026-10-31T15:47:48  claude-code  tools/list             11 ms  ok
 2026-10-31T15:47:52  claude-code  execute_sql            22 ms  ok, 1 ligne(s)
-    select * from explore.my_access
+    select * from catalogue.my_access
 ```
 
 Chaque appel enregistre l'agent, l'outil, ses arguments (le SQL), la durée, le statut, le nombre de lignes, une

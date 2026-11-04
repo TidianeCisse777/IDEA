@@ -74,7 +74,7 @@ class FairContractTests(unittest.TestCase):
             self.assertIn(criterion, FAIR)
 
     def test_catalog_hides_file_locations(self):
-        catalog = FAIR.split("explore.dataset_catalog AS")[1].split(";")[0]
+        catalog = FAIR.split("catalogue.dataset_catalog AS")[1].split(";")[0]
         self.assertNotIn("source_uri", catalog)
         self.assertNotIn("file_manifest_uri", catalog)
 
@@ -113,7 +113,7 @@ class AccessControlContractTests(unittest.TestCase):
 
     def test_unknown_scope_is_opt_in_and_my_datasets_has_no_counts(self):
         self.assertIn("include_unknown_scope boolean NOT NULL DEFAULT false", ACCESS)
-        view = ACCESS.split("CREATE OR REPLACE VIEW explore.my_datasets AS")[1].split("ALTER VIEW")[0]
+        view = ACCESS.split("CREATE OR REPLACE VIEW catalogue.my_datasets AS")[1].split("ALTER VIEW")[0]
         self.assertNotRegex(view, r"(?i)count\(")
 
     def test_compose_publishes_the_mcp_context_once_the_database_is_ready(self):
@@ -142,7 +142,7 @@ class AccessControlContractTests(unittest.TestCase):
     def test_roles_file_requires_the_access_file_first(self):
         self.assertIn("apply docs/warehouse_access_control.sql before", ROLES)
         names = re.findall(r"/docker-entrypoint-initdb\.d/(\d+_\w+)", COMPOSE)
-        self.assertLess(names.index("014_warehouse_access"), names.index("015_warehouse_roles"))
+        self.assertLess(names.index("015_warehouse_access"), names.index("016_warehouse_roles"))
 
 
 class ReleaseContractTests(unittest.TestCase):
@@ -244,7 +244,7 @@ class LivePostgresTests(unittest.TestCase):
         self.assertEqual(replay.returncode, 0, replay.stderr)
 
     def test_reader_reads_explore_only(self):
-        code, out = self.run_as("warehouse_reader", "SELECT count(*) FROM explore.dataset_catalog", "reader-pw")
+        code, out = self.run_as("warehouse_reader", "SELECT count(*) FROM catalogue.dataset_catalog", "reader-pw")
         self.assertEqual(code, 0, out)
         self.assertTrue(out.isdigit(), out)
         code, out = self.run_as("warehouse_reader", "SELECT count(*) FROM warehouse.dataset_version", "reader-pw")
@@ -279,7 +279,7 @@ class LivePostgresTests(unittest.TestCase):
               "SELECT id, 'T', 'D' FROM warehouse.dataset_version WHERE dataset_key='p1'")
         code, out = self.run_as("warehouse_reader",
                                 "SELECT fair_ready, array_to_string(missing_criteria, ',') "
-                                "FROM explore.fair_readiness WHERE dataset_key='p1'", "reader-pw")
+                                "FROM catalogue.fair_readiness WHERE dataset_key='p1'", "reader-pw")
         self.assertEqual(code, 0, out)
         self.assertTrue(out.startswith("f|F1,F2,F4,A1,I1,I3,R1,R2,R3"), out)
         done = ("UPDATE warehouse.dataset_metadata SET persistent_identifier='doi:10.0000/x', "
@@ -292,7 +292,7 @@ class LivePostgresTests(unittest.TestCase):
         owner("INSERT INTO warehouse.validation_run (dataset_version_id, validator_name, started_at, status) "
               "SELECT id, 'v', now(), 'passed' FROM warehouse.dataset_version WHERE dataset_key='p1'")
         code, out = self.run_as("warehouse_reader",
-                                "SELECT fair_ready FROM explore.fair_readiness WHERE dataset_key='p1'", "reader-pw")
+                                "SELECT fair_ready FROM catalogue.fair_readiness WHERE dataset_key='p1'", "reader-pw")
         self.assertEqual((code, out), (0, "t"))
 
     def test_published_version_requires_license_and_identifier(self):
@@ -386,7 +386,7 @@ class LivePostgresTests(unittest.TestCase):
         self.assertEqual(self.scoped_samples(empty), "")
         code, out = self.run_as(scoped, "SELECT count(*) FROM explore.acl_objects", "pw")
         self.assertEqual((code, out), (0, "1"), "objects follow their visible sample")
-        code, out = self.run_as(scoped, "SELECT contract, zone_key, year_min, year_max FROM explore.my_access", "pw")
+        code, out = self.run_as(scoped, "SELECT contract, zone_key, year_min, year_max FROM catalogue.my_access", "pw")
         self.assertEqual((code, out), (0, "C1|lab|2018|2022"))
         # Revoking keeps the history and closes the access.
         self.owner(f"UPDATE warehouse.access_grant SET revoked_at = now() WHERE id = {grant_id}")
@@ -419,7 +419,7 @@ class LivePostgresTests(unittest.TestCase):
             self.seed_access_data()
         code, out = self.run_as("warehouse_reader", f"SELECT count(*) FROM explore.acl_samples WHERE dataset_key LIKE 'acl\\_%{self.tag}'", "reader-pw")
         self.assertEqual((code, out), (0, "10"))
-        code, out = self.run_as("warehouse_reader", "SELECT grantee FROM explore.my_access", "reader-pw")
+        code, out = self.run_as("warehouse_reader", "SELECT grantee FROM catalogue.my_access", "reader-pw")
         self.assertEqual(out, "all data")
 
     def test_zz_enrollment_refuses_roles_that_would_see_everything(self):
@@ -438,13 +438,13 @@ class LivePostgresTests(unittest.TestCase):
         if superuser:
             # The event trigger hands the view over at creation: filtered immediately, nothing to audit.
             self.assertEqual(owner_now, "warehouse_data_owner")
-            self.assertEqual(self.owner("SELECT count(*) FROM explore.access_audit"), (0, "0"))
+            self.assertEqual(self.owner("SELECT count(*) FROM catalogue.access_audit"), (0, "0"))
             self.assertEqual(self.run_as(f"acl_empty_{self.tag}", "SELECT count(*) FROM explore.acl_later", "pw"), (0, "0"))
         else:
             # Without an event trigger the audit flags it until a deploy replay adopts it.
-            self.assertIn("acl_later", self.owner("SELECT object_name FROM explore.access_audit")[1])
+            self.assertIn("acl_later", self.owner("SELECT object_name FROM catalogue.access_audit")[1])
             subprocess.run([sys.executable, str(DEPLOY)], env=self.deploy_env, check=True, capture_output=True)
-            self.assertEqual(self.owner("SELECT count(*) FROM explore.access_audit"), (0, "0"))
+            self.assertEqual(self.owner("SELECT count(*) FROM catalogue.access_audit"), (0, "0"))
         self.owner("DROP VIEW explore.acl_later")
 
     def revoke_all(self, role):
@@ -485,15 +485,15 @@ class LivePostgresTests(unittest.TestCase):
         self.revoke_all(role)
         self.grant(role, source_instance="ecotaxa", contract="C1", zone_key="lab")
         code, out = self.run_as(role, "SELECT dataset_key || ':' || my_scope || ':' || (note IS NOT NULL) "
-                                      f"FROM explore.my_datasets WHERE dataset_key LIKE 'acl\\_%{self.tag}' ORDER BY 1", "pw")
+                                      f"FROM catalogue.my_datasets WHERE dataset_key LIKE 'acl\\_%{self.tag}' ORDER BY 1", "pw")
         self.assertEqual(code, 0, out)
         self.assertEqual(out.splitlines(), [f"acl_c1_{self.tag}:partiel:true", f"acl_c2_{self.tag}:aucun:false",
                                             f"acl_ctd_{self.tag}:aucun:false", f"acl_f_{self.tag}:aucun:false"])
-        code, out = self.run_as(role, f"SELECT scope_detail FROM explore.my_datasets WHERE dataset_key = 'acl_c2_{self.tag}'", "pw")
+        code, out = self.run_as(role, f"SELECT scope_detail FROM catalogue.my_datasets WHERE dataset_key = 'acl_c2_{self.tag}'", "pw")
         self.assertIn("masquées, pas absentes", out)
-        code, out = self.run_as(role, f"SELECT note FROM explore.my_datasets WHERE dataset_key = 'acl_c1_{self.tag}'", "pw")
+        code, out = self.run_as(role, f"SELECT note FROM catalogue.my_datasets WHERE dataset_key = 'acl_c1_{self.tag}'", "pw")
         self.assertIn("ecopart", out)
-        code, out = self.run_as("warehouse_reader", "SELECT DISTINCT my_scope FROM explore.my_datasets "
+        code, out = self.run_as("warehouse_reader", "SELECT DISTINCT my_scope FROM catalogue.my_datasets "
                                 f"WHERE dataset_key LIKE 'acl\\_%{self.tag}'", "reader-pw")
         self.assertEqual((code, out), (0, "complet"))
         self.revoke_all(role)
@@ -544,7 +544,7 @@ class LivePostgresTests(unittest.TestCase):
                                     "WHERE setrole = 'warehouse_reader'::regrole"), (0, "t"))
 
     def test_zz_no_protected_table_is_left_without_row_security(self):
-        code, out = self.owner("SELECT count(*) FROM explore.access_audit WHERE problem = 'table without row security'")
+        code, out = self.owner("SELECT count(*) FROM catalogue.access_audit WHERE problem = 'table without row security'")
         self.assertEqual((code, out), (0, "0"))
 
 
@@ -676,7 +676,7 @@ class LiveDockerInitSimulationTests(unittest.TestCase):
         self.assertIn(verify.returncode, (0, 2), verify.stdout + verify.stderr[-500:])
         self.assertIn("PRÊT", verify.stdout)
         method = subprocess.run(["psql", "-X", "-At", "-d", db, "-c", "SELECT method || ':' || migration_count "
-                                 "FROM explore.warehouse_release"], env=env, capture_output=True, text=True).stdout.strip()
+                                 "FROM catalogue.warehouse_release"], env=env, capture_output=True, text=True).stdout.strip()
         self.assertEqual(method, f"docker-init:{len(initdb) - 1 + 2}")
         navigator = subprocess.run(["psql", "-X", "-At", "-d", db, "-U", "warehouse_navigator", "-c",
                                     "SELECT count(*) >= 0 FROM warehouse.dataset_version"],

@@ -1,8 +1,8 @@
 # Exigences FAIR du warehouse
 
 Chaque exigence a un identifiant, une preuve vérifiable et un statut honnête.
-Mesure en base : `SELECT * FROM explore.fair_readiness;` (par version) et
-`SELECT * FROM explore.fair_column_coverage;` (par table). Ces vues mesurent la
+Mesure en base : `SELECT * FROM catalogue.fair_readiness;` (par version) et
+`SELECT * FROM catalogue.fair_column_coverage;` (par table). Ces vues mesurent la
 **complétude des métadonnées**, pas la validité scientifique des données.
 
 Légende : ✅ en place et testé · 🟡 structure en place, contenu à produire · ⛔ décision requise.
@@ -13,8 +13,8 @@ Légende : ✅ en place et testé · 🟡 structure en place, contenu à produir
 |---|---|---|---|
 | F1 | Identifiant persistant unique | `dataset_metadata.persistent_identifier`, index unique partiel; obligatoire pour `published` | 🟡 aucun identifiant émis; dépôt à choisir (DMP §8.2) |
 | F2 | Métadonnées riches | `dataset_metadata` (titre, description, créateurs, couverture, méthode, licence) | 🟡 fiches `draft` à descriptions provisoires (39 sur l'instance locale au 8 octobre 2026, [PGD](WAREHOUSE_DMP_DRAFT.md)) |
-| F3 | Métadonnées citent l'identifiant | `explore.dataset_catalog` expose `dataset_version_id` et `persistent_identifier` | ✅ |
-| F4 | Indexées et interrogeables | `explore.dataset_catalog`, `keywords_json` | 🟡 mots-clés vides; indexation externe liée au dépôt ⛔ |
+| F3 | Métadonnées citent l'identifiant | `catalogue.dataset_catalog` expose `dataset_version_id` et `persistent_identifier` | ✅ |
+| F4 | Indexées et interrogeables | `catalogue.dataset_catalog`, `keywords_json` | 🟡 mots-clés vides; indexation externe liée au dépôt ⛔ |
 
 ## Accessible
 
@@ -38,7 +38,7 @@ Légende : ✅ en place et testé · 🟡 structure en place, contenu à produir
 | ID | Exigence | Mise en œuvre | Statut |
 |---|---|---|---|
 | R1.1 | Licence claire | `license`, `license_uri`; contrainte `dataset_metadata_publish_gate` | ⛔ licence à décider (DMP §8.3) |
-| R1.2 | Provenance | `dataset_file` (SHA-256, URI logique), `validation_run`, `software_version`, `methodology`; version du schéma et SHA-256 des migrations de chaque déploiement (`explore.warehouse_release`) | ✅ structure; contenu 🟡 |
+| R1.2 | Provenance | `dataset_file` (SHA-256, URI logique), `validation_run`, `software_version`, `methodology`; version du schéma et SHA-256 des migrations de chaque déploiement (`catalogue.warehouse_release`) | ✅ structure; contenu 🟡 |
 | R1.3 | Standards de la communauté | `metadata_standard`; correspondance Darwin Core / DataCite à écrire | ⛔ |
 
 La contrainte `dataset_metadata_publish_gate` interdit de passer une version à

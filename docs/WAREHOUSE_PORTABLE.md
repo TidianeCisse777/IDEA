@@ -53,8 +53,8 @@ avec lecture seule, limite de 1 000 lignes et délai de 30 secondes.
 
 L'outil `warehouse_context` fournit le contexte général et les fiches métier.
 Les commentaires de vues/colonnes sont également visibles dans la découverte
-DbHub; `explore.warehouse_dictionary` expose les types et transformations SQL,
-et `explore.dataset_versions` les versions réellement enregistrées.
+DbHub; `catalogue.warehouse_dictionary` expose les types et transformations SQL,
+et `catalogue.dataset_versions` les versions réellement enregistrées.
 Le démarrage republie les métadonnées avec `publish_warehouse_context.publish`.
 Pour actualiser aussi le document généré après modification du dictionnaire :
 
