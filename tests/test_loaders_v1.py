@@ -364,6 +364,7 @@ class LoaderChainTests(unittest.TestCase):
                                           "AND NOT EXISTS (SELECT 1 FROM explore.zone_membership m WHERE m.row_kind = 'ecotaxa_sample' "
                                           "AND m.row_id = s.id AND m.zone_key = s.marine_zone_key)"), "0")
         self.assertEqual(self.owner_sql("SELECT count(DISTINCT pixel_size_mm) FROM warehouse.ecotaxa_acquisition"), "1")
+        self.assertEqual(self.owner_sql("SELECT string_agg(DISTINCT pixel_unit_read || ':' || pixel_size_raw, ',') FROM warehouse.ecotaxa_acquisition"), "mm:0.01")
         self.assertEqual(self.owner_sql("SELECT count(*) FROM warehouse.ecotaxa_ctd"), "5")
         self.assertEqual(self.owner_sql("SELECT count(*) FROM warehouse.ctd_measurement"), "24")
         self.assertEqual(self.owner_sql("SELECT marine_zone_key FROM warehouse.ctd_profile"), "Baie de Baffin")
@@ -440,6 +441,18 @@ class LoaderChainTests(unittest.TestCase):
         self.prepare(superuser=False)
         self.run_chain()
         self.check_data_and_access()
+
+
+class PixelSizeUnitTests(unittest.TestCase):
+    """EcoTaxa's acquisition "pixel" is in mm for UVP5/Zooscan and in µm for UVP6
+    (73): read as mm everywhere, UVP6 sizes were 1000 times too large."""
+
+    def test_uvp6_micrometres_and_uvp5_millimetres(self):
+        loader = load_module("populate_ecotaxa_objects")
+        self.assertEqual(loader.pixel_size("73"), (0.073, "um"))
+        self.assertEqual(loader.pixel_size(0.088), (0.088, "mm"))
+        self.assertEqual(loader.pixel_size(None), (None, None))
+        self.assertEqual(loader.pixel_size(""), (None, None))
 
 
 class LoadRunbookTests(unittest.TestCase):

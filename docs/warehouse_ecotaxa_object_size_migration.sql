@@ -37,6 +37,26 @@ COMMENT ON TABLE warehouse.ecotaxa_acquisition IS
 COMMENT ON COLUMN warehouse.ecotaxa_acquisition.pixel_size_mm IS
     'Taille reelle d''un pixel, en mm (free column "pixel" de l''acquisition EcoTaxa); NULL si le projet ne la fournit pas, auquel cas aucune conversion en unite reelle n''est possible pour ses objets.';
 
+-- The acquisition's "pixel" value is in millimetres for UVP5 and Zooscan
+-- projects (0.085-0.174 observed) but in micrometres for UVP6 projects (73
+-- observed, the UVP6 nominal pixel size): read as millimetres everywhere, UVP6
+-- sizes came out 1000 times too large (4 novembre 2026). The raw value and the
+-- unit read are now kept; rows loaded before are corrected once, here, by the
+-- same rule as the loader (populate_ecotaxa_objects.pixel_size): a value of 1 or
+-- more is micrometres. Only rows never corrected (pixel_unit_read IS NULL) change.
+ALTER TABLE warehouse.ecotaxa_acquisition
+    ADD COLUMN IF NOT EXISTS pixel_size_raw double precision,
+    ADD COLUMN IF NOT EXISTS pixel_unit_read text;
+UPDATE warehouse.ecotaxa_acquisition
+SET pixel_size_raw = pixel_size_mm,
+    pixel_unit_read = CASE WHEN pixel_size_mm >= 1 THEN 'um' ELSE 'mm' END,
+    pixel_size_mm = CASE WHEN pixel_size_mm >= 1 THEN pixel_size_mm / 1000 ELSE pixel_size_mm END
+WHERE pixel_unit_read IS NULL AND pixel_size_mm IS NOT NULL;
+COMMENT ON COLUMN warehouse.ecotaxa_acquisition.pixel_size_raw IS
+    'Valeur source du champ "pixel" de l''acquisition EcoTaxa, telle que fournie (mm pour UVP5/Zooscan, µm pour UVP6).';
+COMMENT ON COLUMN warehouse.ecotaxa_acquisition.pixel_unit_read IS
+    'Unité retenue pour pixel_size_raw : mm, ou um (valeur >= 1, cas UVP6, divisée par 1000 dans pixel_size_mm).';
+
 -- Row security for warehouse.ecotaxa_acquisition is registered in the central
 -- spec list in warehouse_access_control.sql (which runs after this file and
 -- applies ENABLE/FORCE ROW LEVEL SECURITY + the access_scope policy there,

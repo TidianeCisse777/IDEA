@@ -120,12 +120,22 @@ def load_project(args,s,pid):
     load_acquisition_pixel_sizes(s, db, pid)
     return loaded
 
+def pixel_size(raw):
+    '''EcoTaxa acquisition free column "pixel" -> (pixel_size_mm, unit read).
+    Its unit differs by instrument: UVP5 and Zooscan projects give millimetres
+    (0.085-0.174 observed), UVP6 projects give micrometres (73 observed, the
+    UVP6 nominal pixel size). No real instrument here has a pixel of 1 mm or
+    more, so a value >= 1 is read as micrometres. The raw value is kept too.'''
+    if raw in (None, ''): return None, None
+    value=float(raw)
+    return (value/1000, 'um') if value >= 1 else (value, 'mm')
+
 def load_acquisition_pixel_sizes(s, db, pid, batch=1000):
     '''One GET /acquisition/{id} per acquisition of the project not yet stored. The list
     comes from the database, not from the pages fetched in this run, so a run interrupted
     after its objects were loaded still calibrates them on the next run; results are
     written every `batch` acquisitions so an interruption loses at most one batch.
-    free_columns.pixel is the mm/pixel calibration EcoTaxa carries on the acquisition
+    free_columns.pixel is the pixel calibration EcoTaxa carries on the acquisition (unit: see pixel_size)
     (confirmed live; /acquisitions/search returns free_columns empty, so no bulk path);
     projects that do not define it leave pixel_size_mm NULL, never a guessed value.'''
     rows=[line.split('\t') for line in psql(db, f"""SELECT DISTINCT o.acquisition_id,o.sample_id FROM warehouse.ecotaxa_object o
@@ -139,17 +149,18 @@ def load_acquisition_pixel_sizes(s, db, pid, batch=1000):
             try:
                 r=s.get(f'{BASE}/acquisition/{acq_id}',timeout=30); r.raise_for_status()
                 pixel=(r.json().get('free_columns') or {}).get('pixel')
-                return acq_id, (float(pixel) if pixel not in (None,'') else None)
+                return acq_id, (None if pixel in (None,'') else float(pixel))
             except requests.RequestException:
                 if attempt == 3: raise
                 time.sleep(attempt * 2)
     def flush(results):
         buf=io.StringIO(); w=csv.writer(buf,delimiter='\t',lineterminator='\n')
-        for acq_id, pixel_mm in results:
-            w.writerow([acq_id, todo[acq_id], '\\N' if pixel_mm is None else pixel_mm])
-        psql(db,["""CREATE TEMP TABLE stage_ecotaxa_acquisition(acquisition_id text,sample_id bigint,pixel_size_mm double precision)""",
+        for acq_id, raw in results:
+            mm, unit = pixel_size(raw)
+            w.writerow([acq_id, todo[acq_id]] + ['\\N' if v is None else v for v in (mm, raw, unit)])
+        psql(db,["""CREATE TEMP TABLE stage_ecotaxa_acquisition(acquisition_id text,sample_id bigint,pixel_size_mm double precision,pixel_size_raw double precision,pixel_unit_read text)""",
                  """COPY stage_ecotaxa_acquisition FROM STDIN WITH (FORMAT csv,DELIMITER E'\\t',NULL '\\N')""",
-                 """INSERT INTO warehouse.ecotaxa_acquisition(acquisition_id,sample_id,pixel_size_mm) SELECT acquisition_id,sample_id,pixel_size_mm FROM stage_ecotaxa_acquisition ON CONFLICT (acquisition_id) DO UPDATE SET pixel_size_mm=EXCLUDED.pixel_size_mm"""],
+                 """INSERT INTO warehouse.ecotaxa_acquisition(acquisition_id,sample_id,pixel_size_mm,pixel_size_raw,pixel_unit_read) SELECT acquisition_id,sample_id,pixel_size_mm,pixel_size_raw,pixel_unit_read FROM stage_ecotaxa_acquisition ON CONFLICT (acquisition_id) DO UPDATE SET pixel_size_mm=EXCLUDED.pixel_size_mm,pixel_size_raw=EXCLUDED.pixel_size_raw,pixel_unit_read=EXCLUDED.pixel_unit_read"""],
              stdin=buf.getvalue())
     ids=list(todo); done=0
     with ThreadPoolExecutor(max_workers=6) as pool:

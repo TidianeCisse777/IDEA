@@ -374,7 +374,7 @@ COLUMNS = {
     'esd_px': 'Diamètre sphérique équivalent Zooprocess, en pixels; NULL si le projet EcoTaxa ne fournit pas cette colonne libre.',
     'major_px': 'Axe majeur de l’ellipse ajustée par Zooprocess, en pixels; valeur source, non recalculée.',
     'minor_px': 'Axe mineur de l’ellipse ajustée par Zooprocess, en pixels; valeur source, non recalculée.',
-    'pixel_size_mm': 'Taille réelle d’un pixel pour l’acquisition de l’objet, en mm; NULL si EcoTaxa ne la fournit pas, auquel cas aucune colonne _um/_um2 n’est calculable pour cet objet.',
+    'pixel_size_mm': 'Taille réelle d’un pixel pour l’acquisition de l’objet, en mm (EcoTaxa la donne en mm pour UVP5/Zooscan et en µm pour UVP6 : convertie ici; ordre de grandeur 0,07 à 0,17 mm); NULL si EcoTaxa ne la fournit pas (LOKI, Zooscan), auquel cas aucune colonne _um/_um2 n’est calculable pour cet objet.',
     'esd_um': 'esd_px converti en micromètres via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une taille nulle.',
     'major_um': 'major_px converti en micromètres via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une taille nulle.',
     'minor_um': 'minor_px converti en micromètres via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une taille nulle.',
