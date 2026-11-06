@@ -137,7 +137,7 @@ FROM warehouse.ctd_measurement m
 LEFT JOIN warehouse.ctd_variable v ON v.variable_key = m.variable_key;
 
 COMMENT ON VIEW explore.ctd_measurements IS
-    'Une mesure CTD par ligne (profil × scan × variable), format long : filtrer variable_key (TE90 température °C ITS-90, PSAL salinité pratique, SIGT densité, OXYM oxygène, NTRA nitrate, FLOR fluorescence, pH, PRES pression) et ctd_profile_id avant d''agréger. Unité dans unit, telle que fournie; qc tel que fourni (souvent NULL). Joindre explore.ctd_profiles sur ctd_profile_id pour la position, la date et la zone.';
+    'Une mesure CTD par ligne (profil × scan × variable), format long : filtrer variable_key (TE90 température °C ITS-90, PSAL salinité pratique, SIGT sigma-t = densité moins 1000 kg/m³ (une valeur 27 signifie 1027 kg/m³), OXYM oxygène µM, NTRA nitrate, FLOR fluorescence, pH, PRES pression) et ctd_profile_id avant d''agréger. depth_m est la pression en dbar utilisée comme profondeur (1 dbar ≈ 0,99 m : écart d''environ 1 % à 2000 m), pas une profondeur recalculée. Unité dans unit, telle que fournie; qc toujours NULL dans les données chargées : aucun contrôle qualité n''est fourni, ce qui ne veut pas dire que les valeurs sont bonnes. Joindre explore.ctd_profiles sur ctd_profile_id pour la position, la date et la zone.';
 
 -- Readable dataset titles. Catalog entries were seeded with placeholders such as
 -- "ecotaxa dataset 42 (current)", which tell a reader nothing. This function
@@ -167,3 +167,11 @@ FROM warehouse.dataset_version v
 WHERE m.dataset_version_id = v.id
   AND m.title = format('%s dataset %s (%s)', v.source_instance, v.dataset_key, v.version_key)
   AND warehouse.dataset_native_title(v.id) IS NOT NULL;
+
+-- SIGT is sigma-t (density minus 1000 kg/m3, values 16-28 here), not density:
+-- named "densité" until 4 novembre 2026, which let a reader take 27 kg/m3 for the
+-- water's density. Same name as the CTD loader now writes; one-time, guarded.
+UPDATE warehouse.ctd_variable SET canonical_name = 'sigma-t (densité moins 1000)', description = 'sigma-t (densité moins 1000)'
+WHERE variable_key = 'SIGT' AND canonical_name = 'densité';
+UPDATE warehouse.ctd_measurement SET variable_definition = 'sigma-t (densité moins 1000)'
+WHERE variable_key = 'SIGT' AND variable_definition = 'densité';

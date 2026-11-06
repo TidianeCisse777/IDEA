@@ -8,7 +8,7 @@ import pandas as pd, requests
 from dotenv import load_dotenv
 
 BASE='https://erddap.amundsenscience.com/erddap/tabledap/amundsen12713.csv'; BATCH=20
-VARS={'PRES':('pression / profondeur','dbar'),'TE90':('température','degC'),'PSAL':('salinité','PSU'),'SIGT':('densité','kg/m3'),'OXYM':('oxygène','uM'),'pH':('pH','1'),'NTRA':('nitrate','mmol/m3'),'FLOR':('fluorescence','ug/L')}
+VARS={'PRES':('pression / profondeur','dbar'),'TE90':('température','degC'),'PSAL':('salinité','PSU'),'SIGT':('sigma-t (densité moins 1000)','kg/m3'),'OXYM':('oxygène','uM'),'pH':('pH','1'),'NTRA':('nitrate','mmol/m3'),'FLOR':('fluorescence','ug/L')}
 
 def psql(db,sql,stdin=None):
  env=os.environ.copy();
@@ -79,7 +79,7 @@ def main():
  print(f'[ctd] références filename={len(samples)}, résolues date+position={len(resolved)}',flush=True)
  names=sorted({norm(x[3]) for x in samples if re.fullmatch(r'(?:\d{6,7}|\d{4}_\d{3}\.int\.nc)', str(x[3]).strip())} | set(resolved.values())); digest=hashlib.sha256(('\\n'.join(names)).encode()).hexdigest()
  vid=int(psql(db,f"INSERT INTO warehouse.dataset_version(source_instance,dataset_key,version_key,file_manifest_uri,sha256) VALUES ('amundsen_ctd','amundsen12713','current',{repr(BASE)},{repr(digest)}) ON CONFLICT (source_instance,dataset_key,version_key) DO UPDATE SET sha256=EXCLUDED.sha256 RETURNING id").splitlines()[0])
- for code,(name,unit) in VARS.items(): psql(db,f"INSERT INTO warehouse.ctd_variable(variable_key,canonical_name,canonical_unit,description,source_code,source_instance) VALUES ({repr(code)},{repr(name)},{repr(unit)},{repr(name)},{repr(code)},'amundsen') ON CONFLICT(variable_key) DO UPDATE SET canonical_unit=EXCLUDED.canonical_unit")
+ for code,(name,unit) in VARS.items(): psql(db,f"INSERT INTO warehouse.ctd_variable(variable_key,canonical_name,canonical_unit,description,source_code,source_instance) VALUES ({repr(code)},{repr(name)},{repr(unit)},{repr(name)},{repr(code)},'amundsen') ON CONFLICT(variable_key) DO UPDATE SET canonical_name=EXCLUDED.canonical_name,canonical_unit=EXCLUDED.canonical_unit,description=EXCLUDED.description")
  total_profiles=total_rows=0
  for start in range(0,len(names),args.batch_size):
   batch=names[start:start+args.batch_size]; frame=fetch(batch)

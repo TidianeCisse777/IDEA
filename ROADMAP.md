@@ -4,6 +4,24 @@
 
 **Dernière mise à jour :** 4 novembre 2026
 
+### 6 novembre 2026 — Tests agent CTD et graphiques; sigma-t et pression documentés (phase 2)
+
+- Nouvelle batterie `ctd_visual_cases.json` (6 questions CTD, 4 graphiques/cartes). Premier passage 7/10, avec
+  des causes réelles : (1) l'agent interrogé sur « la densité à 500 m » n'a pas consulté la base et a répondu
+  de mémoire (climatologie) — la notation exige désormais au moins une requête SQL, la consigne générale et la
+  description DbHub disent ce que contient la base et interdisent de répondre de mémoire; (2) le signe moins
+  « − » n'était pas lu par la notation; (3) une carte peut valablement montrer 196 profils localisés ou 243
+  avec ceux positionnés par leur sample : `expect_sql` accepte des alternatives, l'explication est exigée.
+  Les dossiers de travail des agents passent hors du dépôt (`~/neolab_agent_battery`) : un agent avec outils
+  de fichiers lisait le dépôt. Passage final 10/10 (176 tours, 61 requêtes, ≈ 2,89 $); figures relues :
+  carte, diagramme T-S (conversion TEOS-10 indiquée), barres validés/tous objets, profil vertical (échelles
+  différentes entre panneaux, à améliorer).
+- Données CTD : `SIGT` était décrit « densité » alors que c'est le sigma-t (densité moins 1000; valeurs 16–28);
+  renommé dans le chargeur et en base. `depth_m` CTD est la pression en dbar prise pour des mètres (≈ 1 % à
+  2000 m) : documenté. `qc` toujours NULL : documenté comme « aucun contrôle qualité fourni ».
+- Autres agents (Codex, Gemini, OpenCode) : installation refusée par les permissions de la session (code
+  téléchargé), et aucune clé API OpenAI/Google disponible; non testés.
+
 ### 4 novembre 2026 — Batterie de tests agent rejouable et zip v5 (phase 2)
 
 - `scripts/agent_battery.py` + `tests/agent_battery/ecotaxa_cases.json` : 10 questions de chercheur à pièges,

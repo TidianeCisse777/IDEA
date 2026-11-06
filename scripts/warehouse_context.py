@@ -103,7 +103,7 @@ VIEWS = {
         'Mesures CTD (température, salinité, densité, oxygène, nitrate, fluorescence, pH) de tous les profils, format long.',
         'Profil CTD × scan × variable.',
         'ctd_profile_id vers ctd_profiles pour position, date et zone.',
-        'Filtrer variable_key et ctd_profile_id avant d’agréger (5 M lignes). Unité dans unit telle que fournie; ne convertir pression/profondeur ni salinité sans le dire. Pour un profil moyen, moyenner d’abord par profil et classe de profondeur, puis entre profils.',
+        'Filtrer variable_key et ctd_profile_id avant d’agréger (5 M lignes). Unité dans unit telle que fournie; ne convertir pression/profondeur ni salinité sans le dire. SIGT est le sigma-t (densité moins 1000 kg/m³) : 27 signifie 1027 kg/m³. depth_m est la pression en dbar prise pour des mètres (écart ≈ 1 % à 2000 m). qc est toujours NULL : aucun contrôle qualité fourni, à signaler. Pour un profil moyen, moyenner d’abord par profil et classe de profondeur, puis entre profils.',
         "SELECT ctd_profile_id, depth_m, value AS temperature FROM explore.ctd_measurements WHERE variable_key = 'TE90' AND ctd_profile_id = 1 ORDER BY depth_m;"),
     'uvp_projects': view(
         'Inventaire agrégé des projets UVP liés à EcoTaxa/EcoPart.',
@@ -450,6 +450,9 @@ COLUMNS = {
 
 
 def column_description(view_name, column):
+    if view_name in ('ctd_measurements', 'ecotaxa_ctd', 'uvp_ctd', 'filet_ctd') and column == 'depth_m':
+        return ('Pression en dbar utilisée comme profondeur en mètres (1 dbar ≈ 0,99 m; écart d’environ 1 % à 2000 m), '
+                'telle que fournie par le chargeur CTD; pas une profondeur recalculée (TEOS-10).')
     if column == 'id':
         return 'Clé technique de l’échantillon FILET.' if view_name == 'filet_samples' else 'Clé technique de la correspondance FILET–UVP.'
     if column == 'taxon_id':

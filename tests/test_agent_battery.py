@@ -24,6 +24,11 @@ class NumberReadingTests(unittest.TestCase):
         self.assertNotIn(732024, ab.numbers_in('73 profils, du 4 octobre 2024'))
 
 
+class MinusSignTests(unittest.TestCase):
+    def test_true_minus_sign(self):
+        self.assertIn(-0.2, ab.numbers_in('environ \u22120,2 \u00b0C'))
+
+
 class ReportFormatTests(unittest.TestCase):
     def test_values_shown_as_people_write_them(self):
         self.assertEqual(ab.show(1687393.0), '1\u202f687\u202f393')
@@ -58,6 +63,13 @@ class GradingTests(unittest.TestCase):
         case = CASES['leg3_calanus_validated']
         self.assertFalse(ab.grade(case, 'Abondance de Calanus : 36,6 ind/m³.', [0], [])['passed'])
         self.assertTrue(ab.grade(case, 'Aucun objet Calanus validé dans am_leg3.', [0], [])['passed'])
+
+    def test_answer_without_any_query_fails(self):
+        # Seen live: an agent answered the 500 m density question from climatology, without the database.
+        case = CASES['loki2015_validated']
+        answer = '1 687 393 objets, dont 187 567 validés.'
+        self.assertFalse(ab.grade(case, answer, [1687393, 187567], [], sql_queries=0)['passed'])
+        self.assertTrue(ab.grade(case, answer, [1687393, 187567], [], sql_queries=2)['passed'])
 
     def test_agent_environment_carries_no_credentials(self):
         import os

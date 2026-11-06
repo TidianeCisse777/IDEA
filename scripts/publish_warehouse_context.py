@@ -16,7 +16,7 @@ OVERVIEW = (
     'le style, les règles scientifiques, la provenance et les exports. '
     'Les métadonnées et vues existent même quand les données sont absentes : lire '
     'catalogue.dataset_versions et mesurer la couverture avant de conclure. '
-    'Ne pas inventer données, unités, taxons, liens ou validation scientifique. '
+    'Ne pas inventer données, unités, taxons, liens ou validation scientifique. Toute réponse sur les données vient d’une requête execute_sql sur ce warehouse : ne jamais répondre de mémoire ni avec des valeurs générales (climatologie, littérature) à la place des mesures; si une requête échoue ou qu’un outil est refusé, le dire et réessayer avec execute_sql plutôt que d’estimer. '
     'Ne pas interpréter biologiquement les résultats. NULL signifie absent/inconnu; zéro et absence '
     'de ligne sont différents. Garder source, versions, politiques d’annotation, stades et '
     'dénominateurs explicites. Ne pas sommer les volumes répétés par taxon ou les '

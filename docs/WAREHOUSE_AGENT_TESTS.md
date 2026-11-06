@@ -23,8 +23,13 @@ Prérequis : le warehouse déployé et chargé, Claude Code connecté (`claude`)
   la base n'est dans son environnement. Chaque question est posée dans un dossier vide.
 - Une réponse réussit si chaque nombre attendu y figure (entier exact, décimal à la tolérance près), si chaque
   motif obligatoire est présent et si aucune valeur interdite n'apparaît.
-- Rapport : `data/agent_battery/<date>/report.md` (tableau) et `report.json` (réponses complètes); le flux de
+- Rapport : `~/neolab_agent_battery/<date>/report.md` (tableau) et `report.json` (réponses complètes); le flux de
   chaque agent est dans `<cas>.jsonl`.
+
+Deux batteries : `tests/agent_battery/ecotaxa_cases.json` (projets, objets, annotation, doublons, tailles) et
+`tests/agent_battery/ctd_visual_cases.json` (CTD : zones, salinité, température, sigma-t, pression, contrôle
+qualité; et quatre graphiques ou cartes, avec `"tools": "files"` pour que l'agent écrive et exécute son code).
+Toute réponse sans requête SQL échoue (réponse de mémoire). Les dossiers de travail sont hors du dépôt.
 
 La notation lit des nombres : elle vérifie les chiffres et les pièges écrits dans les cas, pas toute la
 qualité d'une réponse. Relire les réponses d'un cas qui échoue, et ajouter un cas pour chaque erreur trouvée.

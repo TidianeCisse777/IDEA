@@ -1,0 +1,81 @@
+{
+  "description": "Données CTD Amundsen (accès et interprétation) et production de graphiques et de cartes. Les valeurs attendues sont recalculées en base à chaque lancement.",
+  "cases": [
+    {
+      "id": "ctd_baffin_2024_count",
+      "question": "Combien de profils CTD Amundsen avons-nous en Baie de Baffin en 2024 ?",
+      "expect_sql": "SELECT count(DISTINCT p.ctd_profile_id) FROM explore.ctd_profiles p JOIN explore.zone_membership m ON m.row_kind = 'ctd_profile' AND m.row_id = p.ctd_profile_id WHERE m.zone_key = 'Baie de Baffin' AND extract(year FROM p.sampled_at) = 2024"
+    },
+    {
+      "id": "ctd_salinity_200m_2016",
+      "question": "Quelle est la salinité moyenne entre 190 et 210 m en Baie de Baffin en 2016 ?",
+      "expect_sql": "SELECT round(avg(c.value)::numeric, 2) FROM explore.ctd_measurements c JOIN explore.ctd_profiles p USING (ctd_profile_id) JOIN explore.zone_membership m ON m.row_kind = 'ctd_profile' AND m.row_id = p.ctd_profile_id WHERE m.zone_key = 'Baie de Baffin' AND extract(year FROM p.sampled_at) = 2016 AND c.variable_key = 'PSAL' AND c.depth_m BETWEEN 190 AND 210",
+      "tolerance": 0.03
+    },
+    {
+      "id": "ctd_temperature_200m_2024",
+      "question": "Quelle température fait-il vers 200 m de profondeur en Baie de Baffin en 2024, d'après les CTD ?",
+      "expect_sql": "SELECT round(avg(c.value)::numeric, 2) FROM explore.ctd_measurements c JOIN explore.ctd_profiles p USING (ctd_profile_id) JOIN explore.zone_membership m ON m.row_kind = 'ctd_profile' AND m.row_id = p.ctd_profile_id WHERE m.zone_key = 'Baie de Baffin' AND extract(year FROM p.sampled_at) = 2024 AND c.variable_key = 'TE90' AND c.depth_m BETWEEN 190 AND 210",
+      "tolerance": 0.15
+    },
+    {
+      "id": "ctd_density_500m_2024",
+      "question": "Quelle est la densité de l'eau à 500 m en Baie de Baffin en 2024 ?",
+      "expect_sql": "SELECT 0",
+      "must_mention": ["(?i)1 ?027[.,]\\d|sigma|σ"],
+      "trap": "SIGT est un sigma-t (densité moins 1000) : répondre 27,6 kg/m³ comme densité de l'eau est faux"
+    },
+    {
+      "id": "ctd_max_depth_2016",
+      "question": "Jusqu'à quelle profondeur sont descendues les CTD en 2016 ?",
+      "expect_sql": "SELECT max(max_depth_m) FROM explore.ctd_profiles WHERE extract(year FROM sampled_at) = 2016",
+      "must_mention": ["(?i)dbar|pression"],
+      "trap": "la profondeur est la pression en dbar prise pour des mètres"
+    },
+    {
+      "id": "ctd_quality_control",
+      "question": "Les mesures CTD ont-elles été contrôlées en qualité ?",
+      "expect_sql": "SELECT 0",
+      "must_mention": ["(?i)aucun|pas de contr|non renseign|null|absent|vide"],
+      "trap": "qc est toujours NULL : ne pas dire que les données sont validées"
+    },
+    {
+      "id": "viz_map_baffin_uvp",
+      "question": "Fais une carte des profils UVP en Baie de Baffin avec les contours de la zone, couleur par projet.",
+      "tools": "files",
+      "expect_files": ["*.png"],
+      "values_in": "answer_and_files",
+      "expect_sql": ["SELECT count(DISTINCT row_id) FROM explore.zone_membership WHERE row_kind = 'uvp_profile' AND zone_key = 'Baie de Baffin'",
+                     "SELECT count(DISTINCT row_id) FROM explore.zone_membership WHERE row_kind = 'uvp_profile' AND zone_key = 'Baie de Baffin' AND geometry_resolution = 'full'"],
+      "must_mention": ["(?i)coordonn|position|localis"],
+      "trap": "196 profils localisés et 47 positionnés par leur sample EcoTaxa (GreenEdge 2016) : en placer certains sans le dire, ou ignorer les 47 sans le dire"
+    },
+    {
+      "id": "viz_copepod_bars",
+      "question": "Fais un graphique de l'abondance des copépodes entre 0 et 200 m par projet en Baie de Baffin, tous objets vs validés.",
+      "tools": "files",
+      "expect_files": ["*.png"],
+      "values_in": "answer_and_files",
+      "expect_sql": "SELECT 14859",
+      "must_mention": ["(?i)valid"]
+    },
+    {
+      "id": "viz_ts_diagram_2024",
+      "question": "Fais un diagramme T-S des profils CTD de la Baie de Baffin en 2024.",
+      "tools": "files",
+      "expect_files": ["*.png"],
+      "values_in": "answer_and_files",
+      "expect_sql": "SELECT count(DISTINCT p.ctd_profile_id) FROM explore.ctd_profiles p JOIN explore.zone_membership m ON m.row_kind = 'ctd_profile' AND m.row_id = p.ctd_profile_id WHERE m.zone_key = 'Baie de Baffin' AND extract(year FROM p.sampled_at) = 2024"
+    },
+    {
+      "id": "viz_vertical_leg4",
+      "question": "Montre-moi en graphique le profil vertical d'abondance des copépodes pour am_leg4, de la surface à 500 m.",
+      "tools": "files",
+      "expect_files": ["*.png"],
+      "values_in": "answer_and_files",
+      "expect_sql": "SELECT count(DISTINCT uvp_profile_id) FROM explore.uvp_samples WHERE cruise_key = 'am_leg4'",
+      "must_mention": ["(?i)valid"],
+      "trap": "les objets prédits dominent : montrer aussi les validés"
+    }
+  ]
+}
