@@ -165,6 +165,10 @@ docker compose --env-file .env.warehouse -f docker-compose.warehouse.yml up -d -
 set -a; . ./.env.warehouse; set +a
 ```
 
+La seconde ligne donne aux commandes suivantes les mots de passe choisis en 3.3. Garder **ce même terminal**
+jusqu'à la fin de la partie 4. Dans un nouveau terminal, retaper d'abord, depuis `IDEA` :
+`. .venv/bin/activate` puis `set -a; . ./.env.warehouse; set +a`.
+
 Le premier lancement télécharge environ 1 Go et prépare la base (quelques minutes). Vérifier :
 
 ```bash
@@ -187,6 +191,7 @@ Compter 5 à 10 minutes. La dernière ligne doit être `PRÊT: le warehouse peut
 ## Partie 4 — Brancher l'assistant au warehouse (MCP)
 
 L'assistant ne reçoit jamais le mot de passe principal : on lui crée un compte personnel, en lecture seule.
+Dans le terminal de la partie 3 (sinon, voir la fin de 3.4).
 
 ```bash
 python scripts/warehouse_user.py create mon_nom --all-access --out-dir ~/neolab-comptes
@@ -299,5 +304,6 @@ soi-même (DBeaver, pgAdmin, R, Python) : `IDEA/docs/WAREHOUSE_SQL_GUIDE.md`.
 | `port is already allocated` | un autre logiciel utilise le port : changer `WAREHOUSE_POSTGRES_PORT` (55432) ou `WAREHOUSE_NAVIGATOR_PORT` (8090) dans `.env.warehouse`, puis relancer 3.4 |
 | `psql: command not found` ou version < 16 | réinstaller le client PostgreSQL (partie 1) ; macOS : `brew link --force libpq`, puis fermer et rouvrir le Terminal |
 | erreur de version ou de compression pendant la restauration | client PostgreSQL trop ancien : installer la version 16+, ou restaurer depuis le conteneur : `docker exec -i neolab-warehouse-db sh -c 'cat > /tmp/w.dump && pg_restore --clean --if-exists --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB" /tmp/w.dump; rm /tmp/w.dump' < ../neolab_warehouse_20261106_211004.dump`, puis `python scripts/deploy_warehouse_postgres.py --check` |
+| `WAREHOUSE_POSTGRES_PASSWORD est requis` | nouveau terminal : depuis `IDEA`, `. .venv/bin/activate` puis `set -a; . ./.env.warehouse; set +a`, et relancer la commande |
 | `check` ne finit pas par `PASS` | `IDEA/docs/WAREHOUSE_CONNECT.md`, section Dépannage |
 | tout recommencer | `docker compose --env-file .env.warehouse -f docker-compose.warehouse.yml down -v` (efface la base locale), puis reprendre à 3.4 |
