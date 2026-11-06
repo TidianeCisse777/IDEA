@@ -238,6 +238,34 @@ def summarize_result(message):
     return summary
 
 
+# Sent to the agent with the server's answer to `initialize` (MCP "instructions"): agents that
+# support it add this to their context from the first message, so a short question such as
+# "combien de copépodes ?" is read as a question about this warehouse, not about the world.
+SERVER_INSTRUCTIONS = (
+    "Ce serveur donne accès en lecture au warehouse NeoLab (Université Laval) : plancton et océan en Arctique "
+    "canadien (Baie de Baffin, détroit de Davis, mer du Labrador, baie d'Hudson...). Il contient les objets et "
+    "annotations EcoTaxa (taxons, statut validé/prédit, tailles), les profils et abondances UVP/EcoPart, les CTD "
+    "Amundsen (température, salinité, sigma-t, oxygène, nitrate, fluorescence, pH) et les zones maritimes. "
+    "Une question sur le plancton, les copépodes, l'UVP, EcoTaxa, les CTD, une campagne, une zone ou ces mesures "
+    "porte sur ces données, même courte : y répondre avec execute_sql, jamais de mémoire ni par une recherche web. "
+    "Lire d'abord warehouse_context(topic=overview). Si la question est floue (projet, taxon, profondeur, année, "
+    "objets validés ou non), dire le choix retenu ou demander une précision, et donner les requêtes exécutées."
+)
+
+
+def with_instructions(line, initialize_id):
+    """Add SERVER_INSTRUCTIONS to DbHub's answer to the agent's initialize; any other line unchanged."""
+    try:
+        message = json.loads(line)
+    except ValueError:
+        return line
+    if not isinstance(message, dict) or message.get('id') != initialize_id or not isinstance(message.get('result'), dict):
+        return line
+    own = message['result'].get('instructions')
+    message['result']['instructions'] = SERVER_INSTRUCTIONS + ('\n\n' + own if own else '')
+    return (json.dumps(message, ensure_ascii=False) + '\n').encode('utf-8')
+
+
 def relay(command, values, trace_file=None):
     """Pass MCP messages between the agent (stdin/stdout) and DbHub, line by line
     (MCP stdio messages are newline-delimited JSON). DbHub starts once the agent's
@@ -250,6 +278,10 @@ def relay(command, values, trace_file=None):
     if not first:
         return 0
     application = agent_application_name(first)
+    try:
+        initialize_id = json.loads(first).get('id')
+    except (ValueError, AttributeError):
+        initialize_id = None
     child = subprocess.Popen(command, env=server_environment(values, application),
                              stdin=subprocess.PIPE, stdout=subprocess.PIPE)
     pending, lock = {}, threading.Lock()
@@ -295,6 +327,11 @@ def relay(command, values, trace_file=None):
 
     threading.Thread(target=to_server, daemon=True).start()
     for line in iter(child.stdout.readline, b''):
+        if initialize_id is not None:
+            updated = with_instructions(line, initialize_id)
+            if updated is not line:
+                initialize_id = None  # done: only the answer to initialize carries the instructions
+            line = updated
         sys.stdout.buffer.write(line)
         sys.stdout.buffer.flush()
         if trace_file is None:

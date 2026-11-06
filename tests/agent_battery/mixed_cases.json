@@ -1,0 +1,97 @@
+{
+  "description": "Questions ambiguës (l'agent doit demander une précision ou dire son choix), mélanges de taxons et de stades, croisements de variables (CTD et UVP), et conversations en plusieurs tours. Valeurs attendues recalculées en base à chaque lancement.",
+  "cases": [
+    {
+      "id": "amb_how_many_copepods",
+      "question": "Combien de copépodes y a-t-il ?",
+      "expect_sql": "SELECT 0",
+      "must_mention": ["(?i)valid", "(?i)\\?|préci|hypoth|suppos|j'ai (pris|retenu|considéré|compté)|par défaut|interpr|selon (ce que|la définition)"],
+      "trap": "question floue : projet, taxons, validés ou non, objets ou abondance ; l'agent doit dire ses choix ou demander"
+    },
+    {
+      "id": "amb_temperature_baffin",
+      "question": "Quelle est la température en Baie de Baffin ?",
+      "expect_sql": "SELECT 0",
+      "must_mention": ["(?i)profondeur|surface|\\d+\\s?m\\b", "(?i)20(16|21|23|24)"],
+      "trap": "la température dépend de la profondeur et de l'année : une valeur unique sans préciser l'une et l'autre est trompeuse"
+    },
+    {
+      "id": "amb_are_2024_data_good",
+      "question": "Les données de 2024 sont-elles bonnes ?",
+      "expect_sql": "SELECT 0",
+      "must_mention": ["(?i)valid|prédi", "(?i)contrôle qualité|qc|\\?|entend|critère"],
+      "trap": "« bonnes » n'est pas défini : part d'objets validés, absence de contrôle qualité CTD, couverture"
+    },
+    {
+      "id": "taxa_amundsen2023_three_genera",
+      "question": "Compare le nombre d'objets validés de Calanus, Metridia et Oithona dans le projet Amundsen 2023.",
+      "expect_sql": "SELECT count(*) FROM explore.ecotaxa_objects WHERE ecotaxa_project_id = 10101 AND annotation_status = 'validated' AND (taxon_name ILIKE '%calanus%' OR taxon_name ILIKE '%metridia%') GROUP BY (taxon_name ILIKE '%calanus%') ORDER BY 1 DESC",
+      "must_mention": ["(?i)oithona[^.\\n]{0,120}(aucun|absent|0|pas |n'apparaît|inexistant)|(aucun|pas d|absent)[^.\\n]{0,60}oithona"],
+      "trap": "Oithona n'existe dans aucun projet : le dire, ne pas l'inventer"
+    },
+    {
+      "id": "taxa_loki_metridia_longa_stages",
+      "question": "Dans LOKI ArcticNet 2015, combien d'objets validés de Metridia longa, tous stades et vues confondus ?",
+      "expect_sql": "SELECT count(*) FROM explore.ecotaxa_objects WHERE ecotaxa_project_id = 14622 AND annotation_status = 'validated' AND taxon_name ILIKE '%Metridia longa%'",
+      "trap": "Metridia longa est réparti en catégories par stade et par vue (female+lateral, cvstage+lateral...) : toutes les additionner"
+    },
+    {
+      "id": "taxa_loki_stages_present",
+      "question": "Quels copépodes sont identifiés au stade de développement dans LOKI ArcticNet 2015 ?",
+      "expect_sql": "SELECT 0",
+      "must_mention": ["(?i)Metridia longa", "(?i)Calanus hyperboreus", "(?i)CV|stade|femelle|female"]
+    },
+    {
+      "id": "var_leg4_ctd_for_uvp",
+      "question": "Pour am_leg4, peut-on associer des mesures CTD aux profils UVP ?",
+      "expect_sql": ["SELECT count(DISTINCT s.ecotaxa_sample_id) FROM explore.ecotaxa_ctd_profile s JOIN explore.ecotaxa_samples e USING (ecotaxa_sample_id) WHERE e.ecotaxa_project_id = 17498 AND s.match_status = 'accepted'",
+                     "SELECT count(DISTINCT s.ctd_profile_id) FROM explore.ecotaxa_ctd_profile s JOIN explore.ecotaxa_samples e USING (ecotaxa_sample_id) WHERE e.ecotaxa_project_id = 17498 AND s.match_status = 'accepted'"],
+      "must_mention": ["(?i)ecotaxa"],
+      "trap": "aucun lien direct profil UVP–profil CTD (uvp_ctd est vide) : le chemin passe par les samples EcoTaxa liés aux CTD"
+    },
+    {
+      "id": "var_fluorescence_and_copepods_2024",
+      "question": "En Baie de Baffin en 2024, quelle est la fluorescence moyenne entre 0 et 50 m, et l'abondance des copépodes validés sur la même tranche ?",
+      "expect_sql": "SELECT round(avg(c.value)::numeric, 2) FROM explore.ctd_measurements c JOIN explore.ctd_profiles p USING (ctd_profile_id) JOIN explore.zone_membership m ON m.row_kind = 'ctd_profile' AND m.row_id = p.ctd_profile_id WHERE m.zone_key = 'Baie de Baffin' AND extract(year FROM p.sampled_at) = 2024 AND c.variable_key = 'FLOR' AND c.depth_m BETWEEN 0 AND 50",
+      "tolerance": 0.1,
+      "must_mention": ["(?i)valid", "(?i)µg|ug/l|mg/m"]
+    },
+    {
+      "id": "conv_uvp2024_leg3",
+      "turns": [
+        {"question": "Quels projets UVP avons-nous en 2024 ?",
+         "expect_sql": "SELECT ecotaxa_project_id FROM explore.uvp_projects WHERE start_at >= '2024-01-01' AND start_at < '2025-01-01' AND ecotaxa_project_id IS NOT NULL ORDER BY 1"},
+        {"question": "Et pour le leg 3, combien d'objets sont validés ?",
+         "expect_sql": "SELECT n_validated FROM explore.ecotaxa_projects WHERE ecotaxa_project_id = 14859"},
+        {"question": "Donne les 5 taxons validés les plus fréquents de ce projet.",
+         "expect_sql": "SELECT count(*) FROM explore.ecotaxa_objects WHERE ecotaxa_project_id = 14859 AND annotation_status = 'validated' GROUP BY taxon_name ORDER BY 1 DESC LIMIT 5"}
+      ],
+      "trap": "« le leg 3 », « ce projet » renvoient aux tours précédents"
+    },
+    {
+      "id": "conv_ctd_salinity_2016_vs_2024",
+      "turns": [
+        {"question": "Combien de profils CTD avons-nous en Baie de Baffin en 2016 ?",
+         "expect_sql": "SELECT count(DISTINCT p.ctd_profile_id) FROM explore.ctd_profiles p JOIN explore.zone_membership m ON m.row_kind = 'ctd_profile' AND m.row_id = p.ctd_profile_id WHERE m.zone_key = 'Baie de Baffin' AND extract(year FROM p.sampled_at) = 2016"},
+        {"question": "Et la salinité moyenne entre 190 et 210 m pour ces profils ?",
+         "expect_sql": "SELECT round(avg(c.value)::numeric, 2) FROM explore.ctd_measurements c JOIN explore.ctd_profiles p USING (ctd_profile_id) JOIN explore.zone_membership m ON m.row_kind = 'ctd_profile' AND m.row_id = p.ctd_profile_id WHERE m.zone_key = 'Baie de Baffin' AND extract(year FROM p.sampled_at) = 2016 AND c.variable_key = 'PSAL' AND c.depth_m BETWEEN 190 AND 210",
+         "tolerance": 0.03},
+        {"question": "Compare avec 2024.",
+         "expect_sql": "SELECT round(avg(c.value)::numeric, 2) FROM explore.ctd_measurements c JOIN explore.ctd_profiles p USING (ctd_profile_id) JOIN explore.zone_membership m ON m.row_kind = 'ctd_profile' AND m.row_id = p.ctd_profile_id WHERE m.zone_key = 'Baie de Baffin' AND extract(year FROM p.sampled_at) = 2024 AND c.variable_key = 'PSAL' AND c.depth_m BETWEEN 190 AND 210",
+         "tolerance": 0.03}
+      ]
+    },
+    {
+      "id": "conv_clarify_copepods",
+      "turns": [
+        {"question": "Combien de copépodes ?",
+         "expect_sql": "SELECT 0",
+         "must_mention": ["(?i)\\?|préci|hypoth|suppos|j'ai (pris|retenu|considéré|compté)|par défaut|interpr"]},
+        {"question": "Les objets validés de la catégorie Copepoda<Multicrustacea, tous projets confondus, sans compter deux fois les doublons GreenEdge.",
+         "expect_sql": ["SELECT count(*) FROM explore.ecotaxa_objects WHERE annotation_status = 'validated' AND taxon_name = 'Copepoda<Multicrustacea' AND ecotaxa_project_id <> 149",
+                        "SELECT count(*) FROM explore.ecotaxa_objects WHERE annotation_status = 'validated' AND taxon_name = 'Copepoda<Multicrustacea' AND ecotaxa_project_id NOT IN (20880, 20890)"]}
+      ],
+      "trap": "la précision arrive au second tour ; GreenEdge : 149 contient 20880 + 20890 (plus 5 samples propres), n'en garder qu'un"
+    }
+  ]
+}

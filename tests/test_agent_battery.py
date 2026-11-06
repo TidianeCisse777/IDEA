@@ -29,6 +29,21 @@ class MinusSignTests(unittest.TestCase):
         self.assertIn(-0.2, ab.numbers_in('environ \u22120,2 \u00b0C'))
 
 
+class ConversationTests(unittest.TestCase):
+    def test_single_question_is_a_one_turn_conversation(self):
+        turns = ab.turns_of({'id': 'x', 'question': 'Q ?', 'expect_sql': 'SELECT 1', 'tools': 'files'})
+        self.assertEqual(turns, [{'question': 'Q ?', 'expect_sql': 'SELECT 1'}])
+
+    def test_a_conversation_passes_only_if_every_turn_does(self):
+        ok = {'passed': True, 'turn': 1, 'missing_values': []}
+        miss = {'passed': False, 'turn': 2, 'missing_values': [69574.0]}
+        merged = ab.merge_grades([ok, miss], sql_queries=3)
+        self.assertFalse(merged['passed'])
+        self.assertEqual(merged['missing_values'], ['tour 2 : 69\u202f574'])
+        self.assertTrue(ab.merge_grades([ok], sql_queries=3)['passed'])
+        self.assertFalse(ab.merge_grades([ok], sql_queries=0)['passed'])
+
+
 class ReportFormatTests(unittest.TestCase):
     def test_values_shown_as_people_write_them(self):
         self.assertEqual(ab.show(1687393.0), '1\u202f687\u202f393')

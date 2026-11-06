@@ -80,9 +80,10 @@ Toutes les vues de la section suivante sont dans `explore` ; `dataset_catalog` e
    versions (`annotation_policy` commence par `all_loaded_objects` ou `validated_only`) : toujours en
    choisir une. Exemple réel : copépodes 0–200 m en Baie de Baffin, am_leg3 2024, 750,9 ind/m³ avec tous
    les objets, 2,1 avec les seuls validés.
-2. **Projets en double.** 149 porte les mêmes images que 20880 + 20890 (mêmes profils UVP, mêmes comptes
-   par profil, sous d'autres identifiants d'objet) : ne pas additionner ces projets entre eux. 13224 est un
-   autre projet issu de GreenEdge 2016 ; son lien avec 149 n'est pas établi.
+2. **Projets en double.** 149 contient les 199 samples de 20880 + 20890 (mêmes comptes, sous d'autres
+   identifiants d'objet) plus 5 samples qui lui sont propres : ne pas additionner ces projets, 149 seul donne
+   GreenEdge 2016 sans doublon. 13224 est un autre projet issu de GreenEdge 2016 ; son lien avec 149 n'est pas
+   établi.
 3. **Zones.** `marine_zone_key` donne une seule zone par point (zone NeoLab prioritaire sur une écorégion
    MEOW, `AMBIGUOUS` si plusieurs zones NeoLab se chevauchent). Pour tout ce qui est dans une zone,
    joindre `zone_membership`.

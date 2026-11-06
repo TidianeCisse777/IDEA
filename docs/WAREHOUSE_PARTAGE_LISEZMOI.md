@@ -265,7 +265,8 @@ soi-même (DBeaver, pgAdmin, R, Python) : `IDEA/docs/WAREHOUSE_SQL_GUIDE.md`.
 
 - **Validé ou prédit** : une abondance « tous objets » inclut les prédictions automatiques. Exemple réel :
   copépodes 0–200 m en Baie de Baffin, am_leg3 2024 : 750,9 ind/m³ tous objets, 2,1 avec les seuls validés.
-- **Projets en double** : 149 porte les mêmes images que 20880 + 20890 ; ne pas les additionner.
+- **Projets en double** : 149 contient les 199 samples de 20880 + 20890 (mêmes comptes) plus 5 samples
+  propres ; ne pas additionner ces projets : 149 seul donne GreenEdge 2016 sans doublon.
 - **Non chargé** : FILET. **Tailles LOKI** : en pixels seulement (pas de calibration).
 - **Tailles UVP6** : corrigées dans cette version (EcoTaxa donne le pixel UVP6 en µm, lu par erreur en mm
   dans les versions précédentes, d'où des tailles 1 000 fois trop grandes). Ne pas réutiliser un résultat de

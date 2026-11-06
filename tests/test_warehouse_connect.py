@@ -395,3 +395,28 @@ class LiveConnectionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ServerInstructionsTests(unittest.TestCase):
+    """The relay adds NeoLab instructions to DbHub's answer to initialize (MCP "instructions"),
+    so an agent reads a short question as a question about the warehouse (seen live: "Combien de
+    copépodes y a-t-il ?" answered about the world's oceans, without one query)."""
+
+    def setUp(self):
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        import warehouse_connect
+        self.module = warehouse_connect
+
+    def test_initialize_answer_gets_the_instructions(self):
+        line = json.dumps({'jsonrpc': '2.0', 'id': 0, 'result': {'protocolVersion': '2025-03-26',
+                           'serverInfo': {'name': 'dbhub'}, 'instructions': 'DbHub.'}}).encode() + b'\n'
+        updated = self.module.with_instructions(line, 0)
+        result = json.loads(updated)['result']
+        self.assertTrue(result['instructions'].startswith('Ce serveur donne accès en lecture au warehouse NeoLab'))
+        self.assertIn('DbHub.', result['instructions'])
+        self.assertIn('jamais de mémoire', result['instructions'])
+
+    def test_other_lines_pass_unchanged(self):
+        for line in (b'{"jsonrpc": "2.0", "id": 5, "result": {}}\n', b'not json\n',
+                     b'{"jsonrpc": "2.0", "method": "notifications/initialized"}\n'):
+            self.assertIs(self.module.with_instructions(line, 0), line)

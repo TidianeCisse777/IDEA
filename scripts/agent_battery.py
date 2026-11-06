@@ -127,36 +127,64 @@ def agent_env() -> dict:
     return {k: v for k, v in os.environ.items() if not k.startswith(SECRET_PREFIXES)}
 
 
-def run_case(case: dict, out: Path, mcp_config: Path, model: str | None, timeout: int) -> dict:
-    work = out / case['id']
-    work.mkdir(parents=True, exist_ok=True)
-    command = ['claude', '-p', case['question'], '--mcp-config', str(mcp_config), '--strict-mcp-config',
-               '--allowedTools', ','.join(MCP_TOOLS + (FILE_TOOLS if case.get('tools') == 'files' else ())),
-               '--output-format', 'stream-json', '--verbose']
-    if model:
-        command += ['--model', model]
-    started = time.time()
-    with open(out / f"{case['id']}.jsonl", 'w') as log, open(out / f"{case['id']}.err", 'w') as err:
-        try:
-            code = subprocess.run(command, cwd=work, env=agent_env(), stdin=subprocess.DEVNULL,
-                                  stdout=log, stderr=err, timeout=timeout).returncode
-        except subprocess.TimeoutExpired:
-            code = 'timeout'
-    result = {'id': case['id'], 'exit': code, 'seconds': round(time.time() - started), 'answer': '',
-              'turns': None, 'cost_usd': None, 'sql_queries': 0}
-    for line in (out / f"{case['id']}.jsonl").read_text().splitlines():
+TURN_FIELDS = ('question', 'expect_sql', 'must_mention', 'must_not_sql', 'tolerance', 'values_in', 'expect_files')
+
+
+def turns_of(case: dict) -> list[dict]:
+    """A case is one question, or a conversation: "turns", each with its own question and checks."""
+    if 'turns' in case:
+        return case['turns']
+    return [{k: case[k] for k in TURN_FIELDS if k in case}]
+
+
+def read_stream(path: Path) -> dict:
+    run = {'answer': '', 'turns': None, 'cost_usd': None, 'sql_queries': 0, 'session_id': None}
+    for line in path.read_text().splitlines():
         try:
             event = json.loads(line)
         except json.JSONDecodeError:
             continue
+        run['session_id'] = event.get('session_id') or run['session_id']
         if event.get('type') == 'assistant':
             for item in event['message'].get('content', []):
                 if item.get('type') == 'tool_use' and item['name'].endswith('execute_sql'):
-                    result['sql_queries'] += 1
+                    run['sql_queries'] += 1
         if event.get('type') == 'result':
-            result.update(answer=event.get('result') or '', turns=event.get('num_turns'),
-                          cost_usd=event.get('total_cost_usd'))
-    return result
+            run.update(answer=event.get('result') or '', turns=event.get('num_turns'), cost_usd=event.get('total_cost_usd'))
+    return run
+
+
+def run_case(case: dict, out: Path, mcp_config: Path, model: str | None, timeout: int) -> dict:
+    """Ask each turn in the same agent session (--resume), in the case's own empty folder."""
+    work = out / case['id']
+    work.mkdir(parents=True, exist_ok=True)
+    tools = MCP_TOOLS + (FILE_TOOLS if case.get('tools') == 'files' else ())
+    started, session, conversation, code = time.time(), None, [], 0
+    turns = turns_of(case)
+    for number, turn in enumerate(turns, 1):
+        command = ['claude', '-p', turn['question'], '--mcp-config', str(mcp_config), '--strict-mcp-config',
+                   '--allowedTools', ','.join(tools), '--output-format', 'stream-json', '--verbose']
+        if session:
+            command += ['--resume', session]
+        if model:
+            command += ['--model', model]
+        stem = case['id'] if len(turns) == 1 else f"{case['id']}.t{number}"
+        with open(out / f'{stem}.jsonl', 'w') as log, open(out / f'{stem}.err', 'w') as err:
+            try:
+                code = subprocess.run(command, cwd=work, env=agent_env(), stdin=subprocess.DEVNULL,
+                                      stdout=log, stderr=err, timeout=timeout).returncode
+            except subprocess.TimeoutExpired:
+                code = 'timeout'
+        run = read_stream(out / f'{stem}.jsonl')
+        conversation.append(dict(run, question=turn['question']))
+        session = run['session_id']
+        if code != 0 or not session:
+            break  # a failed turn ends the conversation; the remaining turns count as unanswered
+    return {'id': case['id'], 'exit': code, 'seconds': round(time.time() - started),
+            'answer': conversation[-1]['answer'] if conversation else '',
+            'turns': sum(t['turns'] or 0 for t in conversation),
+            'cost_usd': sum(t['cost_usd'] or 0 for t in conversation),
+            'sql_queries': sum(t['sql_queries'] for t in conversation), 'conversation': conversation}
 
 
 def temporary_account(tmp: Path) -> tuple[str, Path, Path]:
@@ -176,7 +204,20 @@ def temporary_account(tmp: Path) -> tuple[str, Path, Path]:
     return name, credentials, mcp
 
 
-def show(value: float) -> str:
+def merge_grades(per_turn: list[dict], sql_queries: int) -> dict:
+    """One verdict per case; a conversation's misses are prefixed with their turn."""
+    label = (lambda g, item: f"tour {g['turn']} : {item}") if len(per_turn) > 1 else (lambda g, item: item)
+    merged = {'passed': all(g['passed'] for g in per_turn) and sql_queries > 0,
+              'answered_without_querying': sql_queries == 0, 'per_turn': per_turn,
+              'files': per_turn[-1].get('files', [])}
+    for key in ('missing_values', 'missing_mentions', 'forbidden_values_found', 'missing_files'):
+        merged[key] = [label(g, show(item)) if len(per_turn) > 1 else item for g in per_turn for item in g.get(key, [])]
+    return merged
+
+
+def show(value) -> str:
+    if isinstance(value, str):
+        return value
     return f'{int(value):,}'.replace(',', '\u202f') if float(value).is_integer() else f'{value:g}'.replace('.', ',')
 
 
@@ -235,8 +276,8 @@ def main(argv=None) -> int:
     with owner_connection() as conn:
         # expect_sql may list alternatives (several right answers, e.g. a map with or without the profiles
         # placed from their EcoTaxa sample): the answer passes if it carries all values of one of them.
-        expected = {c['id']: ([values(conn, q) for q in (c['expect_sql'] if isinstance(c['expect_sql'], list) else [c['expect_sql']])],
-                              values(conn, c.get('must_not_sql'))) for c in cases}
+        expected = {c['id']: [([values(conn, q) for q in (t['expect_sql'] if isinstance(t['expect_sql'], list) else [t.get('expect_sql')])],
+                               values(conn, t.get('must_not_sql'))) for t in turns_of(c)] for c in cases}
     tmp = Path(tempfile.mkdtemp(prefix='agent_battery_'))
     os.chmod(tmp, 0o700)
     name = None
@@ -250,12 +291,15 @@ def main(argv=None) -> int:
                            capture_output=True, text=True)
         shutil.rmtree(tmp, ignore_errors=True)
     for case, result in zip(cases, results):
-        result['question'] = case['question']
-        alternatives, forbidden = expected[case['id']]
-        grades = [grade(case, result['answer'], values_, forbidden, out / case['id'], result['sql_queries'])
-                  for values_ in alternatives]
-        best = next((i for i, g in enumerate(grades) if g['passed']), 0)
-        result['expected'], result['grade'] = alternatives[best], grades[best]
+        result['question'] = ' / '.join(t['question'] for t in turns_of(case))
+        result['expected'], per_turn = [], []
+        for number, (turn, (alternatives, forbidden)) in enumerate(zip(turns_of(case), expected[case['id']]), 1):
+            answered = result['conversation'][number - 1] if number <= len(result['conversation']) else {'answer': ''}
+            grades = [grade(turn, answered['answer'], values_, forbidden, out / case['id']) for values_ in alternatives]
+            best = next((i for i, g in enumerate(grades) if g['passed']), 0)
+            result['expected'] += alternatives[best]
+            per_turn.append(dict(grades[best], turn=number))
+        result['grade'] = merge_grades(per_turn, result['sql_queries'])
     print(report(out, results))
     print(f'Rapport : {out / "report.md"}')
     return 0 if all(r['grade']['passed'] for r in results) else 1

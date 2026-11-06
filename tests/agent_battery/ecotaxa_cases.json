@@ -43,7 +43,7 @@
       "question": "Combien d'objets au total pour GreenEdge 2016 ?",
       "expect_sql": "SELECT n_objects FROM explore.ecotaxa_projects WHERE ecotaxa_project_id = 149",
       "must_not_sql": "SELECT sum(n_objects) FROM explore.ecotaxa_projects WHERE ecotaxa_project_id IN (149, 20880, 20890)",
-      "trap": "149 porte les mêmes images que 20880 + 20890 : ne pas additionner"
+      "trap": "149 contient les 199 samples de 20880 + 20890 plus 5 samples propres : ne pas additionner"
     },
     {
       "id": "loki_size_share",
