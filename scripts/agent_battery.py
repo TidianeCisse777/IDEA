@@ -16,7 +16,7 @@ Note d'un cas : chaque nombre attendu (non nul) doit apparaître dans la répons
 pas apparaître. Connexion propriétaire : WAREHOUSE_POSTGRES_* (environnement ou .env.warehouse), utilisée
 seulement pour les attendus et le compte temporaire. Rapport : <out>/report.md et report.json.
 `expect_sql` peut être une liste de requêtes : plusieurs bonnes réponses possibles, une seule doit être satisfaite.
-Code de sortie : 0 tout réussi, 1 au moins un échec, 2 erreur d'exécution.
+Code de sortie : 0 tout réussi, 1 au moins un échec, 2 cas non exécutés (limite d'usage de l'agent) ou erreur d'exécution.
 Coût : chaque question est une session d'agent facturée (≈ 0,10 à 0,25 $ au tarif API).
 """
 from __future__ import annotations
@@ -130,6 +130,10 @@ def agent_env() -> dict:
 TURN_FIELDS = ('question', 'expect_sql', 'must_mention', 'must_not_sql', 'tolerance', 'values_in', 'expect_files')
 
 
+# The agent's own usage limit is not an agent error: such a case is reported as not run.
+USAGE_LIMIT = re.compile(r"(?i)hit your .{0,40}limit|usage limit|rate limit")
+
+
 def turns_of(case: dict) -> list[dict]:
     """A case is one question, or a conversation: "turns", each with its own question and checks."""
     if 'turns' in case:
@@ -154,10 +158,14 @@ def read_stream(path: Path) -> dict:
     return run
 
 
-def run_case(case: dict, out: Path, mcp_config: Path, model: str | None, timeout: int) -> dict:
-    """Ask each turn in the same agent session (--resume), in the case's own empty folder."""
+def run_case(case: dict, out: Path, mcp_config: Path, model: str | None, timeout: int, workspace: bool = False) -> dict:
+    """Ask each turn in the same agent session (--resume), in the case's own empty folder (or, with
+    workspace, a NeoLab working folder: the instructions files of warehouse_connect.py workspace)."""
     work = out / case['id']
     work.mkdir(parents=True, exist_ok=True)
+    if workspace:
+        subprocess.run([sys.executable, str(ROOT / 'scripts/warehouse_connect.py'), 'workspace', str(work)],
+                       check=True, capture_output=True, text=True)
     tools = MCP_TOOLS + (FILE_TOOLS if case.get('tools') == 'files' else ())
     started, session, conversation, code = time.time(), None, [], 0
     turns = turns_of(case)
@@ -180,7 +188,9 @@ def run_case(case: dict, out: Path, mcp_config: Path, model: str | None, timeout
         session = run['session_id']
         if code != 0 or not session:
             break  # a failed turn ends the conversation; the remaining turns count as unanswered
-    return {'id': case['id'], 'exit': code, 'seconds': round(time.time() - started),
+    # e.g. "You've hit your 5-hour limit · resets 6:20am (UTC)": a short answer naming the limit.
+    limited = any(len(t['answer'] or '') < 200 and USAGE_LIMIT.search(t['answer'] or '') for t in conversation)
+    return {'id': case['id'], 'exit': code, 'seconds': round(time.time() - started), 'not_run': bool(limited),
             'answer': conversation[-1]['answer'] if conversation else '',
             'turns': sum(t['turns'] or 0 for t in conversation),
             'cost_usd': sum(t['cost_usd'] or 0 for t in conversation),
@@ -223,9 +233,12 @@ def show(value) -> str:
 
 def report(out: Path, results: list[dict]) -> str:
     passed = sum(r['grade']['passed'] for r in results)
+    not_run = sum(bool(r.get('not_run')) for r in results)
     cost = sum(r['cost_usd'] or 0 for r in results)
     lines = [f'# Batterie agent — {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC', '',
-             f'**{passed}/{len(results)} réussis** · {sum(r["turns"] or 0 for r in results)} tours · '
+             f'**{passed}/{len(results) - not_run} réussis**'
+             + (f' · **{not_run} non exécuté(s) : limite d\'usage de l\'agent atteinte, à relancer**' if not_run else '')
+             + f' · {sum(r["turns"] or 0 for r in results)} tours · '
              f'{sum(r["sql_queries"] for r in results)} requêtes SQL · coût estimé {cost:.2f} $ (tarif API)', '',
              '| Cas | Résultat | Attendu | Manque | Durée | Tours |', '|---|---|---|---|---|---|']
     for r in results:
@@ -236,7 +249,10 @@ def report(out: Path, results: list[dict]) -> str:
             ('fichier absent : ' + ', '.join(g['missing_files'])) if g.get('missing_files') else '',
             'répondu sans interroger la base' if g.get('answered_without_querying') else '',
             ('interdit trouvé : ' + ', '.join(show(v) for v in g['forbidden_values_found'])) if g['forbidden_values_found'] else '']))
-        lines.append(f"| {r['id']} | {'✓' if g['passed'] else '✗'} | {', '.join(show(v) for v in r['expected'])} | "
+        verdict = 'non exécuté (limite d\'usage)' if r.get('not_run') else ('✓' if g['passed'] else '✗')
+        if r.get('not_run'):
+            manque = '—'
+        lines.append(f"| {r['id']} | {verdict} | {', '.join(show(v) for v in r['expected'])} | "
                      f"{manque or '—'} | {r['seconds']} s | {r['turns']} |")
     figures = [(r['id'], [f for f in r['grade'].get('files', []) if f.lower().endswith(('.png', '.svg', '.html', '.pdf'))])
                for r in results]
@@ -259,6 +275,9 @@ def main(argv=None) -> int:
                     '(défaut : ~/neolab_agent_battery/<date>)')
     ap.add_argument('--model', help='modèle de l\'agent (défaut : celui de Claude Code)')
     ap.add_argument('--timeout', type=int, default=1200, help='secondes par question')
+    ap.add_argument('--workspace', action='store_true',
+                    help='poser les questions dans un dossier de travail NeoLab (warehouse_connect.py workspace) '
+                    'plutôt que dans un dossier vide')
     args = ap.parse_args(argv)
     if not shutil.which('claude'):
         print('Claude Code (commande claude) est introuvable.', file=sys.stderr)
@@ -284,7 +303,7 @@ def main(argv=None) -> int:
     try:
         name, _, mcp = temporary_account(tmp)
         with ThreadPoolExecutor(max_workers=max(1, args.parallel)) as pool:
-            results = list(pool.map(lambda c: run_case(c, out, mcp, args.model, args.timeout), cases))
+            results = list(pool.map(lambda c: run_case(c, out, mcp, args.model, args.timeout, args.workspace), cases))
     finally:
         if name:
             subprocess.run([sys.executable, str(ROOT / 'scripts/warehouse_user.py'), 'offboard', name],
@@ -300,9 +319,14 @@ def main(argv=None) -> int:
             result['expected'] += alternatives[best]
             per_turn.append(dict(grades[best], turn=number))
         result['grade'] = merge_grades(per_turn, result['sql_queries'])
+        result['grade']['not_run'] = result['not_run']
+        if result['not_run']:
+            result['grade']['passed'] = False
     print(report(out, results))
     print(f'Rapport : {out / "report.md"}')
-    return 0 if all(r['grade']['passed'] for r in results) else 1
+    if any(not r['grade']['passed'] and not r.get('not_run') for r in results):
+        return 1
+    return 2 if any(r.get('not_run') for r in results) else 0
 
 
 if __name__ == '__main__':

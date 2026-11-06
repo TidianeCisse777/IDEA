@@ -600,6 +600,35 @@ def check(_args):
     return 0 if passed else 1
 
 
+WORKSPACE_FILES = ('CLAUDE.md', 'AGENTS.md', 'GEMINI.md', '.github/copilot-instructions.md')
+
+
+def workspace_text():
+    return ('# Dossier de travail NeoLab\n\n'
+            'Ce dossier sert à analyser les données du warehouse NeoLab avec un assistant IA (Claude Code lit '
+            'CLAUDE.md, Codex AGENTS.md, Gemini CLI GEMINI.md, GitHub Copilot .github/copilot-instructions.md).\n\n'
+            + SERVER_INSTRUCTIONS + '\n\n'
+            'Les fichiers produits (graphiques, cartes, CSV, scripts) vont dans ce dossier, avec leurs chemins relatifs. '
+            'Ce fichier ne contient aucun mot de passe : la connexion passe par le serveur MCP neolab-warehouse.\n')
+
+
+def workspace(args):
+    """Create a NeoLab working folder: one instructions file per agent, so that even a short question
+    ("combien de copépodes ?") is read as a question about the warehouse. Existing files are kept."""
+    folder = Path(args.folder).expanduser()
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in WORKSPACE_FILES:
+        target = folder / name
+        if target.exists() and not args.force:
+            print(f'gardé (existe déjà) : {target}')
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(workspace_text(), encoding='utf-8')
+        print(f'écrit : {target}')
+    print(f'Ouvrir l\'assistant dans ce dossier : cd {folder}')
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest='command', required=True)
@@ -625,6 +654,10 @@ def main(argv=None):
     p = sub.add_parser('config', help='afficher la commande ou le fragment de configuration du client')
     p.add_argument('client', choices=('codex', 'claude-code', 'claude-desktop', 'gemini', 'opencode', 'cursor', 'vscode', 'json'))
     p.set_defaults(handler=config)
+    p = sub.add_parser('workspace', help='créer un dossier de travail NeoLab (instructions lues par Claude Code, Codex, Gemini, Copilot)')
+    p.add_argument('folder', help='dossier à créer ou compléter, ex. ~/neolab-travail')
+    p.add_argument('--force', action='store_true', help='réécrire les fichiers d\'instructions existants')
+    p.set_defaults(handler=workspace)
     args = parser.parse_args(argv)
     if args.command == 'init' and not args.from_file and not (args.host and args.user):
         parser.error('init: --from-file, ou --host et --user')

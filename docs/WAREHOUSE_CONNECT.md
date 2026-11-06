@@ -153,6 +153,19 @@ variable d'environnement nécessaire. `config json` affiche la forme `mcpServers
 
 ## Première question à poser
 
+Travaillez de préférence dans un **dossier de travail NeoLab** :
+
+```bash
+python scripts/warehouse_connect.py workspace ~/neolab-travail     # CLAUDE.md, AGENTS.md, GEMINI.md, Copilot
+cd ~/neolab-travail
+```
+
+Chaque agent y lit au démarrage un court fichier d'instructions (aucun mot de passe) qui lui dit que les
+questions portent sur ce warehouse. Le serveur envoie aussi ces instructions à la connexion, mais mesuré le
+6 novembre 2026, sur des questions très courtes (« combien de copépodes ? », « quelle température en Baie de
+Baffin ? »), un agent ouvert dans un dossier vide a répondu de mémoire 4 fois sur 4, et dans un dossier de
+travail il a interrogé la base 4 fois sur 4.
+
 Une fois l'agent redémarré, demandez-lui :
 
 > « Lis le contexte du warehouse NeoLab, puis dis-moi ce que mon compte a le droit de voir. »

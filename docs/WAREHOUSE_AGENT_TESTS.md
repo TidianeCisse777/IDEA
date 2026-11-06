@@ -29,7 +29,12 @@ Prérequis : le warehouse déployé et chargé, Claude Code connecté (`claude`)
 Deux batteries : `tests/agent_battery/ecotaxa_cases.json` (projets, objets, annotation, doublons, tailles) et
 `tests/agent_battery/ctd_visual_cases.json` (CTD : zones, salinité, température, sigma-t, pression, contrôle
 qualité; et quatre graphiques ou cartes, avec `"tools": "files"` pour que l'agent écrive et exécute son code).
+Une troisième, `tests/agent_battery/mixed_cases.json`, pose des questions ambiguës, mélange taxons et stades,
+croise CTD et UVP, et mène trois conversations en plusieurs tours (`"turns"`, chaque tour reprend la session).
 Toute réponse sans requête SQL échoue (réponse de mémoire). Les dossiers de travail sont hors du dépôt.
+`--workspace` pose les questions dans un dossier de travail NeoLab (`warehouse_connect.py workspace`) au lieu
+d'un dossier vide : c'est l'usage recommandé, et la différence se voit sur les questions courtes. Une limite
+d'usage de l'agent atteinte pendant la batterie est signalée « non exécuté », pas comme un échec.
 
 La notation lit des nombres : elle vérifie les chiffres et les pièges écrits dans les cas, pas toute la
 qualité d'une réponse. Relire les réponses d'un cas qui échoue, et ajouter un cas pour chaque erreur trouvée.

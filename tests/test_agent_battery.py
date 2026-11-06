@@ -44,6 +44,12 @@ class ConversationTests(unittest.TestCase):
         self.assertFalse(ab.merge_grades([ok], sql_queries=0)['passed'])
 
 
+class UsageLimitTests(unittest.TestCase):
+    def test_usage_limit_message_is_recognised(self):
+        self.assertTrue(ab.USAGE_LIMIT.search("You've hit your 5-hour limit · resets 6:20am (UTC)"))
+        self.assertFalse(ab.USAGE_LIMIT.search('Il y a 52 684 objets validés de Metridia longa.'))
+
+
 class ReportFormatTests(unittest.TestCase):
     def test_values_shown_as_people_write_them(self):
         self.assertEqual(ab.show(1687393.0), '1\u202f687\u202f393')

@@ -5,7 +5,7 @@
       "id": "amb_how_many_copepods",
       "question": "Combien de copépodes y a-t-il ?",
       "expect_sql": "SELECT 0",
-      "must_mention": ["(?i)valid", "(?i)\\?|préci|hypoth|suppos|j'ai (pris|retenu|considéré|compté)|par défaut|interpr|selon (ce que|la définition)"],
+      "must_mention": ["(?i)valid", "(?i)\\?|préci|hypoth|suppos|j'ai (pris|retenu|considéré|compté)|choix|retenu|par défaut|interpr|selon (ce que|la définition)"],
       "trap": "question floue : projet, taxons, validés ou non, objets ou abondance ; l'agent doit dire ses choix ou demander"
     },
     {
@@ -27,7 +27,7 @@
       "question": "Compare le nombre d'objets validés de Calanus, Metridia et Oithona dans le projet Amundsen 2023.",
       "expect_sql": "SELECT count(*) FROM explore.ecotaxa_objects WHERE ecotaxa_project_id = 10101 AND annotation_status = 'validated' AND (taxon_name ILIKE '%calanus%' OR taxon_name ILIKE '%metridia%') GROUP BY (taxon_name ILIKE '%calanus%') ORDER BY 1 DESC",
       "must_mention": ["(?i)oithona[^.\\n]{0,120}(aucun|absent|0|pas |n'apparaît|inexistant)|(aucun|pas d|absent)[^.\\n]{0,60}oithona"],
-      "trap": "Oithona n'existe dans aucun projet : le dire, ne pas l'inventer"
+      "trap": "aucun Oithona (ni Oithonidae) dans le projet 10101 : le dire, ne pas l'inventer (Oithonidae existe ailleurs, dans les Zooscan 801 et 802)"
     },
     {
       "id": "taxa_loki_metridia_longa_stages",
@@ -86,12 +86,14 @@
       "turns": [
         {"question": "Combien de copépodes ?",
          "expect_sql": "SELECT 0",
-         "must_mention": ["(?i)\\?|préci|hypoth|suppos|j'ai (pris|retenu|considéré|compté)|par défaut|interpr"]},
+         "must_mention": ["(?i)\\?|préci|hypoth|suppos|j'ai (pris|retenu|considéré|compté)|choix|retenu|par défaut|interpr"]},
         {"question": "Les objets validés de la catégorie Copepoda<Multicrustacea, tous projets confondus, sans compter deux fois les doublons GreenEdge.",
          "expect_sql": ["SELECT count(*) FROM explore.ecotaxa_objects WHERE annotation_status = 'validated' AND taxon_name = 'Copepoda<Multicrustacea' AND ecotaxa_project_id <> 149",
-                        "SELECT count(*) FROM explore.ecotaxa_objects WHERE annotation_status = 'validated' AND taxon_name = 'Copepoda<Multicrustacea' AND ecotaxa_project_id NOT IN (20880, 20890)"]}
+                        "SELECT count(*) FROM explore.ecotaxa_objects WHERE annotation_status = 'validated' AND taxon_name = 'Copepoda<Multicrustacea' AND ecotaxa_project_id NOT IN (20880, 20890)",
+                        "SELECT count(*) FROM explore.ecotaxa_objects WHERE annotation_status = 'validated' AND taxon_name = 'Copepoda<Multicrustacea' AND ecotaxa_project_id NOT IN (20880, 20890, 13224)",
+                        "SELECT count(*) FROM explore.ecotaxa_objects WHERE annotation_status = 'validated' AND taxon_name = 'Copepoda<Multicrustacea' AND ecotaxa_project_id NOT IN (149, 13224)"]}
       ],
-      "trap": "la précision arrive au second tour ; GreenEdge : 149 contient 20880 + 20890 (plus 5 samples propres), n'en garder qu'un"
+      "trap": "la précision arrive au second tour ; GreenEdge : 149 contient 20880 + 20890 (plus 5 samples propres) et 13224 est un extrait de 149 ; ne garder que 149, ou 20880 + 20890"
     }
   ]
 }

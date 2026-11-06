@@ -2,7 +2,27 @@
 
 **Période proposée :** du 14 septembre au 30 novembre 2026
 
-**Dernière mise à jour :** 4 novembre 2026
+**Dernière mise à jour :** 6 novembre 2026
+
+### 6 novembre 2026 — Batterie élargie (ambiguïtés, taxons, variables, conversations) et dossier de travail NeoLab (phase 2)
+
+- `mixed_cases.json` : 3 questions ambiguës, 3 mélanges de taxons et de stades (Oithona absent de 10101,
+  Metridia longa réparti en stades et vues dans LOKI 2015), 2 croisements CTD × UVP (aucun lien direct, chemin
+  par les samples EcoTaxa), 3 conversations en plusieurs tours (`"turns"`, session reprise avec --resume).
+  `agent_battery.py` : conversations, cas « non exécuté » quand la limite d'usage de l'agent est atteinte
+  (une batterie de la nuit a buté sur « You've hit your 5-hour limit » : 8 cas faussement en échec).
+- Constat mesuré : sur une question très courte, dans un dossier vide, l'agent ne fait pas le lien avec le
+  warehouse et répond de mémoire ou cherche la météo sur le web (4 sur 4), même avec les instructions MCP
+  envoyées par le serveur à la connexion (ajoutées au relais `warehouse_connect.py run`, utiles mais
+  insuffisantes). Nouveau `warehouse_connect.py workspace <dossier>` : CLAUDE.md, AGENTS.md, GEMINI.md,
+  .github/copilot-instructions.md (aucun secret); dans ce dossier l'agent interroge la base 4 sur 4. Ajouté au
+  LISEZMOI de partage (partie 5) et au guide de connexion; option `--workspace` de la batterie.
+- Résultats : ecotaxa 10/10, ctd_visual 10/10 (dossier vide, avec instructions serveur); mixed 11/11 en
+  dossier de travail (122 tours, 62 requêtes, ≈ 3,18 $).
+- Corrections de faits trouvées par les agents puis vérifiées : 149 contient les 199 samples de 20880 + 20890
+  plus 5 samples propres (et non « 149 = 20880 + 20890 »); 13224 est un extrait de 10 000 objets des mêmes
+  204 samples que 149 (même sample et même profondeur pour 2 000 objets vérifiés); Oithonidae existe dans les
+  Zooscan 801/802 (seul 10101 en est dépourvu). Documentation et références de tests corrigées.
 
 ### 6 novembre 2026 — Tests agent CTD et graphiques; sigma-t et pression documentés (phase 2)
 

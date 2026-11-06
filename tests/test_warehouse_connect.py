@@ -420,3 +420,21 @@ class ServerInstructionsTests(unittest.TestCase):
         for line in (b'{"jsonrpc": "2.0", "id": 5, "result": {}}\n', b'not json\n',
                      b'{"jsonrpc": "2.0", "method": "notifications/initialized"}\n'):
             self.assertIs(self.module.with_instructions(line, 0), line)
+
+
+class WorkspaceTests(unittest.TestCase):
+    def test_workspace_writes_one_instructions_file_per_agent_and_keeps_existing(self):
+        import tempfile
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        import warehouse_connect
+        folder = Path(tempfile.mkdtemp()) / 'neolab-travail'
+        self.addCleanup(shutil.rmtree, folder.parent, True)
+        (folder).mkdir()
+        (folder / 'CLAUDE.md').write_text('mes notes', encoding='utf-8')
+        args = type('A', (), {'folder': str(folder), 'force': False})()
+        self.assertEqual(warehouse_connect.workspace(args), 0)
+        self.assertEqual((folder / 'CLAUDE.md').read_text(encoding='utf-8'), 'mes notes')
+        for name in ('AGENTS.md', 'GEMINI.md', '.github/copilot-instructions.md'):
+            text = (folder / name).read_text(encoding='utf-8')
+            self.assertIn('warehouse NeoLab', text)
+            self.assertNotRegex(text, r'(?i)PASSWORD\s*=|postgres(ql)?://')

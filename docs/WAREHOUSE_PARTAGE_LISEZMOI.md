@@ -227,8 +227,18 @@ la fenêtre Copilot Chat et choisir le mode **Agent**.
 
 ## Partie 5 — Poser une question
 
-Ouvrir l'assistant (`claude` ou `codex` dans un dossier de travail vide, ou Copilot Chat en mode Agent) et
-demander par exemple :
+Créer d'abord un **dossier de travail NeoLab** : il contient un court fichier d'instructions que chaque
+assistant lit au démarrage (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.github/copilot-instructions.md`), pour
+qu'une question même courte (« combien de copépodes ? ») soit comprise comme une question sur le warehouse.
+Sans lui, un assistant répond parfois de mémoire ou cherche sur le web. Le fichier ne contient aucun mot de passe.
+
+```bash
+python scripts/warehouse_connect.py workspace ~/neolab-travail
+cd ~/neolab-travail
+```
+
+Ouvrir l'assistant dans ce dossier (`claude` ou `codex`, ou, pour Copilot, `code ~/neolab-travail` puis Copilot
+Chat en mode Agent) et demander par exemple :
 
 > Quels projets EcoTaxa sont dans le warehouse, et quelle part de leurs objets est validée ?
 
@@ -266,7 +276,8 @@ soi-même (DBeaver, pgAdmin, R, Python) : `IDEA/docs/WAREHOUSE_SQL_GUIDE.md`.
 - **Validé ou prédit** : une abondance « tous objets » inclut les prédictions automatiques. Exemple réel :
   copépodes 0–200 m en Baie de Baffin, am_leg3 2024 : 750,9 ind/m³ tous objets, 2,1 avec les seuls validés.
 - **Projets en double** : 149 contient les 199 samples de 20880 + 20890 (mêmes comptes) plus 5 samples
-  propres ; ne pas additionner ces projets : 149 seul donne GreenEdge 2016 sans doublon.
+  propres, et 13224 est un extrait de 149 ; ne pas additionner ces projets : 149 seul donne GreenEdge 2016
+  sans doublon.
 - **Non chargé** : FILET. **Tailles LOKI** : en pixels seulement (pas de calibration).
 - **Tailles UVP6** : corrigées dans cette version (EcoTaxa donne le pixel UVP6 en µm, lu par erreur en mm
   dans les versions précédentes, d'où des tailles 1 000 fois trop grandes). Ne pas réutiliser un résultat de
