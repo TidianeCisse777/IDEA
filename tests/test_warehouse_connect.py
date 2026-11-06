@@ -391,6 +391,14 @@ class LiveConnectionTests(unittest.TestCase):
         self.assertEqual(off.returncode, 0, off.stderr)
         self.assertEqual(self.sql("SELECT rolcanlogin FROM pg_roles WHERE rolname = '%s'" % self.user), "f")
         self.assertEqual(self.sql("SELECT count(*) FROM warehouse.access_grant WHERE grantee = '%s' AND revoked_at IS NULL" % self.user), "0")
+        # A throwaway account (agent battery) is removed for good, history included, and only with --yes.
+        unconfirmed = self.run_script("warehouse_user.py", "remove", self.user)
+        self.assertNotEqual(unconfirmed.returncode, 0)
+        self.assertEqual(self.sql("SELECT count(*) FROM pg_roles WHERE rolname = '%s'" % self.user), "1")
+        removed = self.run_script("warehouse_user.py", "remove", self.user, "--yes")
+        self.assertEqual(removed.returncode, 0, removed.stderr)
+        self.assertEqual(self.sql("SELECT count(*) FROM pg_roles WHERE rolname = '%s'" % self.user), "0")
+        self.assertEqual(self.sql("SELECT count(*) FROM warehouse.access_grant WHERE grantee = '%s'" % self.user), "0")
 
 
 if __name__ == "__main__":

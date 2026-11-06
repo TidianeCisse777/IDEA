@@ -306,7 +306,7 @@ def main(argv=None) -> int:
             results = list(pool.map(lambda c: run_case(c, out, mcp, args.model, args.timeout, args.workspace), cases))
     finally:
         if name:
-            subprocess.run([sys.executable, str(ROOT / 'scripts/warehouse_user.py'), 'offboard', name],
+            subprocess.run([sys.executable, str(ROOT / 'scripts/warehouse_user.py'), 'remove', name, '--yes'],
                            capture_output=True, text=True)
         shutil.rmtree(tmp, ignore_errors=True)
     for case, result in zip(cases, results):

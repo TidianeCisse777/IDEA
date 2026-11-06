@@ -4,6 +4,18 @@
 
 **Dernière mise à jour :** 6 novembre 2026
 
+### 6 novembre 2026 — Zip de partage v6 rejoué; comptes de test supprimés (phase 2)
+
+- `neolab_warehouse_20261106.zip` (311 Mo) : dump du 6 novembre (309 Mo, zstd), code du dépôt (339 fichiers,
+  sans `data/` ni secret), LISEZMOI aux nouveaux noms. Rejoué avec le code du paquet : empreinte `OK`,
+  restauration 2 min 53, `deploy --check` → `PRÊT`; compte personnel, `install-dbhub`, `check` → `PASS`,
+  `workspace`, puis une question Claude Code par MCP dans le dossier de travail (« Combien de copépodes
+  validés dans am_leg3 ? ») : 747, choix de définition annoncés, valeurs vérifiées en base.
+- Défaut trouvé : la batterie fermait ses comptes temporaires (`offboard`) sans les supprimer; 15 rôles
+  `battery_*` restaient dans le serveur (sans connexion ni droit, absents du dump). Nouveau
+  `warehouse_user.py remove <nom> --yes` (rôle et historique de droits, refusé sans `--yes` et pour le
+  propriétaire), utilisé par la batterie; test réel ajouté au parcours de compte; les 15 rôles supprimés.
+
 ### 6 novembre 2026 — Batterie élargie (ambiguïtés, taxons, variables, conversations) et dossier de travail NeoLab (phase 2)
 
 - `mixed_cases.json` : 3 questions ambiguës, 3 mélanges de taxons et de stades (Oithona absent de 10101,

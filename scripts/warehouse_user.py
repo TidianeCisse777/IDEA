@@ -9,6 +9,7 @@ ni passé en argument: le SQL transite par l'entrée standard de psql.
     python scripts/warehouse_user.py grant ines --source filet --contract C1
     python scripts/warehouse_user.py rotate ines
     python scripts/warehouse_user.py offboard ines
+    python scripts/warehouse_user.py remove battery_1a2b3c4d --yes   # compte jetable de test
     python scripts/warehouse_user.py list
 
 Connexion administrateur: WAREHOUSE_POSTGRES_HOST|PORT|DB|USER|PASSWORD (comme le
@@ -232,6 +233,23 @@ def offboard(args):
     return 0
 
 
+def remove(args):
+    """Delete a throwaway account (tests) with its grant history; a person leaving uses offboard."""
+    valid_name(args.name)
+    env = admin_env()
+    if args.name == env['PGUSER']:
+        raise SystemExit('Rôle de service: suppression refusée.')
+    if not role_exists(env, args.name):
+        raise SystemExit('Rôle inconnu.')
+    if not args.yes:
+        raise SystemExit('Supprime le compte et son historique de droits: relancer avec --yes '
+                         '(pour une personne qui part, utiliser offboard, qui garde l\'historique).')
+    psql(env, "BEGIN;\nDELETE FROM warehouse.access_grant WHERE grantee = :'name';\n"
+              "DROP OWNED BY :\"name\";\nDROP ROLE :\"name\";\nCOMMIT;\n", {'name': args.name})
+    print('%s: compte supprimé.' % args.name)
+    return 0
+
+
 def contract(args):
     """Set the access contract of loaded dataset versions (the dimension grants match on)."""
     env = admin_env()
@@ -309,6 +327,10 @@ def main(argv=None):
     p = sub.add_parser('offboard', help='révoquer les droits et fermer la connexion')
     p.add_argument('name')
     p.set_defaults(handler=offboard)
+    p = sub.add_parser('remove', help='supprimer un compte jetable (tests) et son historique de droits')
+    p.add_argument('name')
+    p.add_argument('--yes', action='store_true', help='confirmer la suppression')
+    p.set_defaults(handler=remove)
     sub.add_parser('list', help='comptes, portée et droits actifs').set_defaults(handler=list_accounts)
     p = sub.add_parser('contract', help='poser le contrat d\'accès sur les versions d\'un jeu de données chargé')
     p.add_argument('--dataset-key', required=True, help='clé du jeu (ex. identifiant de projet EcoTaxa)')

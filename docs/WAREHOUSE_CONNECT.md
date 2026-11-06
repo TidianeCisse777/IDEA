@@ -299,6 +299,7 @@ python scripts/warehouse_user.py grant ines --source filet --contract C1   # ajo
 python scripts/warehouse_user.py grant ines --source ctd --contract C1 --zone lab --include-unknown  # inclure zones/dates inconnues
 python scripts/warehouse_user.py rotate ines                                # nouveau mot de passe
 python scripts/warehouse_user.py offboard ines                              # révoque et ferme la connexion
+python scripts/warehouse_user.py remove battery_1a2b3c4d --yes              # supprime un compte jetable (tests)
 python scripts/warehouse_user.py list                                       # comptes, portée, droits actifs
 python scripts/warehouse_user.py create equipe_neolab --all-access          # personnel: toutes les données
 ```
@@ -308,7 +309,8 @@ python scripts/warehouse_user.py create equipe_neolab --all-access          # pe
 - Un droit borné par zone ou années cache les lignes de zone ou de date inconnue; `--include-unknown` les inclut.
 - Le mot de passe est généré (jamais saisi ni affiché) et écrit dans `data/warehouse_backups/users/<nom>.env`
   (ignoré par Git, droits `600`). **Remettre ce fichier par un canal sûr, puis le supprimer.**
-- `offboard` conserve l'historique des droits (`revoked_at`); `rotate` invalide l'ancien mot de passe et garde la
+- `offboard` conserve l'historique des droits (`revoked_at`); `remove` (comptes de test seulement) supprime le
+  rôle et son historique; `rotate` invalide l'ancien mot de passe et garde la
   validité actuelle, ou en fixe une nouvelle avec `--expires-days`. Un compte déjà expiré exige `--expires-days`.
 - La date d'expiration est écrite dans le fichier d'identifiants : la recette prévient 14 jours avant.
 - Le contexte MCP (`warehouse_context`, dictionnaire) est publié par le service Docker `warehouse-context` ou par
