@@ -5,7 +5,7 @@
       "id": "amb_how_many_copepods",
       "question": "Combien de copépodes y a-t-il ?",
       "expect_sql": "SELECT 0",
-      "must_mention": ["(?i)valid", "(?i)\\?|préci|hypoth|suppos|j'ai (pris|retenu|considéré|compté)|choix|retenu|par défaut|interpr|selon (ce que|la définition)"],
+      "must_mention": ["(?i)raisonnement", "(?i)valid", "(?i)\\?|préci|hypoth|suppos|j'ai (pris|retenu|considéré|compté)|choix|retenu|par défaut|interpr|selon (ce que|la définition)"],
       "trap": "question floue : projet, taxons, validés ou non, objets ou abondance ; l'agent doit dire ses choix ou demander"
     },
     {

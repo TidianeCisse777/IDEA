@@ -4,6 +4,17 @@
 
 **Dernière mise à jour :** 7 novembre 2026
 
+### 7 novembre 2026 — Section « Raisonnement » et chiffres tirés des requêtes (phase 2)
+
+- Règle dans `overview` et les instructions du serveur : toute réponse chiffrée ou illustrée commence par une
+  courte section « Raisonnement » (question comprise, choix et raisons, lectures écartées); chaque chiffre vient
+  d'une requête de la conversation, une valeur reprise d'une fiche est signalée et recalculée si possible
+  (l'agent avait cité « environ 99 % de détritus » d'après la fiche au lieu de son propre calcul).
+  Critère `raisonnement` ajouté aux cas `viz_vertical_profile_vague` et `amb_how_many_copepods`.
+- Rejoué : 2/2. Profil vertical : deux panneaux (organismes en ind/m³, particules en objets/m³), projet,
+  zone, méthode et lectures écartées (CTD, taxon) annoncés. Copépodes : 1 559 355 objets dont 561 457 validés
+  (vérifié en base); doublons GreenEdge non retirés mais signalés (50 408 objets, 3 %).
+
 ### 7 novembre 2026 — Organismes ou particules : profil vertical d'une question vague (phase 2)
 
 - Essai réel, « Trace le profil vertical du projet dans la Baie de Baffin. » : l'agent a choisi 10101 (dit) et

@@ -101,8 +101,11 @@ class OverviewTransparencyTests(unittest.TestCase):
     def test_agents_show_the_queries_and_results_behind_their_numbers(self):
         from publish_warehouse_context import OVERVIEW
         for requirement in ('Requêtes exécutées', 'texte exact', 'nombre de lignes renvoyées',
-                            'réellement exécutées', 'sans les reformuler'):
+                            'réellement exécutées', 'sans les reformuler', '« Raisonnement »',
+                            'vient d\'une requête exécutée', 'reprise d\'une fiche'):
             self.assertIn(requirement, OVERVIEW)
+        import warehouse_connect
+        self.assertIn('« Raisonnement »', warehouse_connect.SERVER_INSTRUCTIONS)
 
 
 class CopepodStageReferenceTests(unittest.TestCase):
