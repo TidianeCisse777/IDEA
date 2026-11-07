@@ -4,6 +4,19 @@
 
 **Dernière mise à jour :** 7 novembre 2026
 
+### 7 novembre 2026 — Explorer le schéma avant de générer le SQL (phase 2)
+
+- Traces de 142 cas : 47 requêtes sur un nom inventé, toutes après lecture de `overview`; 21 étaient la
+  première requête SQL de la conversation, 23 sans fiche de la vue ni liste de colonnes. Les fiches ne
+  donnaient pas les colonnes : même un agent qui avait lu la fiche pouvait se tromper (8 cas).
+- `catalogue.warehouse_context.column_list`, lue dans le schéma déployé à la publication : colonnes et types
+  de chaque vue; dans `overview`, la carte de toutes les vues lisibles (`explore` d'abord, environ 10 000
+  caractères). Règle dans `overview`, les instructions du serveur et l'outil DbHub : n'écrire du SQL qu'avec
+  ces noms, jamais un nom deviné ni un sondage par essai-erreur.
+- Mesure, sur les mêmes 14 cas (ecotaxa 10, ctd_visual 4) avant / après : noms inventés 8 → 0, requêtes SQL
+  68 → 43, `search_objects` 11 → 0, tours (ecotaxa) 89 → 58; 14/14 réussis. Une erreur SQL restante : colonne
+  ambiguë dans une jointure (faute de SQL, pas un nom deviné).
+
 ### 7 novembre 2026 — Taxons trouvables, lignée EcoTaxa, indices d'erreur MCP (phase 2)
 
 - Point de départ, mesuré dans les traces de 103 cas de batterie (484 requêtes SQL) : 10 requêtes coupées à
