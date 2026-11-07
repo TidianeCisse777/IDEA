@@ -213,3 +213,11 @@ def test_profile_zone_is_ambiguous_when_its_samples_disagree():
     assert profile_zone([baffin, dict(baffin)]) == ("Baie de Baffin", "Baie de Baffin", "IHO Marine Regions v3",
                                                     "registry-v1", "assigned")
     assert profile_zone([]) == (None, None, None, None, None)
+
+
+def test_ecopart_time_is_read_from_the_metadata_summary():
+    # Every UVP profile was at midnight: the EcoTaxa samples give only the date.
+    from populate_ecopart import ecopart_time
+    assert ecopart_time("2015-04-18 18:12:10") == "2015-04-18T18:12:10+00:00"
+    assert ecopart_time("2015-04-18 18:12") == "2015-04-18T18:12:00+00:00"
+    assert ecopart_time("") is None and ecopart_time(None) is None and ecopart_time("18/04/2015") is None

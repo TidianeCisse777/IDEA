@@ -254,3 +254,22 @@ SET marine_zone_key = 'AMBIGUOUS', marine_zone_name = 'AMBIGUOUS', marine_zone_a
 WHERE u.marine_zone_key IS NULL AND u.marine_zone_assignment_status = 'assigned'
   AND (SELECT count(DISTINCT s.marine_zone_key) FROM warehouse.uvp_ecotaxa l
        JOIN warehouse.ecotaxa_sample s ON s.id = l.ecotaxa_sample_id WHERE l.uvp_profile_id = u.id) > 1;
+
+-- UVP profile times: the loader took the date of the linked EcoTaxa samples, which
+-- carry no hour (the objects loader never asked EcoTaxa for obj.objtime), so all 686
+-- profiles were at midnight. EcoPart's own metadata gives the capture time
+-- ("yyyy-mm-dd hh:mm", kept in ecopart_auxiliary_row): 686 profiles, no conflicting
+-- time, same date as before for all. Read as UTC, the warehouse convention for
+-- source times without a zone. One-time, guarded: only a midnight or missing time
+-- whose date agrees with EcoPart's.
+UPDATE warehouse.uvp_profile u
+SET sampled_at = m.t
+FROM (SELECT dataset_version_id, profile_name,
+             (min(source_row_json ->> 'yyyy-mm-dd hh:mm'))::timestamp AT TIME ZONE 'UTC' AS t
+      FROM warehouse.ecopart_auxiliary_row
+      WHERE content_kind = 'metadata' AND source_row_json ->> 'yyyy-mm-dd hh:mm' ~ '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}'
+      GROUP BY 1, 2
+      HAVING count(DISTINCT source_row_json ->> 'yyyy-mm-dd hh:mm') = 1) m
+WHERE m.dataset_version_id = u.dataset_version_id AND m.profile_name = u.ecopart_sample_id
+  AND (u.sampled_at IS NULL
+       OR ((u.sampled_at AT TIME ZONE 'UTC')::time = '00:00' AND (u.sampled_at AT TIME ZONE 'UTC')::date = (m.t AT TIME ZONE 'UTC')::date));

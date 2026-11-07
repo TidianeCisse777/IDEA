@@ -289,6 +289,8 @@ soi-même (DBeaver, pgAdmin, R, Python) : `IDEA/docs/WAREHOUSE_SQL_GUIDE.md`.
   taille UVP6 obtenu avec une copie antérieure au 4 novembre 2026 (zips v1 à v4).
 - **Positions** : 197 profils GreenEdge 2016 sans position propre (sources contradictoires) ; le projet
   17808 n'a pas de projet EcoPart lié.
+- **Heures** : les profils UVP ont l'heure de capture EcoPart (UTC) ; les samples et objets EcoTaxa n'ont que
+  la date (00:00), l'heure n'ayant pas été chargée.
 - **Statut** : données exploratoires.
 - **Confidentialité** : la copie contient les métadonnées des projets, dont le nom et le courriel de leurs
   responsables, et donne accès à tous les projets. Ne pas la transmettre plus loin sans l'accord de la

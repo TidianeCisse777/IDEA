@@ -49,6 +49,17 @@ def default_database():
         os.getenv('WAREHOUSE_POSTGRES_HOST', 'localhost'), os.getenv('WAREHOUSE_POSTGRES_PORT', '55432'),
         os.getenv('WAREHOUSE_POSTGRES_DB', 'neolab_warehouse'), os.getenv('WAREHOUSE_POSTGRES_USER', 'neolab'))
 
+def object_datetime(date, clock):
+    """EcoTaxa objdate (YYYY-MM-DD) and objtime (HH:MM[:SS]) as one timestamp; the date alone when the
+    time is missing or unreadable, never an invented hour."""
+    if not date:
+        return None
+    clock = (clock or '').strip()
+    parts = clock.split(':')
+    if len(parts) in (2, 3) and all(x.isdigit() for x in parts) and int(parts[0]) < 24 and all(int(x) < 60 for x in parts[1:]):
+        return f"{date} {int(parts[0]):02d}:{int(parts[1]):02d}:{int(parts[2]) if len(parts) == 3 else 0:02d}"
+    return date
+
 def login():
     s=requests.Session(); r=s.post(BASE+'/login',json={'username':os.environ['ECOTAXA_USERNAME'],'password':os.environ['ECOTAXA_PASSWORD']},timeout=30); r.raise_for_status(); p=r.json(); t=p.get('token') if isinstance(p,dict) else p; s.headers['Authorization']=f'Bearer {t}'; return s
 
@@ -78,9 +89,11 @@ def load_project(args,s,pid):
     # obj.classif_id / obj.classif_qual: documented object fields of /object_set/{id}/query
     # (API spec, "fields"); classif_qual is V (validated), P (predicted), D (dubious) or
     # null (never classified). Kept before the fre.<label> columns, whose count varies.
-    base_fields='obj.orig_id,obj.objdate,obj.depth_min,obj.depth_max,obj.latitude,obj.longitude,txo.display_name,obj.classif_id,obj.classif_qual'
+    # obj.objtime (hour of capture) was not asked for until 7 novembre 2026: every loaded object and sample
+    # carried midnight; it is appended last so the earlier positions stay the same.
+    base_fields='obj.orig_id,obj.objdate,obj.depth_min,obj.depth_max,obj.latitude,obj.longitude,txo.display_name,obj.classif_id,obj.classif_qual,obj.objtime'
     fields=base_fields + (',' + ','.join(f'fre.{lbl}' for lbl in size_labels) if size_labels else '')
-    base_n=9
+    base_n=10
     loaded=0; state=Path(args.state_file); states=json.loads(state.read_text()) if state.exists() else {}; offset=int(states.get(str(pid),0))
     def fetch_page(start):
         for attempt in range(1, 4):
@@ -103,7 +116,7 @@ def load_project(args,s,pid):
               size_vals={lbl: (row[base_n+j] if base_n+j<len(row) else None) for j,lbl in enumerate(size_labels)}
               category_id=row[7] if len(row)>7 and row[7] not in (None,'') else None
               vals=[sample_pk,str(ids[i]),acq,None,None if category_id is None else str(category_id),row[6] if len(row)>6 else None,
-                    annotation_status(row[8] if len(row)>8 else None),row[1] if len(row)>1 else None,row[2] if len(row)>2 else None,row[3] if len(row)>3 else None,row[4] if len(row)>4 else None,row[5] if len(row)>5 else None,
+                    annotation_status(row[8] if len(row)>8 else None),object_datetime(row[1] if len(row)>1 else None,row[9] if len(row)>9 else None),row[2] if len(row)>2 else None,row[3] if len(row)>3 else None,row[4] if len(row)>4 else None,row[5] if len(row)>5 else None,
                     size_vals.get('area'),size_vals.get('esd'),size_vals.get('major'),size_vals.get('minor')]
               w.writerow(['\\N' if v is None or v=='' else v for v in vals])
           sql=["""CREATE TEMP TABLE stage_ecotaxa_object(sample_id bigint,object_id text,acquisition_id text,process_id text,category_id text,category_name text,annotation_status text,object_datetime timestamptz,depth_min_m double precision,depth_max_m double precision,object_lat double precision,object_lon double precision,area_px double precision,esd_px double precision,major_px double precision,minor_px double precision)""", """COPY stage_ecotaxa_object FROM STDIN WITH (FORMAT csv,DELIMITER E'\\t',NULL '\\N')""", """INSERT INTO warehouse.ecotaxa_object(sample_id,object_id,acquisition_id,process_id,category_id,category_name,annotation_status,object_datetime,depth_min_m,depth_max_m,object_lat,object_lon,area_px,esd_px,major_px,minor_px) SELECT sample_id,object_id,acquisition_id,process_id,category_id,category_name,annotation_status,object_datetime,depth_min_m,depth_max_m,object_lat,object_lon,area_px,esd_px,major_px,minor_px FROM stage_ecotaxa_object ON CONFLICT (sample_id,object_id) DO UPDATE SET acquisition_id=EXCLUDED.acquisition_id,category_id=EXCLUDED.category_id,category_name=EXCLUDED.category_name,annotation_status=EXCLUDED.annotation_status,object_datetime=EXCLUDED.object_datetime,depth_min_m=EXCLUDED.depth_min_m,depth_max_m=EXCLUDED.depth_max_m,object_lat=EXCLUDED.object_lat,object_lon=EXCLUDED.object_lon,area_px=EXCLUDED.area_px,esd_px=EXCLUDED.esd_px,major_px=EXCLUDED.major_px,minor_px=EXCLUDED.minor_px"""]

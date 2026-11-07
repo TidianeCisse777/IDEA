@@ -497,6 +497,13 @@ def column_description(view_name, column):
         return 'Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains.'
     if column in ('depth_min', 'depth_max'):
         return 'Borne de profondeur fournie dans les métadonnées EcoTaxa; unité à vérifier dans la source.'
+    if view_name.startswith('ecotaxa_') and column in ('sampled_at', 'datetime_min', 'datetime_max', 'object_datetime'):
+        return ('Date EcoTaxa du sample ou de l’objet. Les données chargées n’ont pas d’heure (toujours 00:00 UTC : '
+                'l’heure EcoTaxa obj.objtime n’était pas demandée au chargement) : ne pas en déduire jour ou nuit. '
+                'L’heure des profils UVP est dans uvp_samples.sampled_at (EcoPart).')
+    if column == 'sampled_at' and (view_name.startswith('uvp_') or view_name in ('ecopart_bins', 'zone_membership')):
+        return ('Heure de capture du profil UVP donnée par EcoPart (métadonnées « yyyy-mm-dd hh:mm »), lue en UTC, '
+                'convention du warehouse pour une heure source sans fuseau. Utilisable pour jour/nuit, en le disant.')
     if column in ('sampled_at', 'ctd_sampled_at', 'filet_sampled_at', 'uvp_sampled_at',
                   'datetime_min', 'datetime_max', 'deployment_datetime_start', 'deployment_datetime_end', 'start_at', 'end_at'):
         return 'Horodatage source ou borne agrégée selon le nom; vérifier le type SQL et le fuseau. Le rapprochement FILET existant interprète ses dates sans fuseau en UTC.'

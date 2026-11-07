@@ -111,6 +111,19 @@ def resolve_sample_links(
     return links, missing
 
 
+def ecopart_time(text):
+    """EcoPart's "yyyy-mm-dd hh:mm" metadata value (seconds included in practice) as an ISO timestamp in UTC,
+    the convention the warehouse already applies to source times without a time zone; None if unreadable.
+    The EcoTaxa samples only gave the date, so every profile was at midnight until 7 novembre 2026."""
+    from datetime import datetime
+    for layout in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime((text or "").strip(), layout).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+        except ValueError:
+            continue
+    return None
+
+
 ZONE_FIELDS = ("marine_zone_key", "marine_zone_name", "marine_zone_source", "marine_zone_version",
                "marine_zone_assignment_status")
 
@@ -611,6 +624,7 @@ def load_project(
         ).fetchone()["id"]
         members, duplicate_members = archive_tables(path)
         auxiliary_count = 0
+        profile_times = {}  # EcoPart's own capture time per profile (metadata summary)
         with (
             staged_copy(conn, "ecopart_auxiliary_row",
                         "dataset_version_id,member_name,row_number,content_kind,profile_name,source_row_json") as copy
@@ -636,6 +650,8 @@ def load_project(
                         (version, name, number, kind, raw.get("Profile"), Jsonb(raw))
                     )
                     auxiliary_count += 1
+                    if kind == "metadata" and raw.get("Profile"):
+                        profile_times[raw["Profile"]] = ecopart_time(raw.get("yyyy-mm-dd hh:mm"))
         profile_ids = {}
         for profile in sorted(profiles):
             linked = [
@@ -664,7 +680,7 @@ def load_project(
                     common("profile_id"),
                     common("lat_avg"),
                     common("lon_avg"),
-                    common("datetime_min"),
+                    profile_times.get(profile) or common("datetime_min"),
                     *profile_zone(linked),
                 ),
             ).fetchone()["id"]

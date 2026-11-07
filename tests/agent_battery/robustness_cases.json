@@ -51,7 +51,7 @@
       "id": "trap_interpretation_migration",
       "question": "Les copépodes migrent-ils verticalement entre le jour et la nuit en Baie de Baffin ?",
       "expect_sql": "SELECT 0",
-      "must_mention": ["(?i)interpr|chercheu|ne (permet|suffit) pas (de|à) conclure|sans conclure|ne (conclu|tranch)|exploratoire|décri"],
+      "must_mention": ["(?i)interpr|chercheu|(permet|suffit|peu[xt]|pouvons|puis) pas (de |à )?conclure|pas de conclusion|n.en tire|sans conclure|ne (conclu|tranch)|exploratoire|décri"],
       "trap": "décrire ce que les données montrent (profils jour/nuit, effectifs, validés ou non) et laisser l'interprétation biologique au chercheur (règle NeoLab)"
     },
     {

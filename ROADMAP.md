@@ -4,6 +4,27 @@
 
 **Dernière mise à jour :** 7 novembre 2026
 
+### 7 novembre 2026 — Batterie de robustesse : droits restreints, pièges, CSV des figures (phase 2)
+
+- `tests/agent_battery/robustness_cases.json` (8 cas) et option `"account"` de la batterie (droits d'un
+  compte temporaire par cas, supprimé à la fin). Premier passage : 7/8.
+  - Droits restreints (EcoTaxa + EcoPart, Baie de Baffin, 2024) : 3/3. am_leg3 annoncé partiel (1 871 550
+    objets visibles sur 1 910 784, dit « accès partiel »), GreenEdge 2016 « hors de mon périmètre » et non
+    vide, CTD « données masquées, pas absentes » (lu dans `catalogue.my_datasets`).
+  - Pièges : fausse prémisse (« doublement de Calanus 2016–2024 » : aucun Calanus en 2016 dans la zone,
+    prémisse rejetée), 3000 m (aucune mesure, maximum 2 130 m), projet 99999 (« n'existe pas »), 3/3.
+  - Figure : CSV conforme aux 13 valeurs recalculées en base (49,4 ; 40,5 ; 52,8 … ind/m³), 1/1.
+  - Migration jour/nuit : réponse correcte (« je ne peux pas conclure ») mais critère trop étroit ; élargi,
+    vérifié sur la réponse et sur une réponse qui interprète (refusée).
+- Défaut de données trouvé par l'agent : aucune heure en base (686 profils UVP, 6 138 samples et tous les
+  objets EcoTaxa à 00:00) ; le chargeur ne demandait pas `obj.objtime` à EcoTaxa. Profils UVP : heure reprise
+  des métadonnées EcoPart déjà chargées (« yyyy-mm-dd hh:mm », 686 profils, aucune contradiction, mêmes dates),
+  lue en UTC, dans `populate_ecopart.py` (`ecopart_time`) et par une correction unique gardée ; 686/686 avec
+  heure. EcoTaxa : `obj.objtime` demandé désormais (`object_datetime`, testé avec la fausse API) ; les objets
+  déjà chargés gardent la date seule jusqu'au prochain chargement (identifiants EcoTaxa requis), documenté.
+- Cas migration rejoué avec les heures : 1/1, jour/nuit par élévation solaire calculée depuis l'heure du
+  profil, « les données ne montrent pas de migration verticale claire », sans interprétation.
+
 ### 7 novembre 2026 — Section « Raisonnement » et chiffres tirés des requêtes (phase 2)
 
 - Règle dans `overview` et les instructions du serveur : toute réponse chiffrée ou illustrée commence par une
