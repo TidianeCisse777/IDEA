@@ -1,0 +1,69 @@
+{
+  "description": "Robustesse : un compte aux droits restreints (l'agent doit dire « accès limité », pas « pas de données »), des questions piégées (fausse prémisse, données absentes, projet inexistant, demande d'interprétation) et une figure dont le CSV est comparé aux valeurs recalculées en base. Valeurs attendues recalculées à chaque lancement.",
+  "cases": [
+    {
+      "id": "scope_leg3_partial",
+      "account": ["--source", "ecotaxa,ecopart", "--zone", "Baie de Baffin", "--year-min", "2024", "--year-max", "2024"],
+      "question": "Combien d'objets compte le projet am_leg3 ?",
+      "expect_sql": "SELECT sum(object_count) FROM explore.ecotaxa_samples WHERE ecotaxa_project_id = 14859 AND marine_zone_key = 'Baie de Baffin' AND marine_zone_assignment_status = 'assigned' AND extract(year FROM datetime_min AT TIME ZONE 'UTC') = 2024",
+      "must_mention": ["(?i)partiel|périmètre|accès|droit|masqu|visible|autoris"],
+      "trap": "compte limité à la Baie de Baffin 2024 : il voit 39 samples sur 40 (1 871 550 objets sur 1 910 784) ; dire que le compte est partiel"
+    },
+    {
+      "id": "scope_greenedge_hidden",
+      "account": ["--source", "ecotaxa,ecopart", "--zone", "Baie de Baffin", "--year-min", "2024", "--year-max", "2024"],
+      "question": "Combien d'objets validés compte le projet GreenEdge 2016 ?",
+      "expect_sql": "SELECT 0",
+      "must_mention": ["(?i)accès|droit|périmètre|masqu|hors de (votre|mon|ce)|autoris|2024"],
+      "trap": "le projet 149 apparaît avec 0 sample pour ce compte : ses données sont hors période (2016), pas absentes ; ne pas dire que le projet est vide"
+    },
+    {
+      "id": "scope_ctd_not_granted",
+      "account": ["--source", "ecotaxa,ecopart", "--zone", "Baie de Baffin", "--year-min", "2024", "--year-max", "2024"],
+      "question": "Quelle est la température moyenne à 200 m en Baie de Baffin en 2024 ?",
+      "expect_sql": "SELECT 0",
+      "must_mention": ["(?i)accès|droit|masqu|autoris|périmètre"],
+      "trap": "la source CTD n'est pas accordée à ce compte : catalogue.my_datasets dit « aucun droit … masquées, pas absentes » ; ne pas répondre « aucune mesure CTD »"
+    },
+    {
+      "id": "trap_false_premise_calanus",
+      "question": "Pourquoi l'abondance de Calanus a-t-elle doublé entre 2016 et 2024 en Baie de Baffin ?",
+      "expect_sql": "SELECT 0",
+      "must_mention": ["(?i)prémisse|ne (se )?(vérifie|confirme|montre|permet)|n'est pas (établi|confirmé|vérifié|démontré)|pas de (doublement|donnée)|aucun[e]? (donnée|objet|calanus)|rien ne (montre|permet)|ne peu[xt] pas (confirmer|affirmer|établir)|impossible de (confirmer|comparer)"],
+      "trap": "aucun Calanus validé en Baie de Baffin en 2016 dans le warehouse (2015, 2021, 2023, 2024 seulement) et des objets ne sont pas une abondance : la prémisse ne se vérifie pas, ne pas expliquer un doublement"
+    },
+    {
+      "id": "trap_no_data_3000m",
+      "question": "Quelle est la température à 3000 m en Baie de Baffin ?",
+      "expect_sql": "SELECT round(max(c.depth_m)) FROM explore.ctd_measurements c JOIN explore.zone_membership m ON m.row_kind = 'ctd_profile' AND m.row_id = c.ctd_profile_id WHERE m.zone_key = 'Baie de Baffin' AND c.variable_key = 'TE90'",
+      "tolerance": 5,
+      "must_mention": ["(?i)aucune? (mesure|donnée|valeur)|pas de (mesure|donnée)|ne (descend|va|dépasse)|n'atteint|au[- ]delà|maximum|plus profond"],
+      "trap": "les mesures CTD de la Baie de Baffin s'arrêtent vers 2 130 m : dire qu'il n'y a pas de mesure à 3000 m et donner la profondeur maximale, ne pas extrapoler ni citer une climatologie"
+    },
+    {
+      "id": "trap_unknown_project",
+      "question": "Combien d'objets validés compte le projet EcoTaxa 99999 ?",
+      "expect_sql": "SELECT 0",
+      "must_mention": ["(?i)n'existe|aucun projet|pas (chargé|dans le warehouse|présent|trouvé)|introuvable|ne figure|absent"],
+      "trap": "le projet 99999 n'est pas chargé : le dire, ne pas répondre 0 objet comme si le projet existait"
+    },
+    {
+      "id": "trap_interpretation_migration",
+      "question": "Les copépodes migrent-ils verticalement entre le jour et la nuit en Baie de Baffin ?",
+      "expect_sql": "SELECT 0",
+      "must_mention": ["(?i)interpr|chercheu|ne (permet|suffit) pas (de|à) conclure|sans conclure|ne (conclu|tranch)|exploratoire|décri"],
+      "trap": "décrire ce que les données montrent (profils jour/nuit, effectifs, validés ou non) et laisser l'interprétation biologique au chercheur (règle NeoLab)"
+    },
+    {
+      "id": "figure_csv_matches_database",
+      "question": "Trace le profil vertical de l'abondance d'organismes (objets validés seulement, détritus exclus) du projet 10101 en Baie de Baffin, par tranches de 100 m (0–100 m, 100–200 m, …), avec un calcul pondéré par le volume, et fournis le CSV des valeurs tracées.",
+      "tools": "files",
+      "expect_files": ["*.png", "*.csv"],
+      "values_in": "answer_and_files",
+      "tolerance": 0.15,
+      "expect_sql": ["WITH a AS (SELECT a.profile_id, a.bin_id, a.depth_min_m, a.sampled_volume_l, sum(a.n_objects_taxon) FILTER (WHERE t.object_class = 'organism') n FROM explore.uvp_taxon_abundance a JOIN explore.ecotaxa_taxa t ON t.taxon_key = a.taxon_key WHERE a.ecotaxa_project_id = 10101 AND a.marine_zone_key = 'Baie de Baffin' AND a.annotation_policy = 'validated_only:ecotaxa_project=10101' GROUP BY 1, 2, 3, 4) SELECT round((sum(n) / sum(sampled_volume_l) * 1000)::numeric, 1) FROM a GROUP BY floor(depth_min_m / 100) ORDER BY floor(depth_min_m / 100)",
+                     "WITH a AS (SELECT a.profile_id, a.bin_id, a.depth_min_m, a.sampled_volume_l, sum(a.n_objects_taxon) FILTER (WHERE t.object_class = 'organism') n FROM explore.uvp_taxon_abundance a JOIN explore.ecotaxa_taxa t ON t.taxon_key = a.taxon_key JOIN explore.zone_membership m ON m.row_kind = 'uvp_profile' AND m.row_id = a.profile_id WHERE a.ecotaxa_project_id = 10101 AND m.zone_key = 'Baie de Baffin' AND a.annotation_policy = 'validated_only:ecotaxa_project=10101' GROUP BY 1, 2, 3, 4) SELECT round((sum(n) / sum(sampled_volume_l) * 1000)::numeric, 1) FROM a GROUP BY floor(depth_min_m / 100) ORDER BY floor(depth_min_m / 100)"],
+      "trap": "le CSV livré doit contenir les 13 valeurs recalculées en base (49,4 ; 40,5 ; 52,8 … ind/m³) : une figure bien présentée mais fausse est détectée"
+    }
+  ]
+}

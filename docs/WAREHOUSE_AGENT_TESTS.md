@@ -33,6 +33,10 @@ Une troisième, `tests/agent_battery/mixed_cases.json`, pose des questions ambig
 (dont les copépodes rangés sous « with visible lipid sac », que seule la lignée EcoTaxa retrouve, et Oithona,
 présent seulement comme famille Oithonidae),
 croise CTD et UVP, et mène trois conversations en plusieurs tours (`"turns"`, chaque tour reprend la session).
+Une quatrième, `tests/agent_battery/robustness_cases.json`, donne à certains cas un compte aux droits restreints
+(`"account"`, options de `warehouse_user.py create` : l'agent doit dire « accès limité », pas « pas de données »),
+pose des questions piégées (fausse prémisse, données absentes, projet inexistant, demande d'interprétation) et
+compare le CSV d'une figure aux valeurs recalculées en base.
 Toute réponse sans requête SQL échoue (réponse de mémoire). Les dossiers de travail sont hors du dépôt.
 `--workspace` pose les questions dans un dossier de travail NeoLab (`warehouse_connect.py workspace`) au lieu
 d'un dossier vide : c'est l'usage recommandé, et la différence se voit sur les questions courtes. Une limite

@@ -197,17 +197,21 @@ def run_case(case: dict, out: Path, mcp_config: Path, model: str | None, timeout
             'sql_queries': sum(t['sql_queries'] for t in conversation), 'conversation': conversation}
 
 
-def temporary_account(tmp: Path) -> tuple[str, Path, Path]:
+def temporary_account(tmp: Path, grant: list[str] | None = None) -> tuple[str, Path, Path]:
+    """A read account for the agent: everything (default), or the rights a case names in "account"
+    (warehouse_user.py create options, e.g. ["--source", "ecotaxa,ecopart", "--zone", "Baie de Baffin"])."""
     name = 'battery_' + uuid.uuid4().hex[:8]
+    home = tmp / name
+    home.mkdir(mode=0o700)
     env = dict(os.environ)
-    subprocess.run([sys.executable, str(ROOT / 'scripts/warehouse_user.py'), 'create', name, '--all-access',
-                    '--note', 'batterie de tests agent (temporaire)', '--out-dir', str(tmp)],
+    subprocess.run([sys.executable, str(ROOT / 'scripts/warehouse_user.py'), 'create', name, *(grant or ['--all-access']),
+                    '--note', 'batterie de tests agent (temporaire)', '--out-dir', str(home)],
                    env=env, check=True, capture_output=True, text=True)
-    credentials = tmp / 'credentials.env'
-    subprocess.run([sys.executable, str(ROOT / 'scripts/warehouse_connect.py'), 'init', '--from-file', str(tmp / f'{name}.env')],
+    credentials = home / 'credentials.env'
+    subprocess.run([sys.executable, str(ROOT / 'scripts/warehouse_connect.py'), 'init', '--from-file', str(home / f'{name}.env')],
                    env=dict(env, NEOLAB_WAREHOUSE_CREDENTIALS=str(credentials)), check=True, capture_output=True, text=True)
-    (tmp / f'{name}.env').unlink()
-    mcp = tmp / 'mcp.json'
+    (home / f'{name}.env').unlink()
+    mcp = home / 'mcp.json'
     mcp.write_text(json.dumps({'mcpServers': {'neolab-warehouse': {
         'command': sys.executable, 'args': [str(ROOT / 'scripts/warehouse_connect.py'), 'run'],
         'env': {'NEOLAB_WAREHOUSE_CREDENTIALS': str(credentials)}}}}))
@@ -299,13 +303,17 @@ def main(argv=None) -> int:
                                values(conn, t.get('must_not_sql'))) for t in turns_of(c)] for c in cases}
     tmp = Path(tempfile.mkdtemp(prefix='agent_battery_'))
     os.chmod(tmp, 0o700)
-    name = None
+    accounts = {}  # one temporary account per distinct "account" of the cases (all-access by default)
     try:
-        name, _, mcp = temporary_account(tmp)
+        for case in cases:
+            key = json.dumps(case.get('account'))
+            if key not in accounts:
+                accounts[key] = temporary_account(tmp, case.get('account'))
         with ThreadPoolExecutor(max_workers=max(1, args.parallel)) as pool:
-            results = list(pool.map(lambda c: run_case(c, out, mcp, args.model, args.timeout, args.workspace), cases))
+            results = list(pool.map(lambda c: run_case(c, out, accounts[json.dumps(c.get('account'))][2], args.model,
+                                                       args.timeout, args.workspace), cases))
     finally:
-        if name:
+        for name, _, _ in accounts.values():
             subprocess.run([sys.executable, str(ROOT / 'scripts/warehouse_user.py'), 'remove', name, '--yes'],
                            capture_output=True, text=True)
         shutil.rmtree(tmp, ignore_errors=True)

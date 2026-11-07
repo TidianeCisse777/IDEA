@@ -106,3 +106,32 @@ class GradingTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class AccountTests(unittest.TestCase):
+    def test_a_case_can_ask_for_a_restricted_account(self):
+        # Without "account" the agent reads everything; with it, warehouse_user.py create gets those rights.
+        import tempfile
+        from unittest import mock
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append(command)
+            if 'create' in command:
+                out = Path(command[command.index('--out-dir') + 1])
+                (out / f'{command[3]}.env').write_text('WAREHOUSE_DB_PASSWORD=x\n')
+            return mock.Mock(returncode=0)
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(ab.subprocess, 'run', fake_run):
+            ab.temporary_account(Path(tmp))
+            ab.temporary_account(Path(tmp), ['--source', 'ecotaxa', '--zone', 'Baie de Baffin'])
+        creates = [c for c in calls if 'create' in c]
+        self.assertIn('--all-access', creates[0])
+        self.assertNotIn('--all-access', creates[1])
+        self.assertIn('Baie de Baffin', creates[1])
+
+    def test_robustness_cases_are_well_formed(self):
+        cases = json.loads((ROOT / 'tests/agent_battery/robustness_cases.json').read_text())['cases']
+        for case in cases:
+            self.assertTrue(case.get('expect_sql') and case.get('question'), case['id'])
+            if 'account' in case:
+                self.assertNotIn('--all-access', case['account'])
