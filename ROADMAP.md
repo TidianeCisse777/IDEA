@@ -2,7 +2,39 @@
 
 **Période proposée :** du 14 septembre au 30 novembre 2026
 
-**Dernière mise à jour :** 6 novembre 2026
+**Dernière mise à jour :** 7 novembre 2026
+
+### 7 novembre 2026 — Taxons trouvables, lignée EcoTaxa, indices d'erreur MCP (phase 2)
+
+- Point de départ, mesuré dans les traces de 103 cas de batterie (484 requêtes SQL) : 10 requêtes coupées à
+  30 s, presque toutes des recherches de taxon par nom dans `ecotaxa_objects` (`ILIKE '%oith%'` sur 10101 :
+  31,8 s sous RLS); 34 requêtes sur un nom de colonne deviné; aucune lignée taxonomique en base, donc
+  « les copépodes » énumérés de mémoire.
+- `warehouse.ecotaxa_taxon` : taxonomie EcoTaxa des 340 catégories (lignée, type P/M, rang, AphiaID),
+  lue sur `/taxon_set/query` (public), `scripts/populate_ecotaxa_taxonomy.py`, appelé en fin de chargement des
+  objets. `warehouse.ecotaxa_sample_taxon` : 39 493 lignes (sample × catégorie × statut), recalculées pour
+  les samples dont les totaux diffèrent de leurs compteurs (1,4 s pour tout), RLS du sample.
+- Vues `explore.ecotaxa_sample_taxa` et `explore.ecotaxa_taxa`; `taxon_lineage`/`taxon_type` dans
+  `ecotaxa_objects`, `sampled_at` dans `ecotaxa_samples`. Recherche d'un taxon : 31,8 s → 20 ms (compte de
+  lecture). Constat : 721 copépodes validés de am_leg3 sont rangés sous « with visible lipid sac »
+  (`side<`, `top-bottom<`), sans « copep » dans le nom; la réponse du 6 novembre (747) les manquait, la lignée
+  donne 1 468 organismes entiers (1 485 avec morts, fragments, œufs, antennes). Le type M ne veut pas dire
+  fragment : les stades et vues sont M (consigne corrigée avant publication).
+- Relais `warehouse_connect.py run` : champ `hint` ajouté aux erreurs SQL (délai, nom inconnu, droit),
+  vérifié à travers DbHub réel. Fiches `overview`, instructions serveur et guide SQL : chercher un taxon dans
+  `ecotaxa_sample_taxa`, un groupe par la lignée, dire quelles catégories non entières sont gardées.
+- Défauts trouvés en chemin : (1) le déploiement affichait `PRÊT` alors que la publication des fiches avait
+  échoué; le contrôle exige maintenant une fiche par vue `explore`. (2) Trois profils UVP GreenEdge 2016 vers
+  70° N avaient une zone vide marquée `assigned` (leurs samples disent Baie de Baffin dans 149, Détroit de
+  Davis dans 20890), d'où 245 profils par `uvp_samples` et 243 par `zone_membership`; `populate_ecopart.py`
+  calcule la zone d'un bloc (`profile_zone`, AMBIGUOUS si les samples se contredisent), correction unique
+  gardée dans la migration; le cas carte accepte les deux comptes, documentés.
+- Tests : unitaires et réels verts (157 + RLS des nouvelles vues : compte restreint 8 objets sur 16).
+  Batteries : ecotaxa 10/10; ctd_visual 9/10 puis 10/10 (carte : 245 contre 243, cause ci-dessus); mixed
+  13/13 avec deux nouveaux cas (copépodes par la lignée, Oithonidae dans 801 et 802 seulement).
+  Traces après correction (39 cas, 168 requêtes) : 0 délai dépassé (10 avant); erreurs de nom inchangées en
+  proportion (13, surtout `title` pour `ecotaxa_project_title` et une table `explore.zones` inexistante),
+  mais 13 sur 13 corrigées à la requête suivante grâce à l'indice.
 
 ### 6 novembre 2026 — Zip de partage v6 rejoué; comptes de test supprimés (phase 2)
 
