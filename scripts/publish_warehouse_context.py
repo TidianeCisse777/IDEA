@@ -21,7 +21,7 @@ OVERVIEW = (
     'de ligne sont différents. Garder source, versions, politiques d’annotation, stades et '
     'dénominateurs explicites. Ne pas sommer les volumes répétés par taxon ou les '
     'concentrations FILET répétées par bin. Les fichiers sources bruts ne sont pas modifiés. '
-    'Accès MCP : SELECT sur deux schémas seulement, explore (les données) et catalogue (droits, catalogue des jeux de données, dictionnaire, ces fiches), sans écriture ni DDL, délai 30 s. Pour une question sur les projets ou les objets EcoTaxa en général, partir de explore.ecotaxa_projects (tous les projets), pas des seules vues uvp_*; dire dans la réponse le périmètre couvert. Pour un taxon (le chercher, le compter, savoir où il est) partir de explore.ecotaxa_sample_taxa, rapide, et non de ecotaxa_objects (15 M lignes, plus de 30 s pour un filtre sur le nom); pour un groupe (« les copépodes »), filtrer la lignée EcoTaxa (\'Copepoda\' = ANY(taxon_lineage), liste dans explore.ecotaxa_taxa) au lieu d\'énumérer des genres de mémoire, et dire quelles catégories non entières ou incertaines (part, cut, dead, eggs, like...) sont gardées. Une erreur SQL renvoyée avec un champ hint dit quoi faire ensuite. Le périmètre de chaque '
+    'Accès MCP : SELECT sur deux schémas seulement, explore (les données) et catalogue (droits, catalogue des jeux de données, dictionnaire, ces fiches), sans écriture ni DDL, délai 30 s. Pour une question sur les projets ou les objets EcoTaxa en général, partir de explore.ecotaxa_projects (tous les projets), pas des seules vues uvp_*; dire dans la réponse le périmètre couvert. Pour un taxon (le chercher, le compter, savoir où il est) partir de explore.ecotaxa_sample_taxa, rapide, et non de ecotaxa_objects (15 M lignes, plus de 30 s pour un filtre sur le nom); pour un groupe (« les copépodes »), filtrer la lignée EcoTaxa (\'Copepoda\' = ANY(taxon_lineage), liste dans explore.ecotaxa_taxa) au lieu d\'énumérer des genres de mémoire, et dire quelles catégories non entières ou incertaines (part, cut, dead, eggs, like...) sont gardées. Explorer avant de générer : n\'écrire une requête qu\'avec des noms de vues et de colonnes lus dans column_list (cette fiche les donne pour toutes les vues, chaque fiche de vue avec leurs types) ou dans catalogue.warehouse_dictionary; ne jamais deviner un nom (title pour ecotaxa_project_title, explore.zones...) ni sonder une table par essai-erreur. Une erreur SQL renvoyée avec un champ hint dit quoi faire ensuite. Le périmètre de chaque '
     'compte (contrats, zones, années) est dans catalogue.my_access; catalogue.my_datasets dit pour chaque '
     'version si l\'accès est complet, partiel ou nul et pourquoi. Un résultat vide peut signifier un '
     'accès limité, pas une absence de données : consulter my_datasets avant de conclure. Les vues UVP '
@@ -58,6 +58,18 @@ def publish(conn):
         with conn.cursor(row_factory=dict_row) as cur:
             columns = cur.execute("""SELECT table_name,column_name,data_type FROM information_schema.columns
                 WHERE table_schema='explore' ORDER BY table_name,ordinal_position""").fetchall()
+            readable = cur.execute("""SELECT table_schema,table_name,column_name,data_type FROM information_schema.columns
+                WHERE table_schema IN ('explore','catalogue') ORDER BY table_schema <> 'explore',table_name,ordinal_position""").fetchall()
+        # Explore first, then write SQL: every sheet carries the real columns of its view, read from the
+        # deployed schema, and the overview the map of all readable views (agents guessed column names in
+        # 47 queries of 142 battery cases, 21 of them their very first query, right after the overview).
+        by_view = {}
+        for row in readable:
+            by_view.setdefault((row['table_schema'], row['table_name']), []).append(row)
+        own_columns = {name: ', '.join(f"{r['column_name']} ({r['data_type']})" for r in cols)
+                       for (_, name), cols in by_view.items()}
+        schema_map = 'Colonnes réelles de chaque vue (seuls noms valides) :\n' + '\n'.join(
+            f"{schema}.{name} : {', '.join(r['column_name'] for r in cols)}" for (schema, name), cols in by_view.items())
         scientific = [row for row in columns if row['table_name'] in VIEWS]
         actual = {row['table_name'] for row in scientific}
         missing = (set(VIEWS) - OPTIONAL_VIEWS) - actual
@@ -107,9 +119,10 @@ def publish(conn):
         ):
             rows.append((name, purpose, grain, 'Surface de métadonnées en lecture seule.',
                          'Pas de données scientifiques et pas de garantie de couverture des sources externes.', example))
+        rows = [(*row, schema_map if row[0] == 'overview' else own_columns.get(row[0], '')) for row in rows]
         literals = sql.SQL(',').join(sql.SQL('({})').format(sql.SQL(',').join(map(sql.Literal, row))) for row in rows)
         conn.execute(sql.SQL('CREATE OR REPLACE VIEW catalogue.warehouse_context '
-                            '(topic,purpose,grain,relations,caveats,sql_example) AS SELECT * FROM (VALUES {}) AS entries').format(literals))
+                            '(topic,purpose,grain,relations,caveats,sql_example,column_list) AS SELECT * FROM (VALUES {}) AS entries').format(literals))
         conn.execute('''CREATE OR REPLACE VIEW catalogue.dataset_versions AS
             SELECT id AS dataset_version_id,source_instance,dataset_key,version_key,sha256
             FROM warehouse.dataset_version''')
@@ -126,7 +139,8 @@ def publish(conn):
         metadata_columns = {
             'warehouse_context': dict(topic='Nom de fiche; overview pour le contexte global.', purpose='Usage et périmètre métier.',
                 grain='Grain des lignes; ne pas supposer leur unicité sans lire la fiche.', relations='Clés et précautions de jointure.',
-                caveats='Limites scientifiques et techniques à respecter.', sql_example='Exemple SQL descriptif; ne prouve aucune présence de données.'),
+                caveats='Limites scientifiques et techniques à respecter.', sql_example='Exemple SQL descriptif; ne prouve aucune présence de données.',
+                column_list='Colonnes réelles de la vue (nom et type), lues dans le schéma déployé; pour overview, toutes les vues lisibles et leurs colonnes.'),
             'dataset_versions': dict(dataset_version_id='Clé technique de warehouse.dataset_version.',
                 source_instance='Source enregistrée; derived désigne des résultats calculés.',
                 dataset_key='Identifiant du jeu de données dans sa source.', version_key='Version native/enregistrée du jeu.',

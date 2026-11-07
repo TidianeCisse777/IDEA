@@ -32,6 +32,18 @@ class WarehouseContextTests(unittest.TestCase):
         self.assertIn('ce sample', column_description('ecotaxa_sample_taxa', 'n_validated'))
         self.assertIn('projet', column_description('ecotaxa_projects', 'n_validated'))
 
+    def test_agents_explore_the_real_columns_before_writing_sql(self):
+        # 47 guessed names in 142 battery cases, 21 of them the first query right after the overview
+        # (title for ecotaxa_project_title, explore.zones): the sheets now carry the deployed columns.
+        from publish_warehouse_context import OVERVIEW
+        import warehouse_connect
+        for text in (OVERVIEW, warehouse_connect.SERVER_INSTRUCTIONS):
+            self.assertIn('column_list', text)
+            self.assertIn('jamais', text)
+        for name in ('warehouse.toml', 'warehouse.connect.toml'):
+            toml = (Path(__file__).resolve().parents[1] / 'dbhub' / name).read_text(encoding='utf-8')
+            self.assertIn('sql_example,column_list FROM catalogue.warehouse_context', toml)
+
     def test_taxon_identifiers_depend_on_source(self):
         self.assertNotEqual(column_description('filet_data', 'taxon_id'),
                             column_description('uvp_objects', 'taxon_id'))

@@ -26,10 +26,10 @@ source = "neolab"
 [[tools]]
 name = "warehouse_context"
 source = "neolab"
-description = "Lire en premier topic=overview pour le contexte métier NeoLab, puis topic=nom_de_vue pour grain, clés, limites et exemple SQL. Avant un graphique, lire topic=graphs : bibliothèques Python, style, unités, confiance, provenance et exports. topic=all donne toutes les fiches. Consulter catalogue.warehouse_dictionary pour les colonnes/types/transformations et catalogue.dataset_versions pour les versions réellement enregistrées. Un catalogue existant ne prouve pas la présence de données."
+description = "Lire en premier topic=overview pour le contexte métier NeoLab, puis topic=nom_de_vue pour grain, clés, limites, exemple SQL et colonnes réelles (column_list). overview donne les colonnes de toutes les vues : n'écrire du SQL qu'avec ces noms, jamais deviner. Avant un graphique, lire topic=graphs : bibliothèques Python, style, unités, confiance, provenance et exports. topic=all donne toutes les fiches. Consulter catalogue.warehouse_dictionary pour les colonnes/types/transformations et catalogue.dataset_versions pour les versions réellement enregistrées. Un catalogue existant ne prouve pas la présence de données."
 readonly = true
 max_rows = 100
-statement = "SELECT topic,purpose,grain,relations,caveats,sql_example FROM catalogue.warehouse_context WHERE topic=COALESCE($1::text,'overview') OR $1::text='all' ORDER BY topic"
+statement = "SELECT topic,purpose,grain,relations,caveats,sql_example,column_list FROM catalogue.warehouse_context WHERE topic=COALESCE($1::text,'overview') OR $1::text='all' ORDER BY topic"
 
 [[tools.parameters]]
 name = "topic"

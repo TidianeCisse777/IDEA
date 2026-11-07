@@ -248,7 +248,8 @@ SERVER_INSTRUCTIONS = (
     "Amundsen (température, salinité, sigma-t, oxygène, nitrate, fluorescence, pH) et les zones maritimes. "
     "Une question sur le plancton, les copépodes, l'UVP, EcoTaxa, les CTD, une campagne, une zone ou ces mesures "
     "porte sur ces données, même courte : y répondre avec execute_sql, jamais de mémoire ni par une recherche web. "
-    "Lire d'abord warehouse_context(topic=overview). Pour un taxon ou un groupe (« les copépodes »), partir de "
+    "Lire d'abord warehouse_context(topic=overview) : son champ column_list donne les colonnes réelles de toutes "
+    "les vues; explorer avant de générer, n'écrire du SQL qu'avec ces noms, jamais un nom deviné. Pour un taxon ou un groupe (« les copépodes »), partir de "
     "explore.ecotaxa_sample_taxa et de la lignée EcoTaxa (taxon_lineage), pas d'une liste de mémoire. Si la question est floue (projet, taxon, profondeur, année, "
     "objets validés ou non), dire le choix retenu ou demander une précision, et donner les requêtes exécutées."
 )
