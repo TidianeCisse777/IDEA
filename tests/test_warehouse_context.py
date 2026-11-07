@@ -44,6 +44,17 @@ class WarehouseContextTests(unittest.TestCase):
             toml = (Path(__file__).resolve().parents[1] / 'dbhub' / name).read_text(encoding='utf-8')
             self.assertIn('sql_example,column_list FROM catalogue.warehouse_context', toml)
 
+    def test_total_abundance_separates_organisms_from_detritus(self):
+        # 7 novembre 2026: "trace le profil vertical du projet" gave all categories of 10101 as ind/m3,
+        # 97 % detritus. And the agent believed empty bins had no row; they carry zeros.
+        caveats = VIEWS['uvp_taxon_abundance']['caveats']
+        for text in ("object_class = \\'organism\\'", 'particules', 'zéros compris'):
+            self.assertIn(text.replace('\\', ''), caveats.replace('\\', ''))
+        self.assertIn('not_living', column_description('ecotaxa_taxa', 'object_class'))
+        self.assertIn('individus/m³', GRAPHICS['caveats'])
+        from publish_warehouse_context import OVERVIEW
+        self.assertIn('profil vertical', OVERVIEW)
+
     def test_taxon_identifiers_depend_on_source(self):
         self.assertNotEqual(column_description('filet_data', 'taxon_id'),
                             column_description('uvp_objects', 'taxon_id'))

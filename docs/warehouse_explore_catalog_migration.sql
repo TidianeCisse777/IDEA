@@ -97,7 +97,8 @@ SELECT
     (o.minor_px * a.pixel_size_mm * 1000) AS minor_um,
     (o.area_px * (a.pixel_size_mm * 1000) ^ 2) AS area_um2,
     t.lineage AS taxon_lineage,
-    t.taxon_type
+    t.taxon_type,
+    t.object_class
 FROM warehouse.ecotaxa_object o
 JOIN warehouse.ecotaxa_sample s ON s.id = o.sample_id
 LEFT JOIN warehouse.ecotaxa_project p ON p.project_id = s.project_id
@@ -129,14 +130,15 @@ SELECT
     st.n_validated,
     st.n_predicted,
     st.n_dubious,
-    st.n_unclassified
+    st.n_unclassified,
+    t.object_class
 FROM warehouse.ecotaxa_sample_taxon st
 JOIN warehouse.ecotaxa_sample s ON s.id = st.sample_id
 LEFT JOIN warehouse.ecotaxa_project p ON p.project_id = s.project_id
 LEFT JOIN warehouse.ecotaxa_taxon t ON t.taxon_id = st.taxon_id;
 
 COMMENT ON VIEW explore.ecotaxa_sample_taxa IS
-    'Un sample EcoTaxa × une catégorie par ligne (environ 40 000 lignes) : nombre d''objets par statut d''annotation, avec la lignée du taxon. Point de départ pour chercher un taxon (taxon_name ILIKE ''%oithon%''), savoir où il est, ou compter des objets par taxon, projet, sample, zone ou date : réponse en moins d''une seconde, là où explore.ecotaxa_objects balaie 15 M lignes. Tous les copépodes : ''Copepoda'' = ANY(taxon_lineage), qui inclut les organismes entiers (taxons, stades et vues : female+lateral<Metridia longa, cvstage..., small<, ovigerous) mais aussi des catégories qui ne sont pas un copépode entier vivant (part<, cut<, antenna<, copepoda eggs, dead<) ou incertaines (like<, badfocus<, multiple<) : lister les catégories et dire lesquelles sont gardées. taxon_type M ne veut pas dire fragment (les stades sont M). taxon_id NULL = objets jamais classés. Pas de profondeur ni de taille : pour cela, explore.ecotaxa_objects filtré par projet ou sample.';
+    'Un sample EcoTaxa × une catégorie par ligne (environ 40 000 lignes) : nombre d''objets par statut d''annotation, avec la lignée du taxon. Point de départ pour chercher un taxon (taxon_name ILIKE ''%oithon%''), savoir où il est, ou compter des objets par taxon, projet, sample, zone ou date : réponse en moins d''une seconde, là où explore.ecotaxa_objects balaie 15 M lignes. Tous les copépodes : ''Copepoda'' = ANY(taxon_lineage), qui inclut les organismes entiers (taxons, stades et vues : female+lateral<Metridia longa, cvstage..., small<, ovigerous) mais aussi des catégories qui ne sont pas un copépode entier vivant (part<, cut<, antenna<, copepoda eggs, dead<) ou incertaines (like<, badfocus<, multiple<) : lister les catégories et dire lesquelles sont gardées. taxon_type M ne veut pas dire fragment (les stades sont M). object_class sépare organismes, non vivants (détritus...), catégories techniques et provisoires. taxon_id NULL = objets jamais classés. Pas de profondeur ni de taille : pour cela, explore.ecotaxa_objects filtré par projet ou sample.';
 
 CREATE OR REPLACE VIEW explore.ecotaxa_taxa AS
 SELECT
@@ -153,7 +155,9 @@ SELECT
     c.n_objects,
     c.n_validated,
     c.n_predicted,
-    c.n_dubious
+    c.n_dubious,
+    'ecotaxa:id:' || t.taxon_id AS taxon_key,
+    t.object_class
 FROM warehouse.ecotaxa_taxon t
 LEFT JOIN (
     SELECT st.taxon_id, count(DISTINCT s.project_id) AS n_projects, count(*) AS n_samples,
@@ -165,7 +169,7 @@ LEFT JOIN (
 ) c ON c.taxon_id = t.taxon_id;
 
 COMMENT ON VIEW explore.ecotaxa_taxa IS
-    'Une catégorie EcoTaxa présente dans le warehouse par ligne : nom tel qu''il apparaît dans les objets (taxon_name), lignée jusqu''à la racine (taxon_lineage, le taxon en premier), type P (phylogénétique) ou M (morphologique : stade, vue, taille, mais aussi part, cut, dead, eggs, like...), rang, AphiaID WoRMS, et nombre de projets, samples et objets lisibles par le compte. Pour savoir quelles catégories sont des copépodes : WHERE ''Copepoda'' = ANY(taxon_lineage), puis décider (et dire) si part<, cut<, antenna<, eggs, dead<, like<, badfocus<, multiple< sont gardés; taxon_short_name donne le qualificatif (part, cut, like...). Taxonomie EcoTaxa, chargée par scripts/populate_ecotaxa_taxonomy.py.';
+    'Une catégorie EcoTaxa présente dans le warehouse par ligne : nom tel qu''il apparaît dans les objets (taxon_name), lignée jusqu''à la racine (taxon_lineage, le taxon en premier), type P (phylogénétique) ou M (morphologique : stade, vue, taille, mais aussi part, cut, dead, eggs, like...), rang, AphiaID WoRMS, et nombre de projets, samples et objets lisibles par le compte. object_class dit ce qu''est un objet de la catégorie : organism (sous Biota), not_living (détritus, artefacts, fèces), technical (badsegmentation, oversegmented, duplicate), temporary (catégories provisoires t0xx). taxon_key = explore.uvp_taxon_abundance.taxon_key, pour classer les abondances UVP. Pour savoir quelles catégories sont des copépodes : WHERE ''Copepoda'' = ANY(taxon_lineage), puis décider (et dire) si part<, cut<, antenna<, eggs, dead<, like<, badfocus<, multiple< sont gardés; taxon_short_name donne le qualificatif (part, cut, like...). Taxonomie EcoTaxa, chargée par scripts/populate_ecotaxa_taxonomy.py.';
 
 CREATE OR REPLACE VIEW explore.ctd_profiles AS
 SELECT

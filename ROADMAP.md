@@ -4,6 +4,27 @@
 
 **Dernière mise à jour :** 7 novembre 2026
 
+### 7 novembre 2026 — Organismes ou particules : profil vertical d'une question vague (phase 2)
+
+- Essai réel, « Trace le profil vertical du projet dans la Baie de Baffin. » : l'agent a choisi 10101 (dit) et
+  tracé l'abondance de toutes les catégories en « ind/m³ ». En base, 99 % des objets validés de 10101 en Baie
+  de Baffin sont non vivants (97 % de `detritus<not-living`); son pic de 19 121 « ind/m³ » à 675 m était de
+  détritus (38 053 sur 38 388). Il a aussi écrit que les tranches sans objet validé manquaient : faux, les
+  4 469 tranches y sont, zéros compris.
+- `warehouse.ecotaxa_taxon.object_class`, colonne générée depuis la racine de la lignée : organism (Biota,
+  307 catégories), not_living (détritus, artefacts, fèces : 16 catégories, 11,7 M objets), technical
+  (badsegmentation, oversegmented, duplicate), temporary (t0xx). Exposée dans `ecotaxa_taxa` (avec
+  `taxon_key` pour joindre `uvp_taxon_abundance`), `ecotaxa_sample_taxa` et `ecotaxa_objects`.
+- Fiches : `uvp_taxon_abundance` (total d'organismes par `object_class = 'organism'`, sinon concentration de
+  particules en objets/m³; zéros présents dans chaque tranche), `graphs`, `overview` (une demande sans
+  grandeur se lit de plusieurs façons : dire la grandeur et le projet retenus, ou demander). Nouveau cas
+  `viz_vertical_profile_vague` (la réponse du matin échoue au critère, une réponse correcte le passe).
+- Rejoué avec un vrai agent : 1/1; abondance d'organismes seulement (39 à 63 ind/m³ en surface, recalculé en
+  base à l'identique), détritus exclus et chiffrés, choix du projet et de la grandeur annoncés, alternative
+  CTD proposée. Limite : son script recopie les valeurs du résultat SQL (l'agent n'a pas d'identifiants pour
+  relancer la requête depuis Python), la requête exacte est dans le fichier de provenance.
+- Tests : 160 unitaires et réels verts.
+
 ### 7 novembre 2026 — Explorer le schéma avant de générer le SQL (phase 2)
 
 - Traces de 142 cas : 47 requêtes sur un nom inventé, toutes après lecture de `overview`; 21 étaient la

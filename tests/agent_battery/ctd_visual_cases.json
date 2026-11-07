@@ -77,6 +77,17 @@
       "expect_sql": "SELECT count(DISTINCT uvp_profile_id) FROM explore.uvp_samples WHERE cruise_key = 'am_leg4'",
       "must_mention": ["(?i)valid"],
       "trap": "les objets prédits dominent : montrer aussi les validés"
+    },
+    {
+      "id": "viz_vertical_profile_vague",
+      "question": "Trace le profil vertical du projet dans la Baie de Baffin.",
+      "tools": "files",
+      "expect_files": ["*.png"],
+      "values_in": "answer_and_files",
+      "expect_sql": "SELECT 0",
+      "must_mention": ["(?i)(exclu|sans|hors|retir|écart|seulement les organismes|organismes? seulement|object_class)[^.\\n]{0,80}(détritus|non[ -]vivant|not.living|organism)|(détritus|non[ -]vivant|not.living)[^.\\n]{0,80}(exclu|retir|écart|pas compt)|concentration de particules",
+                       "(?i)\\?|choisi|retenu|hypoth|par défaut|interpr|CTD|température"],
+      "trap": "question vague (quel projet, quelle grandeur) ; « tous taxons » UVP = 97 % de détritus dans 10101 : les tracer en individus/m³ est faux (vu le 7 novembre 2026, pic de détritus à 675 m présenté comme une abondance)"
     }
   ]
 }

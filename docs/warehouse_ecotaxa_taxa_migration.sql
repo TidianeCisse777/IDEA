@@ -32,6 +32,21 @@ CREATE TABLE IF NOT EXISTS warehouse.ecotaxa_taxon (
     source_uri text NOT NULL,
     fetched_at timestamptz NOT NULL DEFAULT now()
 );
+-- What an object of this category is, from the root of its EcoTaxa lineage. Found
+-- live (7 novembre 2026): asked for "the vertical profile of the project", an agent
+-- plotted the abundance of all categories of project 10101 as "ind/m3"; 97 % of
+-- those objects were detritus<not-living, and its 675 m peak was detritus.
+-- organism: under Biota; not_living: detritus, artefacts, feces; technical: Biota
+-- categories that are segmentation or duplicate flags; temporary: EcoTaxa t0xx.
+ALTER TABLE warehouse.ecotaxa_taxon ADD COLUMN IF NOT EXISTS object_class text GENERATED ALWAYS AS (
+    CASE
+        WHEN lineage[cardinality(lineage)] = 'not-living' THEN 'not_living'
+        WHEN lineage[cardinality(lineage)] = 'temporary' THEN 'temporary'
+        WHEN lineage[cardinality(lineage)] = 'Biota'
+             AND lineage[cardinality(lineage) - 1] IN ('badsegmentation', 'oversegmented', 'duplicate') THEN 'technical'
+        WHEN lineage[cardinality(lineage)] = 'Biota' THEN 'organism'
+        ELSE 'unknown'
+    END) STORED;
 CREATE INDEX IF NOT EXISTS ecotaxa_taxon_id_lineage_idx ON warehouse.ecotaxa_taxon USING gin (id_lineage);
 CREATE INDEX IF NOT EXISTS ecotaxa_taxon_lineage_idx ON warehouse.ecotaxa_taxon USING gin (lineage);
 COMMENT ON TABLE warehouse.ecotaxa_taxon IS
