@@ -111,6 +111,25 @@ def resolve_sample_links(
     return links, missing
 
 
+ZONE_FIELDS = ("marine_zone_key", "marine_zone_name", "marine_zone_source", "marine_zone_version",
+               "marine_zone_assignment_status")
+
+
+def profile_zone(linked):
+    """Zone of a UVP profile from its linked EcoTaxa samples, as one block.
+
+    Samples that disagree on the zone (seen: GreenEdge 2016 profiles at 70 N, Baie de
+    Baffin in project 149, Detroit de Davis in 20890) make the profile AMBIGUOUS, like
+    overlapping NeoLab zones; taking each field separately left an empty zone marked
+    assigned."""
+    def common(key):
+        values = {s[key] for s in linked if s.get(key) is not None}
+        return next(iter(values)) if len(values) == 1 else None
+    if len({s["marine_zone_key"] for s in linked if s.get("marine_zone_key") is not None}) > 1:
+        return ("AMBIGUOUS", "AMBIGUOUS", common("marine_zone_source"), common("marine_zone_version"), "ambiguous")
+    return tuple(common(key) for key in ZONE_FIELDS)
+
+
 def task_link_from_response(url: str, html: str) -> str:
     """Never pick an arbitrary task from the account's global task list."""
     match = re.fullmatch(r"/Task/Show/\d+", urlparse(url).path)
@@ -646,11 +665,7 @@ def load_project(
                     common("lat_avg"),
                     common("lon_avg"),
                     common("datetime_min"),
-                    common("marine_zone_key"),
-                    common("marine_zone_name"),
-                    common("marine_zone_source"),
-                    common("marine_zone_version"),
-                    common("marine_zone_assignment_status"),
+                    *profile_zone(linked),
                 ),
             ).fetchone()["id"]
         with (

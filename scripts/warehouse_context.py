@@ -128,7 +128,7 @@ VIEWS = {
         'Métadonnées des profils UVP liés à un sample EcoTaxa.',
         'Profil UVP × liaison sample EcoTaxa; plusieurs liaisons par profil possibles.',
         'uvp_profile_id = uvp_taxon_abundance.profile_id ou ecopart_bins.profile_id; ecotaxa_sample_id = ecotaxa_ctd_profile.ecotaxa_sample_id.',
-        'INNER JOIN : les profils sans sample EcoTaxa lié sont absents. COUNT(DISTINCT uvp_profile_id) pour compter les profils. Les zones préfèrent EcoTaxa puis EcoPart. '
+        'INNER JOIN : les profils sans sample EcoTaxa lié sont absents. COUNT(DISTINCT uvp_profile_id) pour compter les profils. marine_zone_key est ici la zone du sample EcoTaxa lié (sinon celle du profil) : un profil dont les samples se contredisent (profils GreenEdge 2016 vers 70° N : Baie de Baffin dans 149, Détroit de Davis dans 20890) apparaît dans les deux zones, et son profil est AMBIGUOUS (absent de zone_membership s’il n’a pas de coordonnées propres). Dire quel filtre de zone est utilisé quand le compte diffère de zone_membership. '
         'ecotaxa_project_title est le nom natif du projet, pour affichage uniquement (peut être NULL); ecotaxa_project_id reste la clé stable.',
         'SELECT uvp_profile_id,sample_name,station_key,sampled_at FROM explore.uvp_samples LIMIT 20;'),
     'uvp_objects': view(

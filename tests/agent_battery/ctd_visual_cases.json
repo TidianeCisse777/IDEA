@@ -46,7 +46,8 @@
       "expect_files": ["*.png"],
       "values_in": "answer_and_files",
       "expect_sql": ["SELECT count(DISTINCT row_id) FROM explore.zone_membership WHERE row_kind = 'uvp_profile' AND zone_key = 'Baie de Baffin'",
-                     "SELECT count(DISTINCT row_id) FROM explore.zone_membership WHERE row_kind = 'uvp_profile' AND zone_key = 'Baie de Baffin' AND geometry_resolution = 'full'"],
+                     "SELECT count(DISTINCT row_id) FROM explore.zone_membership WHERE row_kind = 'uvp_profile' AND zone_key = 'Baie de Baffin' AND geometry_resolution = 'full'",
+                     "SELECT count(DISTINCT uvp_profile_id) FROM explore.uvp_samples WHERE marine_zone_key = 'Baie de Baffin'"],
       "must_mention": ["(?i)coordonn|position|localis"],
       "trap": "196 profils localisés et 47 positionnés par leur sample EcoTaxa (GreenEdge 2016) : en placer certains sans le dire, ou ignorer les 47 sans le dire"
     },

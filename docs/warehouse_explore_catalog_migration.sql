@@ -240,3 +240,13 @@ UPDATE warehouse.ctd_variable SET canonical_name = 'sigma-t (densité moins 1000
 WHERE variable_key = 'SIGT' AND canonical_name = 'densité';
 UPDATE warehouse.ctd_measurement SET variable_definition = 'sigma-t (densité moins 1000)'
 WHERE variable_key = 'SIGT' AND variable_definition = 'densité';
+
+-- UVP profiles whose linked EcoTaxa samples disagree on the zone were loaded with
+-- an empty zone marked 'assigned' (3 GreenEdge 2016 profiles at 70 N: Baie de
+-- Baffin in project 149, Detroit de Davis in 20890), so zone_membership dropped
+-- them silently. They are AMBIGUOUS, as populate_ecopart.py now writes; one-time, guarded.
+UPDATE warehouse.uvp_profile u
+SET marine_zone_key = 'AMBIGUOUS', marine_zone_name = 'AMBIGUOUS', marine_zone_assignment_status = 'ambiguous'
+WHERE u.marine_zone_key IS NULL AND u.marine_zone_assignment_status = 'assigned'
+  AND (SELECT count(DISTINCT s.marine_zone_key) FROM warehouse.uvp_ecotaxa l
+       JOIN warehouse.ecotaxa_sample s ON s.id = l.ecotaxa_sample_id WHERE l.uvp_profile_id = u.id) > 1;

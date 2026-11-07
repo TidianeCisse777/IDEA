@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from populate_ecopart import parse_export, resolve_sample_links, task_link_from_response
+from populate_ecopart import parse_export, profile_zone, resolve_sample_links, task_link_from_response
 
 
 def test_bin_edges_normalized_and_leading_zero_profile_preserved():
@@ -200,3 +200,16 @@ def test_task_identity_from_creation_confirmation_without_link():
         task_link_from_response(url, "Task 1 subprocess Created Task 2 subprocess Created")
     with pytest.raises(ValueError):
         task_link_from_response(url, "<p>rien</p>")
+
+
+def test_profile_zone_is_ambiguous_when_its_samples_disagree():
+    # GreenEdge 2016 at 70 N: the same profile is Baie de Baffin in project 149 and
+    # Detroit de Davis in 20890; it was loaded with an empty zone marked "assigned".
+    zone = dict(marine_zone_source="IHO Marine Regions v3", marine_zone_version="registry-v1",
+                marine_zone_assignment_status="assigned")
+    baffin = dict(zone, marine_zone_key="Baie de Baffin", marine_zone_name="Baie de Baffin")
+    davis = dict(zone, marine_zone_key="Détroit de Davis", marine_zone_name="Détroit de Davis")
+    assert profile_zone([baffin, davis]) == ("AMBIGUOUS", "AMBIGUOUS", "IHO Marine Regions v3", "registry-v1", "ambiguous")
+    assert profile_zone([baffin, dict(baffin)]) == ("Baie de Baffin", "Baie de Baffin", "IHO Marine Regions v3",
+                                                    "registry-v1", "assigned")
+    assert profile_zone([]) == (None, None, None, None, None)
