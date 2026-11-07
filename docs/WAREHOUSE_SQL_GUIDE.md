@@ -47,6 +47,8 @@ Toutes les vues de la section suivante sont dans `explore` ; `dataset_catalog` e
 |---|---|
 | Quels projets, quels instruments, combien d'objets validés ? | `ecotaxa_projects` |
 | Les samples d'un projet (date, position, zone, comptes par statut) | `ecotaxa_samples` |
+| Où est un taxon, combien d'objets par taxon, projet, sample ou statut | `ecotaxa_sample_taxa` (rapide) |
+| Quelles catégories appartiennent à un groupe (« les copépodes »), lignée, rang, AphiaID | `ecotaxa_taxa` |
 | Les objets : taxon, statut, profondeur, taille | `ecotaxa_objects` (15 M lignes : toujours filtrer par projet ou sample) |
 | Les profils UVP et leurs samples EcoTaxa | `uvp_projects`, `uvp_samples` |
 | Une abondance UVP (ind/m³) par taxon et profondeur | `uvp_taxon_abundance` |
@@ -63,17 +65,18 @@ Toutes les vues de la section suivante sont dans `explore` ; `dataset_catalog` e
 | Clé | Désigne | Vues |
 |---|---|---|
 | `ecotaxa_project_id` | un projet EcoTaxa | `ecotaxa_*`, `uvp_*` |
-| `ecotaxa_sample_id` | un sample EcoTaxa (clé technique) | `ecotaxa_samples`, `ecotaxa_objects`, `uvp_samples`, `uvp_objects` |
+| `ecotaxa_sample_id` | un sample EcoTaxa (clé technique) | `ecotaxa_samples`, `ecotaxa_objects`, `ecotaxa_sample_taxa`, `uvp_samples`, `uvp_objects` |
 | `ecotaxa_native_sample_id` | le numéro du sample dans EcoTaxa | `ecotaxa_samples`, `uvp_samples` |
 | `uvp_profile_id` | un profil UVP | toutes les vues `uvp_*`, `ecopart_bins`, `zone_membership` (`row_id` quand `row_kind = 'uvp_profile'`) |
 | `uvp_bin_id` | une tranche de profondeur d'un profil UVP | `uvp_objects`, `uvp_object_sizes`, `uvp_taxon_abundance`, `ecopart_bins`, `uvp_particle_sizes` |
 | `ctd_profile_id` | un profil CTD | `ctd_*`, `ecotaxa_ctd*`, `uvp_ctd`, `filet_ctd` |
+| `taxon_id` | une catégorie EcoTaxa | `ecotaxa_objects`, `ecotaxa_sample_taxa`, `ecotaxa_taxa` |
 | `taxon_key` | un taxon UVP (`ecotaxa:id:N`) ; son nom est dans `taxon_name` | `uvp_taxon_abundance`, `uvp_object_sizes` |
 
 `profile_id` et `bin_id` (dans `ecopart_bins` et `uvp_taxon_abundance`) sont les anciens noms de
 `uvp_profile_id` et `uvp_bin_id`, gardés pour ne pas casser les requêtes existantes.
 
-## Cinq pièges
+## Six pièges
 
 1. **Validé ou prédit.** `annotation_status` vaut `validated` (vu par un humain), `predicted`
    (classification automatique), `dubious`, ou NULL (jamais classé). Les abondances existent en deux
@@ -90,12 +93,16 @@ Toutes les vues de la section suivante sont dans `explore` ; `dataset_catalog` e
 4. **Abondance = objets / volume.** Seules les vues UVP portent un volume échantillonné. Agréger par
    `SUM(objets) / SUM(volume) × 1000`, pas par moyenne de concentrations, et compter le volume d'une
    tranche une seule fois.
-5. **NULL n'est pas zéro.** Une taille sans calibration (LOKI), une coordonnée manquante ou un statut
+5. **Un groupe de taxons se lit dans la lignée.** `'Copepoda' = ANY(taxon_lineage)` donne toutes les catégories
+   sous Copepoda : taxons, stades et vues (`female+lateral<Metridia longa`), mais aussi `part<`, `cut<`,
+   `antenna<`, `copepoda eggs`, `dead<` et des catégories incertaines (`like<`, `badfocus<`, `multiple<`).
+   Choisir lesquelles garder et le dire. `taxon_type = 'M'` ne veut pas dire fragment : les stades sont M.
+6. **NULL n'est pas zéro.** Une taille sans calibration (LOKI), une coordonnée manquante ou un statut
    absent restent NULL.
 
 ## Exemples
 
-Testés sur la base réelle avec un compte de lecture (3 novembre 2026).
+Testés sur la base réelle avec un compte de lecture (3 et 7 novembre 2026).
 
 ```sql
 -- Projets, du plus gros au plus petit, avec la part d'objets validés
@@ -128,6 +135,16 @@ JOIN explore.zone_membership m ON m.row_kind = 'uvp_profile' AND m.row_id = a.uv
 WHERE m.zone_key = 'Baie de Baffin' AND a.taxon_name = 'Copepoda<Multicrustacea'
   AND a.annotation_policy LIKE 'validated_only:%' AND a.depth_max_m <= 200
 GROUP BY 1 ORDER BY 1;
+
+-- Où sont les Oithonidae, et combien sont validés (moins d'une seconde)
+SELECT ecotaxa_project_id, taxon_name, sum(n_validated) AS valides, sum(n_objects) AS objets
+FROM explore.ecotaxa_sample_taxa WHERE taxon_name ILIKE '%oithon%' GROUP BY 1, 2 ORDER BY 1;
+
+-- Les catégories de copépodes d'un projet, avec leur nombre d'objets validés
+SELECT taxon_name, taxon_type, sum(n_validated) AS valides
+FROM explore.ecotaxa_sample_taxa
+WHERE ecotaxa_project_id = 14859 AND 'Copepoda' = ANY(taxon_lineage)
+GROUP BY 1, 2 ORDER BY 3 DESC;
 
 -- Un profil de température CTD
 SELECT round(depth_m) AS profondeur_m, avg(value) AS temperature_c

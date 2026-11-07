@@ -270,7 +270,7 @@ Une carte des données est aussi visible dans le navigateur web à l'adresse htt
 | EcoTaxa | 23 projets (UVP, Zooscan, LOKI), 6 138 samples, 15 050 002 objets : taxon, statut d'annotation (6 645 676 validés, 7 700 806 prédits, 14 319 douteux, 689 201 jamais classés), profondeur, taille |
 | EcoPart (UVP) | 12 projets, 686 profils, 71 520 tranches de profondeur, abondances par taxon (tous objets, ou validés seulement) |
 | CTD Amundsen | 456 profils, 5 130 421 mesures (température, salinité, densité, oxygène, nitrate, fluorescence, pH) |
-| Référentiels | 65 zones maritimes, 18 stades de copépodes |
+| Référentiels | 65 zones maritimes, 18 stades de copépodes, taxonomie EcoTaxa des 340 catégories (lignée, rang, AphiaID) |
 
 Deux schémas se lisent : **`explore`** (les données ; point de départ `ecotaxa_projects`) et **`catalogue`**
 (mes droits, le catalogue des jeux de données, le dictionnaire des colonnes). Pour interroger la base

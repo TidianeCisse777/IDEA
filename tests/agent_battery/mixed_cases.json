@@ -36,6 +36,21 @@
       "trap": "Metridia longa est réparti en catégories par stade et par vue (female+lateral, cvstage+lateral...) : toutes les additionner"
     },
     {
+      "id": "taxa_leg3_copepods_by_lineage",
+      "question": "Combien de copépodes validés y a-t-il dans am_leg3 ?",
+      "expect_sql": ["SELECT sum(n_validated) FROM explore.ecotaxa_sample_taxa WHERE ecotaxa_project_id = 14859 AND 'Copepoda' = ANY(taxon_lineage) AND taxon_name !~ '^(dead|part|antenna|cut|like|badfocus|multiple)<' AND taxon_name NOT ILIKE '%eggs%'",
+                     "SELECT sum(n_validated) FROM explore.ecotaxa_sample_taxa WHERE ecotaxa_project_id = 14859 AND 'Copepoda' = ANY(taxon_lineage)"],
+      "must_mention": ["(?i)lipid"],
+      "trap": "721 copépodes validés sont rangés sous « with visible lipid sac » (side<, top-bottom<), sans « copep » dans le nom : seule la lignée EcoTaxa les trouve (1 468 entiers, 1 485 avec morts, fragments, œufs, antennes; 747 si on ne cherche que par nom)"
+    },
+    {
+      "id": "taxa_where_oithona",
+      "question": "Dans quels projets EcoTaxa trouve-t-on des Oithona, et combien d'objets validés ?",
+      "expect_sql": "SELECT ecotaxa_project_id, sum(n_validated) FROM explore.ecotaxa_sample_taxa WHERE taxon_name ILIKE '%oithon%' GROUP BY 1 ORDER BY 1",
+      "must_mention": ["(?i)oithonidae"],
+      "trap": "pas de catégorie au genre Oithona : la famille Oithonidae, dans les Zooscan 801 et 802 seulement"
+    },
+    {
       "id": "taxa_loki_stages_present",
       "question": "Quels copépodes sont identifiés au stade de développement dans LOKI ArcticNet 2015 ?",
       "expect_sql": "SELECT 0",

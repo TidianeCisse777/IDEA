@@ -9,7 +9,7 @@ from warehouse_context import VIEWS, GRAPHICS, column_description
 
 class WarehouseContextTests(unittest.TestCase):
     def test_every_scientific_view_has_a_grain_and_caveat(self):
-        self.assertEqual(len(VIEWS), 27)
+        self.assertEqual(len(VIEWS), 29)
         for name, item in VIEWS.items():
             for key in ('purpose', 'grain', 'joins', 'caveats', 'example'):
                 self.assertTrue(item[key], (name, key))
@@ -19,6 +19,18 @@ class WarehouseContextTests(unittest.TestCase):
         self.assertIn('annotation_policy', VIEWS['uvp_taxon_abundance']['caveats'])
         self.assertIn('versions', VIEWS['filet_uvp_abundance']['caveats'])
         self.assertIn('multipl', VIEWS['uvp_objects']['caveats'])
+
+    def test_taxa_are_found_in_the_small_view_and_groups_by_lineage(self):
+        # 7 novembre 2026: taxon searches over ecotaxa_objects took 31.8 s (limit 30 s), and
+        # "copepods" were listed from memory; a stage category (female+lateral<Metridia longa) is
+        # type M like a fragment, so taxon_type must not be used to drop fragments.
+        self.assertIn('ecotaxa_sample_taxa', VIEWS['ecotaxa_objects']['caveats'])
+        caveats = VIEWS['ecotaxa_sample_taxa']['caveats']
+        for text in ("'Copepoda' = ANY(taxon_lineage)", 'de mémoire', 'part<', 'like<', 'ne veut pas dire fragment'):
+            self.assertIn(text, caveats)
+        self.assertIn('ne veut pas dire fragment', column_description('ecotaxa_taxa', 'taxon_type'))
+        self.assertIn('ce sample', column_description('ecotaxa_sample_taxa', 'n_validated'))
+        self.assertIn('projet', column_description('ecotaxa_projects', 'n_validated'))
 
     def test_taxon_identifiers_depend_on_source(self):
         self.assertNotEqual(column_description('filet_data', 'taxon_id'),

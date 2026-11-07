@@ -64,7 +64,9 @@ SELECT
     s.nb_predicted,
     s.nb_dubious,
     s.nb_unclassified,
-    EXISTS (SELECT 1 FROM warehouse.uvp_ecotaxa l WHERE l.ecotaxa_sample_id = s.id) AS has_uvp_profile
+    EXISTS (SELECT 1 FROM warehouse.uvp_ecotaxa l WHERE l.ecotaxa_sample_id = s.id) AS has_uvp_profile,
+    -- Same name as uvp_samples and ctd_profiles (agents asked for it 2 times in 103 cases).
+    s.datetime_min AS sampled_at
 FROM warehouse.ecotaxa_sample s
 LEFT JOIN warehouse.ecotaxa_project p ON p.project_id = s.project_id;
 
@@ -93,14 +95,77 @@ SELECT
     (o.esd_px * a.pixel_size_mm * 1000) AS esd_um,
     (o.major_px * a.pixel_size_mm * 1000) AS major_um,
     (o.minor_px * a.pixel_size_mm * 1000) AS minor_um,
-    (o.area_px * (a.pixel_size_mm * 1000) ^ 2) AS area_um2
+    (o.area_px * (a.pixel_size_mm * 1000) ^ 2) AS area_um2,
+    t.lineage AS taxon_lineage,
+    t.taxon_type
 FROM warehouse.ecotaxa_object o
 JOIN warehouse.ecotaxa_sample s ON s.id = o.sample_id
 LEFT JOIN warehouse.ecotaxa_project p ON p.project_id = s.project_id
-LEFT JOIN warehouse.ecotaxa_acquisition a ON a.acquisition_id = o.acquisition_id;
+LEFT JOIN warehouse.ecotaxa_acquisition a ON a.acquisition_id = o.acquisition_id
+LEFT JOIN warehouse.ecotaxa_taxon t ON t.taxon_id::text = o.category_id;
 
 COMMENT ON VIEW explore.ecotaxa_objects IS
-    'Un objet EcoTaxa par ligne, tous projets et instruments confondus (15 M lignes) : taxon, statut d''annotation, profondeur, taille en pixels et en unités réelles quand l''acquisition porte sa calibration (NULL sinon, notamment LOKI). Filtrer d''abord par ecotaxa_project_id ou ecotaxa_sample_id, et agréger dans la requête : un balayage complet dépasse le délai de 30 s. Pour de simples comptes par statut, explore.ecotaxa_samples suffit. Aucun volume échantillonné ici : pas d''abondance (ind/m³) sans passer par les vues UVP.';
+    'Un objet EcoTaxa par ligne, tous projets et instruments confondus (15 M lignes) : taxon, statut d''annotation, profondeur, taille en pixels et en unités réelles quand l''acquisition porte sa calibration (NULL sinon, notamment LOKI). Filtrer d''abord par ecotaxa_project_id ou ecotaxa_sample_id, et agréger dans la requête : un balayage complet dépasse le délai de 30 s. Pour de simples comptes par statut, explore.ecotaxa_samples suffit; pour chercher un taxon ou compter par taxon, explore.ecotaxa_sample_taxa (un filtre sur taxon_name ici peut dépasser 30 s). taxon_lineage : lignée EcoTaxa du taxon (lui-même en premier). Aucun volume échantillonné ici : pas d''abondance (ind/m³) sans passer par les vues UVP.';
+
+-- Taxa: found live, an agent could not find a taxon by name within 30 s (scan of
+-- the 15 M objects under row security) nor tell which categories are copepods.
+-- Both views read small tables (docs/warehouse_ecotaxa_taxa_migration.sql).
+CREATE OR REPLACE VIEW explore.ecotaxa_sample_taxa AS
+SELECT
+    st.sample_id AS ecotaxa_sample_id,
+    s.project_id AS ecotaxa_project_id,
+    p.title AS ecotaxa_project_title,
+    COALESCE(s.instrument, p.instrument) AS instrument,
+    s.sample_id AS ecotaxa_native_sample_id,
+    s.datetime_min AS sampled_at,
+    s.lat_avg AS latitude,
+    s.lon_avg AS longitude,
+    s.marine_zone_key,
+    st.taxon_id,
+    st.taxon_name,
+    t.taxon_type,
+    t.lineage AS taxon_lineage,
+    st.n_objects,
+    st.n_validated,
+    st.n_predicted,
+    st.n_dubious,
+    st.n_unclassified
+FROM warehouse.ecotaxa_sample_taxon st
+JOIN warehouse.ecotaxa_sample s ON s.id = st.sample_id
+LEFT JOIN warehouse.ecotaxa_project p ON p.project_id = s.project_id
+LEFT JOIN warehouse.ecotaxa_taxon t ON t.taxon_id = st.taxon_id;
+
+COMMENT ON VIEW explore.ecotaxa_sample_taxa IS
+    'Un sample EcoTaxa × une catégorie par ligne (environ 40 000 lignes) : nombre d''objets par statut d''annotation, avec la lignée du taxon. Point de départ pour chercher un taxon (taxon_name ILIKE ''%oithon%''), savoir où il est, ou compter des objets par taxon, projet, sample, zone ou date : réponse en moins d''une seconde, là où explore.ecotaxa_objects balaie 15 M lignes. Tous les copépodes : ''Copepoda'' = ANY(taxon_lineage), qui inclut les organismes entiers (taxons, stades et vues : female+lateral<Metridia longa, cvstage..., small<, ovigerous) mais aussi des catégories qui ne sont pas un copépode entier vivant (part<, cut<, antenna<, copepoda eggs, dead<) ou incertaines (like<, badfocus<, multiple<) : lister les catégories et dire lesquelles sont gardées. taxon_type M ne veut pas dire fragment (les stades sont M). taxon_id NULL = objets jamais classés. Pas de profondeur ni de taille : pour cela, explore.ecotaxa_objects filtré par projet ou sample.';
+
+CREATE OR REPLACE VIEW explore.ecotaxa_taxa AS
+SELECT
+    t.taxon_id,
+    t.display_name AS taxon_name,
+    t.taxon_name AS taxon_short_name,
+    t.taxon_type,
+    t.taxon_rank,
+    t.lineage AS taxon_lineage,
+    t.id_lineage AS taxon_id_lineage,
+    t.aphia_id,
+    c.n_projects,
+    c.n_samples,
+    c.n_objects,
+    c.n_validated,
+    c.n_predicted,
+    c.n_dubious
+FROM warehouse.ecotaxa_taxon t
+LEFT JOIN (
+    SELECT st.taxon_id, count(DISTINCT s.project_id) AS n_projects, count(*) AS n_samples,
+           sum(st.n_objects) AS n_objects, sum(st.n_validated) AS n_validated,
+           sum(st.n_predicted) AS n_predicted, sum(st.n_dubious) AS n_dubious
+    FROM warehouse.ecotaxa_sample_taxon st
+    JOIN warehouse.ecotaxa_sample s ON s.id = st.sample_id
+    GROUP BY st.taxon_id
+) c ON c.taxon_id = t.taxon_id;
+
+COMMENT ON VIEW explore.ecotaxa_taxa IS
+    'Une catégorie EcoTaxa présente dans le warehouse par ligne : nom tel qu''il apparaît dans les objets (taxon_name), lignée jusqu''à la racine (taxon_lineage, le taxon en premier), type P (phylogénétique) ou M (morphologique : stade, vue, taille, mais aussi part, cut, dead, eggs, like...), rang, AphiaID WoRMS, et nombre de projets, samples et objets lisibles par le compte. Pour savoir quelles catégories sont des copépodes : WHERE ''Copepoda'' = ANY(taxon_lineage), puis décider (et dire) si part<, cut<, antenna<, eggs, dead<, like<, badfocus<, multiple< sont gardés; taxon_short_name donne le qualificatif (part, cut, like...). Taxonomie EcoTaxa, chargée par scripts/populate_ecotaxa_taxonomy.py.';
 
 CREATE OR REPLACE VIEW explore.ctd_profiles AS
 SELECT

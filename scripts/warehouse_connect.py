@@ -248,7 +248,8 @@ SERVER_INSTRUCTIONS = (
     "Amundsen (température, salinité, sigma-t, oxygène, nitrate, fluorescence, pH) et les zones maritimes. "
     "Une question sur le plancton, les copépodes, l'UVP, EcoTaxa, les CTD, une campagne, une zone ou ces mesures "
     "porte sur ces données, même courte : y répondre avec execute_sql, jamais de mémoire ni par une recherche web. "
-    "Lire d'abord warehouse_context(topic=overview). Si la question est floue (projet, taxon, profondeur, année, "
+    "Lire d'abord warehouse_context(topic=overview). Pour un taxon ou un groupe (« les copépodes »), partir de "
+    "explore.ecotaxa_sample_taxa et de la lignée EcoTaxa (taxon_lineage), pas d'une liste de mémoire. Si la question est floue (projet, taxon, profondeur, année, "
     "objets validés ou non), dire le choix retenu ou demander une précision, et donner les requêtes exécutées."
 )
 
@@ -264,6 +265,55 @@ def with_instructions(line, initialize_id):
     own = message['result'].get('instructions')
     message['result']['instructions'] = SERVER_INSTRUCTIONS + ('\n\n' + own if own else '')
     return (json.dumps(message, ensure_ascii=False) + '\n').encode('utf-8')
+
+
+# What to do next, added to an SQL error DbHub returns (seen in 103 agent cases: 34 queries on a guessed
+# column name, 10 cancelled after 30 s, most of them a taxon search over the 15 M objects).
+ERROR_HINTS = (
+    (('statement timeout', 'canceling statement'),
+     "Requête arrêtée après 30 s. Filtrer par ecotaxa_project_id ou ecotaxa_sample_id et agréger dans la requête. "
+     "Pour chercher ou compter un taxon, utiliser explore.ecotaxa_sample_taxa (moins d'une seconde) plutôt que "
+     "explore.ecotaxa_objects (15 M lignes); les catégories et leur lignée sont dans explore.ecotaxa_taxa."),
+    (('does not exist',),
+     "Nom inconnu. Colonnes d'une vue : SELECT column_name, column_description FROM catalogue.warehouse_dictionary "
+     "WHERE view_name = '<vue>' (ou search_objects). Données dans le schéma explore, droits et dictionnaire dans "
+     "catalogue; warehouse_context(topic='<vue>') donne grain, clés et exemple."),
+    (('permission denied', 'read-only transaction'),
+     "Compte en lecture seule : lire les vues des schémas explore et catalogue (le schéma warehouse est fermé)."),
+)
+
+
+def with_hint(line):
+    """Add a hint to a failed SQL call's answer (MCP result with isError); any other line unchanged."""
+    if b'isError' not in line:
+        return line
+    try:
+        message = json.loads(line)
+        result = message['result']
+        if not result.get('isError'):
+            return line
+        changed = False
+        for item in result.get('content') or []:
+            text = item.get('text') if isinstance(item, dict) else None
+            if not isinstance(text, str):
+                continue
+            try:
+                payload = json.loads(text)
+            except ValueError:
+                payload = None
+            error = (payload.get('error') if isinstance(payload, dict) else text) or ''
+            hint = next((h for keys, h in ERROR_HINTS if any(k in error for k in keys)), None)
+            if hint is None:
+                continue
+            if isinstance(payload, dict):
+                payload['hint'] = hint
+                item['text'] = json.dumps(payload, ensure_ascii=False, indent=2)
+            else:
+                item['text'] = text + '\n' + hint
+            changed = True
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return line
+    return (json.dumps(message, ensure_ascii=False) + '\n').encode('utf-8') if changed else line
 
 
 def relay(command, values, trace_file=None):
@@ -332,6 +382,7 @@ def relay(command, values, trace_file=None):
             if updated is not line:
                 initialize_id = None  # done: only the answer to initialize carries the instructions
             line = updated
+        line = with_hint(line)
         sys.stdout.buffer.write(line)
         sys.stdout.buffer.flush()
         if trace_file is None:

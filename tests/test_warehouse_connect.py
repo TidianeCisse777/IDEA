@@ -446,3 +446,37 @@ class WorkspaceTests(unittest.TestCase):
             text = (folder / name).read_text(encoding='utf-8')
             self.assertIn('warehouse NeoLab', text)
             self.assertNotRegex(text, r'(?i)PASSWORD\s*=|postgres(ql)?://')
+
+
+class ErrorHintTests(unittest.TestCase):
+    """A failed SQL call comes back with what to do next (seen in agent traces: cancelled taxon
+    searches over the 15 M objects, guessed column names)."""
+
+    def setUp(self):
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        import warehouse_connect
+        self.module = warehouse_connect
+
+    def answer(self, error, is_error=True):
+        text = json.dumps({'success': False, 'error': error, 'code': 'EXECUTION_ERROR'}, indent=2)
+        return json.dumps({'jsonrpc': '2.0', 'id': 7, 'result': {'content': [{'type': 'text', 'text': text}],
+                                                                  'isError': is_error}}).encode() + b'\n'
+
+    def hint_of(self, line):
+        payload = json.loads(json.loads(line)['result']['content'][0]['text'])
+        return payload.get('hint'), payload['error']
+
+    def test_timeout_points_to_the_taxon_view(self):
+        hint, error = self.hint_of(self.module.with_hint(self.answer('canceling statement due to statement timeout')))
+        self.assertIn('explore.ecotaxa_sample_taxa', hint)
+        self.assertEqual(error, 'canceling statement due to statement timeout')
+
+    def test_unknown_column_points_to_the_dictionary(self):
+        hint, _ = self.hint_of(self.module.with_hint(self.answer('column "title" does not exist')))
+        self.assertIn('catalogue.warehouse_dictionary', hint)
+
+    def test_other_lines_pass_unchanged(self):
+        for line in (self.answer('division by zero'), self.answer('column "x" does not exist', is_error=False),
+                     b'{"jsonrpc": "2.0", "id": 5, "result": {"content": [{"type": "text", "text": "ok"}]}}\n',
+                     b'not json isError\n'):
+            self.assertIs(self.module.with_hint(line), line)

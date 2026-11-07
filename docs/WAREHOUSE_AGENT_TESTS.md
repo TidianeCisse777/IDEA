@@ -29,7 +29,9 @@ Prérequis : le warehouse déployé et chargé, Claude Code connecté (`claude`)
 Deux batteries : `tests/agent_battery/ecotaxa_cases.json` (projets, objets, annotation, doublons, tailles) et
 `tests/agent_battery/ctd_visual_cases.json` (CTD : zones, salinité, température, sigma-t, pression, contrôle
 qualité; et quatre graphiques ou cartes, avec `"tools": "files"` pour que l'agent écrive et exécute son code).
-Une troisième, `tests/agent_battery/mixed_cases.json`, pose des questions ambiguës, mélange taxons et stades,
+Une troisième, `tests/agent_battery/mixed_cases.json`, pose des questions ambiguës, mélange taxons et stades
+(dont les copépodes rangés sous « with visible lipid sac », que seule la lignée EcoTaxa retrouve, et Oithona,
+présent seulement comme famille Oithonidae),
 croise CTD et UVP, et mène trois conversations en plusieurs tours (`"turns"`, chaque tour reprend la session).
 Toute réponse sans requête SQL échoue (réponse de mémoire). Les dossiers de travail sont hors du dépôt.
 `--workspace` pose les questions dans un dossier de travail NeoLab (`warehouse_connect.py workspace`) au lieu

@@ -17,6 +17,8 @@ Statut d'annotation : obj.classif_qual (V/P/D) devient annotation_status
 category_id. Les compteurs nb_validated/nb_predicted/nb_dubious/nb_unclassified
 des samples sont recalcules depuis les objets charges. --refresh relit les
 objets deja charges pour completer ces champs sans dupliquer de ligne.
+En fin de chargement, scripts/populate_ecotaxa_taxonomy.py recompte les objets
+par sample et taxon et lit la lignee EcoTaxa des nouvelles categories.
 """
 from __future__ import annotations
 import argparse, csv, io, json, os, subprocess, time
@@ -180,4 +182,8 @@ def main():
     total=0
     for n,pid in enumerate(ids,1): print(f'[objects] progression projets {n}/{len(ids)}',flush=True); total+=load_project(args,s,pid)
     print(f'[objects] terminé: {len(ids)} projets, {total} objets traités',flush=True)
+    # Per-sample taxon counts and the lineage of any new category (explore.ecotaxa_sample_taxa, ecotaxa_taxa).
+    from populate_ecotaxa_taxonomy import load_taxonomy
+    taxa,samples=load_taxonomy(db)
+    print(f'[objects] taxonomie: {taxa} nouvelle(s) catégorie(s), {samples} sample(s) recompté(s) par taxon',flush=True)
 if __name__=='__main__': main()

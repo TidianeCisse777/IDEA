@@ -409,6 +409,25 @@ class LoaderChainTests(unittest.TestCase):
         self.assertEqual(scoped("SELECT string_agg(ecotaxa_native_sample_id, ',' ORDER BY ecotaxa_native_sample_id) FROM explore.ecotaxa_samples"), "100,1001")
         self.assertEqual(scoped("SELECT count(*) FROM explore.ecotaxa_objects"), "8")
         self.assertEqual(scoped("SELECT count(*) FROM explore.ctd_profiles"), "0")
+        # Per-sample taxon counts (7 novembre 2026): the same objects as ecotaxa_objects, under the
+        # sample's row security, and the lineage joined from the taxonomy table.
+        self.owner_sql("SELECT warehouse.refresh_ecotaxa_sample_taxon(true)")
+        self.assertEqual(self.owner_sql("SELECT warehouse.refresh_ecotaxa_sample_taxon()"), "0")  # nothing stale left
+        self.assertEqual(self.owner_sql("SELECT sum(n_objects) || '/' || sum(n_validated) FROM explore.ecotaxa_sample_taxa"), "16/8")
+        self.assertEqual(scoped("SELECT sum(n_objects) FROM explore.ecotaxa_sample_taxa"), "8")
+        self.assertEqual(scoped("SELECT count(DISTINCT ecotaxa_native_sample_id) FROM explore.ecotaxa_sample_taxa"), "2")
+        self.owner_sql("INSERT INTO warehouse.ecotaxa_taxon (taxon_id, taxon_name, display_name, taxon_type, lineage, id_lineage, source_uri) "
+                       "SELECT taxon_id, 'T' || taxon_id, taxon_name, 'P', ARRAY['T' || taxon_id, 'Copepoda', 'Biota'], ARRAY[taxon_id, 25828, 1], 'test' "
+                       "FROM (SELECT DISTINCT taxon_id, taxon_name FROM warehouse.ecotaxa_sample_taxon WHERE taxon_id IS NOT NULL) t "
+                       "ON CONFLICT DO NOTHING")
+        self.assertEqual(scoped("SELECT sum(n_objects) FROM explore.ecotaxa_sample_taxa WHERE 'Copepoda' = ANY(taxon_lineage)"),
+                         scoped("SELECT count(*) FROM explore.ecotaxa_objects WHERE 'Copepoda' = ANY(taxon_lineage)"))
+        self.assertEqual(scoped("SELECT count(*) FROM explore.ecotaxa_taxa WHERE n_objects IS NOT NULL") != "0", True)
+        # A changed annotation makes the sample stale: the next refresh recomputes it alone.
+        self.owner_sql("UPDATE warehouse.ecotaxa_sample SET nb_validated = nb_validated + 1 WHERE id = (SELECT min(id) FROM warehouse.ecotaxa_sample WHERE object_count > 0)")
+        self.assertEqual(self.owner_sql("SELECT warehouse.refresh_ecotaxa_sample_taxon()"), "1")
+        self.owner_sql("UPDATE warehouse.ecotaxa_sample SET nb_validated = nb_validated - 1 WHERE id = (SELECT min(id) FROM warehouse.ecotaxa_sample WHERE object_count > 0)")
+        self.assertEqual(scoped("SELECT count(*) FROM explore.ecotaxa_samples WHERE sampled_at IS NOT DISTINCT FROM datetime_min"), "2")
         # A person opening explore in a SQL client finds every view and column described.
         self.assertEqual(self.owner_sql("SELECT count(*) FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid "
                                         "AND a.attnum > 0 AND NOT a.attisdropped WHERE c.relnamespace IN ('explore'::regnamespace, 'catalogue'::regnamespace) "

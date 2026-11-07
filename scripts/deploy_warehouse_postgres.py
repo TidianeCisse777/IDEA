@@ -33,7 +33,7 @@ ALWAYS_FILES = ('warehouse_catalogue_schema_migration.sql', 'warehouse_ctd_zone_
                'warehouse_ecotaxa_object_size_migration.sql', 'warehouse_taxon_mapping_view.sql',
                'warehouse_ecotaxa_project_title_migration.sql', 'warehouse_uvp_abundance_zone_migration.sql',
                'warehouse_marine_zone_migration.sql', 'warehouse_copepod_stage_migration.sql',
-               'warehouse_explore_catalog_migration.sql',
+               'warehouse_ecotaxa_taxa_migration.sql', 'warehouse_explore_catalog_migration.sql',
                'warehouse_fair_migration.sql', 'warehouse_access_control.sql')
 ROLES_FILE = 'warehouse_roles.sql'
 RELEASE_FILE = 'warehouse_release.sql'
@@ -181,6 +181,14 @@ def readiness(env):
                      "EXISTS (SELECT 1 FROM catalogue.warehouse_context WHERE topic = 'overview')")
     checks.append(('contexte MCP publié', context, 'warehouse_context(overview)' if context
                    else 'absent: publier le contexte (service warehouse-context ou ce script)', True))
+    # A view added without its sheet leaves agents guessing (seen: a failed publication still printed PRÊT).
+    unsheeted = query(env, "SELECT coalesce(string_agg(c.relname, ', ' ORDER BY c.relname), '') FROM pg_class c "
+                           "JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'explore' "
+                           "AND c.relkind = 'v' AND to_regclass('catalogue.warehouse_context') IS NOT NULL "
+                           "AND NOT EXISTS (SELECT 1 FROM catalogue.warehouse_context w WHERE w.topic = c.relname)") if context else ''
+    checks.append(('fiche MCP pour chaque vue explore', context and not unsheeted,
+                   'sans fiche: ' + unsheeted + ' (publier le contexte)' if unsheeted else
+                   ('toutes les vues' if context else 'contexte absent'), True))
     views = [v for v in ('my_access', 'my_datasets', 'dataset_catalog', 'fair_readiness', 'warehouse_dictionary')
              if not exists("SELECT to_regclass('catalogue.%s') IS NOT NULL" % v)]
     checks.append(('vues de découverte', not views, 'manquantes: ' + ', '.join(views) if views

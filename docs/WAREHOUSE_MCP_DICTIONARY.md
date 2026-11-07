@@ -5,7 +5,7 @@ Généré depuis le schéma déployé et le dictionnaire métier versionné. Les
 Dans DbHub : appeler `warehouse_context` avec `topic="overview"`, puis le nom de vue.
 `topic="all"` retourne toutes les fiches. Types et SQL réels : `catalogue.warehouse_dictionary`.
 
-Warehouse NeoLab : EcoTaxa (objets/annotations), EcoPart (profils/bins/volumes), FILET (échantillons/analyses/abondances et biomasses source), CTD (mesures environnementales). Lire ce contexte puis demander la fiche de chaque vue utilisée avec warehouse_context(topic=nom). Avant de produire un graphique, lire warehouse_context(topic=graphs) pour les bibliothèques, le style, les règles scientifiques, la provenance et les exports. Les métadonnées et vues existent même quand les données sont absentes : lire catalogue.dataset_versions et mesurer la couverture avant de conclure. Ne pas inventer données, unités, taxons, liens ou validation scientifique. Ne pas interpréter biologiquement les résultats. NULL signifie absent/inconnu; zéro et absence de ligne sont différents. Garder source, versions, politiques d’annotation, stades et dénominateurs explicites. Ne pas sommer les volumes répétés par taxon ou les concentrations FILET répétées par bin. Les fichiers sources bruts ne sont pas modifiés. Accès MCP : SELECT explore uniquement, sans écriture ni DDL, délai 30 s. Le périmètre de chaque compte (contrats, zones, années) est dans catalogue.my_access; catalogue.my_datasets dit pour chaque version si l'accès est complet, partiel ou nul et pourquoi. Un résultat vide peut signifier un accès limité, pas une absence de données : consulter my_datasets avant de conclure. Les vues UVP joignent EcoTaxa et EcoPart et exigent un droit sur les deux. Avec un accès partiel, une colonne issue d'une jointure externe peut être NULL parce que la ligne liée est hors périmètre. catalogue.dataset_catalog décrit toutes les versions, même hors périmètre, et catalogue.fair_readiness mesure la complétude des métadonnées. Priorité absolue : récupérer l'intégralité des données nécessaires avant toute analyse. Chaque réponse SQL est plafonnée (DbHub : 1 000 lignes; la réponse brute porte un champ truncated). Compter d'abord avec count(*), puis agréger côté SQL (SUM/AVG/GROUP BY) ou paginer par tri stable (ORDER BY clé + LIMIT/OFFSET) jusqu'à couvrir le total attendu. Pour une extraction brute qui dépasse la limite, vérifier la complétude par un hash ou un compte recalculé côté base après coup, pas seulement en confiance. Ne jamais présenter une page partielle comme le résultat complet. Une fois les données entièrement récupérées, aucune restriction supplémentaire : les croiser, les agréger, les visualiser et les calculer librement avec les outils disponibles (pandas, Matplotlib, Cartopy, etc.) sans demander de confirmation additionnelle pour l'analyse elle-même. Le navigateur sur 127.0.0.1:8090 et le MCP sont deux accès distincts. Le filtre spatial du navigateur réduit les paires déjà enregistrées, sans changer leur statut. Les confirmations restent nécessaires avant téléchargement/calcul lourd. Répondre en français; expliciter résultat, source, méthode et limites.
+Warehouse NeoLab : EcoTaxa (objets/annotations), EcoPart (profils/bins/volumes), FILET (échantillons/analyses/abondances et biomasses source), CTD (mesures environnementales). Lire ce contexte puis demander la fiche de chaque vue utilisée avec warehouse_context(topic=nom). Avant de produire un graphique, lire warehouse_context(topic=graphs) pour les bibliothèques, le style, les règles scientifiques, la provenance et les exports. Les métadonnées et vues existent même quand les données sont absentes : lire catalogue.dataset_versions et mesurer la couverture avant de conclure. Ne pas inventer données, unités, taxons, liens ou validation scientifique. Toute réponse sur les données vient d’une requête execute_sql sur ce warehouse : ne jamais répondre de mémoire ni avec des valeurs générales (climatologie, littérature) à la place des mesures; si une requête échoue ou qu’un outil est refusé, le dire et réessayer avec execute_sql plutôt que d’estimer. Ne pas interpréter biologiquement les résultats. NULL signifie absent/inconnu; zéro et absence de ligne sont différents. Garder source, versions, politiques d’annotation, stades et dénominateurs explicites. Ne pas sommer les volumes répétés par taxon ou les concentrations FILET répétées par bin. Les fichiers sources bruts ne sont pas modifiés. Accès MCP : SELECT sur deux schémas seulement, explore (les données) et catalogue (droits, catalogue des jeux de données, dictionnaire, ces fiches), sans écriture ni DDL, délai 30 s. Pour une question sur les projets ou les objets EcoTaxa en général, partir de explore.ecotaxa_projects (tous les projets), pas des seules vues uvp_*; dire dans la réponse le périmètre couvert. Pour un taxon (le chercher, le compter, savoir où il est) partir de explore.ecotaxa_sample_taxa, rapide, et non de ecotaxa_objects (15 M lignes, plus de 30 s pour un filtre sur le nom); pour un groupe (« les copépodes »), filtrer la lignée EcoTaxa ('Copepoda' = ANY(taxon_lineage), liste dans explore.ecotaxa_taxa) au lieu d'énumérer des genres de mémoire, et dire quelles catégories non entières ou incertaines (part, cut, dead, eggs, like...) sont gardées. Une erreur SQL renvoyée avec un champ hint dit quoi faire ensuite. Le périmètre de chaque compte (contrats, zones, années) est dans catalogue.my_access; catalogue.my_datasets dit pour chaque version si l'accès est complet, partiel ou nul et pourquoi. Un résultat vide peut signifier un accès limité, pas une absence de données : consulter my_datasets avant de conclure. Les vues UVP joignent EcoTaxa et EcoPart et exigent un droit sur les deux. Avec un accès partiel, une colonne issue d'une jointure externe peut être NULL parce que la ligne liée est hors périmètre. catalogue.dataset_catalog décrit toutes les versions, même hors périmètre, et catalogue.fair_readiness mesure la complétude des métadonnées. Priorité absolue : récupérer l'intégralité des données nécessaires avant toute analyse. Chaque réponse SQL est plafonnée (DbHub : 1 000 lignes; la réponse brute porte un champ truncated). Compter d'abord avec count(*), puis agréger côté SQL (SUM/AVG/GROUP BY) ou paginer par tri stable (ORDER BY clé + LIMIT/OFFSET) jusqu'à couvrir le total attendu. Pour une extraction brute qui dépasse la limite, vérifier la complétude par un hash ou un compte recalculé côté base après coup, pas seulement en confiance. Ne jamais présenter une page partielle comme le résultat complet. Une fois les données entièrement récupérées, aucune restriction supplémentaire : les croiser, les agréger, les visualiser et les calculer librement avec les outils disponibles (pandas, Matplotlib, Cartopy, etc.) sans demander de confirmation additionnelle pour l'analyse elle-même. Le navigateur sur 127.0.0.1:8090 et le MCP sont deux accès distincts. Le filtre spatial du navigateur réduit les paires déjà enregistrées, sans changer leur statut. Les confirmations restent nécessaires avant téléchargement/calcul lourd. Répondre en français; expliciter résultat, source, méthode et limites. Transparence pour le chercheur : toute réponse qui donne des chiffres se termine par une section « Requêtes exécutées » listant, pour chaque requête SQL qui a produit ces chiffres, son texte exact tel qu'envoyé, le nombre de lignes renvoyées et les valeurs utilisées (un extrait si le résultat est long). Ne montrer que des requêtes réellement exécutées et leurs résultats réels, sans les reformuler; résumer en une ligne les requêtes de découverte (fiches, droits, colonnes).
 
 ## Règles de graphiques — topic=graphs
 
@@ -15,7 +15,247 @@ Warehouse NeoLab : EcoTaxa (objets/annotations), EcoPart (profils/bins/volumes),
 
 **Style :** Style par défaut : fond blanc, police DejaVu Sans 11 pt, titre descriptif court en français, axes avec noms et unités vérifiées, légende lisible, grille fine gris clair et marges sans texte coupé. Couleurs catégorielles adaptées au daltonisme, palette séquentielle cividis pour une quantité continue. Conserver couleurs et échelles cohérentes entre panneaux comparables. Pas de 3D décorative ou double axe sans justification. Profils : profondeur en ordonnée croissante vers le bas; échelle logarithmique uniquement explicitée et compatible avec zéros/valeurs négatives. Conserver les deux dénominateurs FILET séparés et appliquer l’agrégation UVP pondérée par volume. Cartographie : vérifier le CRS; les coordonnées du warehouse sont en degrés WGS84. Avec Cartopy, séparer projection d’affichage et transform des données : PlateCarree pour les longitudes/latitudes WGS84, projection polaire adaptée à l’Arctique si pertinente. Ordre des points : Cartopy (longitude, latitude), Folium [latitude, longitude], GeoJSON [longitude, latitude]. Exclure explicitement les coordonnées manquantes/hors domaine sans les inventer. Calculer les distances en géodésique/PostGIS, pas en degrés ni en pixels. Conserver la version des zones et les ambiguïtés; distinguer source, statut et concentration dans la légende. Identifier les fonds/tuiles et leurs attributions. Les tuiles, bibliothèques JavaScript distantes et fonds Cartopy peuvent nécessiter Internet ou un cache local : ne pas annoncer une carte Folium autonome hors ligne sans l’avoir vérifiée. Privilégier les fonds locaux/caches; confirmer tout téléchargement lourd.
 
-**Statut et livraison :** Afficher un cartouche de statut : Exploratoire par défaut, pas une probabilité de confiance. Convention confirmed (#007B88, trait plein), exploratory (#B87514, tirets), uncertain (#737C86, pointillés); toujours ajouter un libellé ou symbole pour ne pas dépendre de la couleur. confirmed exige une validation scientifique explicitement documentée; un match accepted ou un test technique réussi ne suffit pas. uncertain signale les limites connues, sans inventer de valeurs ou d’intervalles. Si la couleur code un taxon ou une quantité, garder le statut dans le cartouche et les libellés. Aucune interprétation biologique, aucun ajustement statistique ni intervalle d’incertitude inventé. Conserver requête SQL, paramètres, versions, méthode, exclusions et limites dans un fichier de provenance accompagnant la figure. Produire un PNG à 300 dpi et un SVG pour les figures statiques, le CSV exact tracé et le script Python reproductible; indiquer les chemins réels des fichiers créés. Inspecter le rendu avant livraison et signaler toute limite restante.
+**Statut et livraison :** Afficher un cartouche de statut : Exploratoire par défaut, pas une probabilité de confiance. Convention confirmed (#007B88, trait plein), exploratory (#B87514, tirets), uncertain (#737C86, pointillés); toujours ajouter un libellé ou symbole pour ne pas dépendre de la couleur. confirmed exige une validation scientifique explicitement documentée; un match accepted ou un test technique réussi ne suffit pas. uncertain signale les limites connues, sans inventer de valeurs ou d’intervalles. Si la couleur code un taxon ou une quantité, garder le statut dans le cartouche et les libellés. Aucune interprétation biologique, aucun ajustement statistique ni intervalle d’incertitude inventé. Conserver requête SQL, paramètres, versions, méthode, exclusions et limites dans un fichier de provenance accompagnant la figure. Produire un PNG à 300 dpi et un SVG pour les figures statiques, le CSV exact tracé et le script Python reproductible; indiquer les chemins réels des fichiers créés. Fichiers : les écrire dans le dossier de travail courant avec des chemins relatifs (jamais un chemin absolu recopié à la main), puis vérifier qu’ils existent (ex. ls) et donner le chemin absolu réellement affiché par cette vérification. Rendu : relire l’image finale APRÈS la dernière modification du script, pas une version antérieure; si une retouche suit la relecture, relire de nouveau. Abondance par taxon : tracer la politique validated_only à côté de all_loaded_objects (ou expliquer pourquoi une seule), avec le nombre de profils de chacune, car all_loaded_objects inclut les objets prédits non validés. Signaler toute limite restante.
+
+## explore.ecotaxa_projects
+
+Inventaire de TOUS les projets EcoTaxa chargés, quel que soit l’instrument (UVP, Zooscan, LOKI…), avec leurs objets par statut d’annotation.
+
+**Grain :** Un projet EcoTaxa par ligne.
+
+**Relations :** ecotaxa_project_id vers ecotaxa_samples, ecotaxa_objects, uvp_projects, uvp_samples. has_uvp_profiles dit si des profils UVP (donc des volumes) existent.
+
+**Limites :** Point d’entrée pour toute question sur « les projets » ou « les objets EcoTaxa » en général : uvp_projects ne couvre que les projets liés à un profil UVP. Les compteurs sont la somme des compteurs des samples (recalculés depuis les objets chargés). Dire dans la réponse quel périmètre est couvert (tous les projets, ou seulement ceux liés à l’UVP). Des projets peuvent être des copies les uns des autres (149 contient les 199 samples de 20880 + 20890, mêmes comptes, plus 5 samples propres, et 13224 est un extrait de 149 : 149 seul donne GreenEdge 2016 sans doublon) : voir la fiche ecotaxa_samples avant d’additionner.
+
+| Colonne | Type SQL | Définition |
+|---|---|---|
+| ecotaxa_project_id | bigint | Identifiant natif du projet EcoTaxa; distinct de celui du projet EcoPart. |
+| ecotaxa_project_title | text | Nom natif du projet EcoTaxa, pour affichage; NULL si le projet n’a pas été chargé. Ne pas l’utiliser comme clé, préférer ecotaxa_project_id. |
+| instrument | text | Instrument déclaré dans les métadonnées EcoTaxa; NULL ne permet pas d’en inférer le modèle à partir du nom de projet. |
+| ecotaxa_status | text | Statut du projet dans EcoTaxa (ex. Annotate), tel que fourni. |
+| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir catalogue.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
+| n_samples | bigint | Nombre de samples EcoTaxa chargés pour ce projet. |
+| n_objects | numeric | Nombre d’objets chargés du projet (somme de object_count des samples). |
+| n_validated | numeric | Objets validés (annotation_status = validated) du projet, somme des samples. |
+| n_predicted | numeric | Objets prédits automatiquement, non validés (annotation_status = predicted), somme des samples. |
+| n_dubious | numeric | Objets marqués douteux (annotation_status = dubious), somme des samples. |
+| n_unclassified | numeric | Objets jamais classés (sans statut ni catégorie), somme des samples. |
+| start_at | timestamp with time zone | Horodatage source ou borne agrégée selon le nom; vérifier le type SQL et le fuseau. Le rapprochement FILET existant interprète ses dates sans fuseau en UTC. |
+| end_at | timestamp with time zone | Horodatage source ou borne agrégée selon le nom; vérifier le type SQL et le fuseau. Le rapprochement FILET existant interprète ses dates sans fuseau en UTC. |
+| marine_zone_keys | ARRAY | Toutes les zones attribuées aux profils/samples du projet (tableau, AMBIGUOUS compris); filtrer avec = ANY(marine_zone_keys). |
+| has_uvp_profiles | boolean | Vrai si au moins un sample du projet est lié à un profil UVP (EcoPart), donc à des volumes échantillonnés. |
+
+```sql
+SELECT ecotaxa_project_id, ecotaxa_project_title, instrument, n_objects, n_validated, n_predicted FROM explore.ecotaxa_projects ORDER BY n_objects DESC;
+```
+
+## explore.ecotaxa_samples
+
+Tous les samples EcoTaxa, tous projets et instruments, avec position, date, zone et compteurs d’objets par statut d’annotation.
+
+**Grain :** Un sample EcoTaxa par ligne.
+
+**Relations :** ecotaxa_sample_id vers ecotaxa_objects.ecotaxa_sample_id et uvp_samples.ecotaxa_sample_id; ecotaxa_project_id vers ecotaxa_projects.
+
+**Limites :** Pour compter ou comparer des statuts d’annotation, partir d’ici (rapide) et non de ecotaxa_objects. uvp_samples ne montre que les samples liés à un profil UVP et peut répéter un sample lié à plusieurs profils; ici une ligne = un sample. Deux projets peuvent porter des copies des mêmes images (ex. 149 contient les 199 samples de 20880 + 20890, mêmes comptes, plus 5 samples propres; 13224 est un extrait de 10 000 objets des mêmes 204 samples que 149) : vérifier avant d’additionner des projets. Une copie a toujours d’autres identifiants d’objet, et un titre proche ne prouve rien : comparer les comptes par profil UVP ou par sample; sans cette comparaison, écrire « copie possible, non vérifiée » plutôt que l’affirmer. Pas de volume échantillonné : pas d’abondance ici.
+
+| Colonne | Type SQL | Définition |
+|---|---|---|
+| ecotaxa_sample_id | bigint | Clé technique du sample EcoTaxa; distincte de son identifiant natif. |
+| ecotaxa_project_id | bigint | Identifiant natif du projet EcoTaxa; distinct de celui du projet EcoPart. |
+| ecotaxa_project_title | text | Nom natif du projet EcoTaxa, pour affichage; NULL si le projet n’a pas été chargé. Ne pas l’utiliser comme clé, préférer ecotaxa_project_id. |
+| instrument | text | Instrument déclaré dans les métadonnées EcoTaxa; NULL ne permet pas d’en inférer le modèle à partir du nom de projet. |
+| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir catalogue.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
+| ecotaxa_native_sample_id | text | Identifiant natif du sample EcoTaxa; qualifier par projet/version. |
+| sample_orig_id | text | Identifiant original du sample EcoTaxa, utilisé par les liens de provenance. |
+| ecotaxa_station_id | text | Station fournie dans les métadonnées EcoTaxa. |
+| ecotaxa_cruise_id | text | Campagne fournie dans les métadonnées EcoTaxa. |
+| ecotaxa_profile_id | text | Identifiant de profil fourni dans les métadonnées EcoTaxa; pas une clé technique UVP. |
+| datetime_min | timestamp with time zone | Horodatage source ou borne agrégée selon le nom; vérifier le type SQL et le fuseau. Le rapprochement FILET existant interprète ses dates sans fuseau en UTC. |
+| datetime_max | timestamp with time zone | Horodatage source ou borne agrégée selon le nom; vérifier le type SQL et le fuseau. Le rapprochement FILET existant interprète ses dates sans fuseau en UTC. |
+| latitude | double precision | Coordonnée géographique source en degrés WGS84; suffixe min/max = étendue agrégée, pas un point de prélèvement. |
+| longitude | double precision | Coordonnée géographique source en degrés WGS84; suffixe min/max = étendue agrégée, pas un point de prélèvement. |
+| depth_min | double precision | Borne de profondeur fournie dans les métadonnées EcoTaxa; unité à vérifier dans la source. |
+| depth_max | double precision | Borne de profondeur fournie dans les métadonnées EcoTaxa; unité à vérifier dans la source. |
+| marine_zone_key | text | Clé de zone maritime attribuée; consulter source, version et statut. |
+| marine_zone_name | text | Libellé de zone; dans uvp_projects, MIN ne représente pas toutes les zones du projet. |
+| marine_zone_assignment_status | text | assigned, ambiguous, outside ou unresolved; un chevauchement peut être ambiguous. |
+| object_count | bigint | Nombre d’objets chargés de ce sample (recalculé depuis les objets chargés). |
+| nb_validated | bigint | Nombre d’objets chargés de ce sample avec annotation_status = validated (recalculé depuis les objets). |
+| nb_predicted | bigint | Nombre d’objets chargés de ce sample avec annotation_status = predicted (recalculé depuis les objets). |
+| nb_dubious | bigint | Nombre d’objets chargés de ce sample avec annotation_status = dubious (recalculé depuis les objets). |
+| nb_unclassified | bigint | Nombre d’objets chargés de ce sample sans statut (jamais classés), recalculé depuis les objets. |
+| has_uvp_profile | boolean | Vrai si ce sample est lié à au moins un profil UVP (voir uvp_samples). |
+| sampled_at | timestamp with time zone | Horodatage source ou borne agrégée selon le nom; vérifier le type SQL et le fuseau. Le rapprochement FILET existant interprète ses dates sans fuseau en UTC. |
+
+```sql
+SELECT ecotaxa_project_id, SUM(nb_validated) AS valides, SUM(nb_predicted) AS predits FROM explore.ecotaxa_samples GROUP BY 1;
+```
+
+## explore.ecotaxa_objects
+
+Tous les objets EcoTaxa (15 M), tous projets et instruments : taxon, statut d’annotation, profondeur, taille.
+
+**Grain :** Un objet EcoTaxa par ligne.
+
+**Relations :** ecotaxa_sample_id vers ecotaxa_samples; ecotaxa_project_id vers ecotaxa_projects; ecotaxa_object_id = uvp_objects.ecotaxa_object_id pour les objets liés à un profil UVP.
+
+**Limites :** Toujours filtrer par ecotaxa_project_id ou ecotaxa_sample_id et agréger dans la requête : un balayage complet dépasse le délai de 30 s. Pour de simples comptes par statut, ecotaxa_samples suffit; pour chercher un taxon ou compter par taxon, ecotaxa_sample_taxa (un filtre sur taxon_name ici, même avec le projet, peut dépasser 30 s). Ici, réserver ecotaxa_objects à la profondeur et à la taille. Tailles réelles (_um) NULL sans calibration pixel (LOKI notamment), jamais zéro. Pas d’abondance (ind/m³) sans volume : passer par les vues UVP.
+
+| Colonne | Type SQL | Définition |
+|---|---|---|
+| ecotaxa_object_id | bigint | Clé technique de l’objet EcoTaxa; utiliser DISTINCT si une jointure peut multiplier ses lignes. |
+| object_id | text | Identifiant natif de l’objet EcoTaxa, qualifié par son sample/source. |
+| ecotaxa_sample_id | bigint | Clé technique du sample EcoTaxa; distincte de son identifiant natif. |
+| ecotaxa_project_id | bigint | Identifiant natif du projet EcoTaxa; distinct de celui du projet EcoPart. |
+| instrument | text | Instrument déclaré dans les métadonnées EcoTaxa; NULL ne permet pas d’en inférer le modèle à partir du nom de projet. |
+| taxon_id | text | Identifiant de catégorie EcoTaxa fourni; pas une équivalence FILET implicite. |
+| taxon_name | text | Libellé taxonomique EcoTaxa (ex. Copepoda<Multicrustacea), pour lire et afficher; la clé de jointure reste taxon_key/taxon_id. Ne prouve pas un mapping FILET ni une validation. |
+| annotation_status | text | Statut d’annotation EcoTaxa (classif_qual) : validated (V, validé par un humain), predicted (P, classification automatique), dubious (D); NULL = objet jamais classé (ou chargé avant l’ajout du statut), pas validated. |
+| object_datetime | timestamp with time zone | Date et heure de l’objet fournies par EcoTaxa; peut être NULL. |
+| object_depth_min_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
+| object_depth_max_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
+| object_lat | double precision | Latitude de l’objet fournie par EcoTaxa (WGS84); souvent celle du sample ou NULL. |
+| object_lon | double precision | Longitude de l’objet fournie par EcoTaxa (WGS84); souvent celle du sample ou NULL. |
+| marine_zone_key | text | Clé de zone maritime attribuée; consulter source, version et statut. |
+| acquisition_id | text | Identifiant natif d’acquisition EcoTaxa. |
+| area_px | double precision | Aire Zooprocess de l’objet EcoTaxa, en pixels; valeur source, non recalculée. |
+| esd_px | double precision | Diamètre sphérique équivalent Zooprocess, en pixels; NULL si le projet EcoTaxa ne fournit pas cette colonne libre. |
+| major_px | double precision | Axe majeur de l’ellipse ajustée par Zooprocess, en pixels; valeur source, non recalculée. |
+| minor_px | double precision | Axe mineur de l’ellipse ajustée par Zooprocess, en pixels; valeur source, non recalculée. |
+| pixel_size_mm | double precision | Taille réelle d’un pixel pour l’acquisition de l’objet, en mm (EcoTaxa la donne en mm pour UVP5/Zooscan et en µm pour UVP6 : convertie ici; ordre de grandeur 0,07 à 0,17 mm); NULL si EcoTaxa ne la fournit pas (LOKI, Zooscan), auquel cas aucune colonne _um/_um2 n’est calculable pour cet objet. |
+| esd_um | double precision | esd_px converti en micromètres via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une taille nulle. |
+| major_um | double precision | major_px converti en micromètres via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une taille nulle. |
+| minor_um | double precision | minor_px converti en micromètres via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une taille nulle. |
+| area_um2 | double precision | area_px convertie en micromètres carrés via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une aire nulle. |
+| taxon_lineage | ARRAY | Lignée EcoTaxa de la catégorie, du taxon lui-même jusqu’à la racine (ex. Calanoida, Gymnoplea, Neocopepoda, Copepoda, …, Biota) : un groupe se filtre par 'Copepoda' = ANY(taxon_lineage). Inclut les catégories morphologiques (stades, vues, mais aussi part, dead, eggs, like) : dire lesquelles sont gardées. NULL si la taxonomie n’est pas chargée. |
+| taxon_type | text | Type de catégorie EcoTaxa : P (phylogénétique, un taxon) ou M (morphologique : stade, vue, taille, mais aussi part, cut, dead, eggs, like...). M ne veut pas dire fragment. |
+
+```sql
+SELECT taxon_name, annotation_status, COUNT(*) FROM explore.ecotaxa_objects WHERE ecotaxa_project_id = 12063 GROUP BY 1,2 ORDER BY 3 DESC LIMIT 20;
+```
+
+## explore.ecotaxa_sample_taxa
+
+Nombre d’objets par sample EcoTaxa et par catégorie (taxon), par statut d’annotation, avec la lignée du taxon : la vue pour chercher un taxon, savoir dans quels projets ou samples il est, et compter par taxon.
+
+**Grain :** Un sample EcoTaxa × une catégorie par ligne (environ 40 000 lignes); taxon_id NULL = objets jamais classés.
+
+**Relations :** ecotaxa_sample_id vers ecotaxa_samples et ecotaxa_objects; ecotaxa_project_id vers ecotaxa_projects; taxon_id vers ecotaxa_taxa et ecotaxa_objects.taxon_id.
+
+**Limites :** Rapide (moins d’une seconde) : chercher ici un taxon par nom (taxon_name ILIKE), jamais dans ecotaxa_objects. Un groupe (« les copépodes ») se lit dans la lignée EcoTaxa : 'Copepoda' = ANY(taxon_lineage), jamais d’une liste de genres dressée de mémoire. Cette lignée inclut les organismes entiers (taxons, stades et vues comme female+lateral<Metridia longa, small<, ovigerous) mais aussi des catégories qui ne sont pas un copépode entier vivant (part<, cut<, antenna<, copepoda eggs, dead<) ou incertaines (like<, badfocus<, multiple<) : dire lesquelles sont gardées et donner le total avec et sans elles. taxon_type M (morphologique) ne veut pas dire fragment : les stades et vues sont M. Mêmes précautions sur les doublons de projets que ecotaxa_samples (149, 20880, 20890, 13224). Pas de profondeur, de taille ni de volume ici.
+
+| Colonne | Type SQL | Définition |
+|---|---|---|
+| ecotaxa_sample_id | bigint | Clé technique du sample EcoTaxa; distincte de son identifiant natif. |
+| ecotaxa_project_id | bigint | Identifiant natif du projet EcoTaxa; distinct de celui du projet EcoPart. |
+| ecotaxa_project_title | text | Nom natif du projet EcoTaxa, pour affichage; NULL si le projet n’a pas été chargé. Ne pas l’utiliser comme clé, préférer ecotaxa_project_id. |
+| instrument | text | Instrument déclaré dans les métadonnées EcoTaxa; NULL ne permet pas d’en inférer le modèle à partir du nom de projet. |
+| ecotaxa_native_sample_id | text | Identifiant natif du sample EcoTaxa; qualifier par projet/version. |
+| sampled_at | timestamp with time zone | Horodatage source ou borne agrégée selon le nom; vérifier le type SQL et le fuseau. Le rapprochement FILET existant interprète ses dates sans fuseau en UTC. |
+| latitude | double precision | Coordonnée géographique source en degrés WGS84; suffixe min/max = étendue agrégée, pas un point de prélèvement. |
+| longitude | double precision | Coordonnée géographique source en degrés WGS84; suffixe min/max = étendue agrégée, pas un point de prélèvement. |
+| marine_zone_key | text | Clé de zone maritime attribuée; consulter source, version et statut. |
+| taxon_id | integer | Identifiant de catégorie EcoTaxa fourni; pas une équivalence FILET implicite. |
+| taxon_name | text | Libellé taxonomique EcoTaxa (ex. Copepoda<Multicrustacea), pour lire et afficher; la clé de jointure reste taxon_key/taxon_id. Ne prouve pas un mapping FILET ni une validation. |
+| taxon_type | text | Type de catégorie EcoTaxa : P (phylogénétique, un taxon) ou M (morphologique : stade, vue, taille, mais aussi part, cut, dead, eggs, like...). M ne veut pas dire fragment. |
+| taxon_lineage | ARRAY | Lignée EcoTaxa de la catégorie, du taxon lui-même jusqu’à la racine (ex. Calanoida, Gymnoplea, Neocopepoda, Copepoda, …, Biota) : un groupe se filtre par 'Copepoda' = ANY(taxon_lineage). Inclut les catégories morphologiques (stades, vues, mais aussi part, dead, eggs, like) : dire lesquelles sont gardées. NULL si la taxonomie n’est pas chargée. |
+| n_objects | bigint | Nombre d’objets de ce sample dans cette catégorie. |
+| n_validated | bigint | Objets validés (annotation_status = validated) de ce sample dans cette catégorie. |
+| n_predicted | bigint | Objets prédits automatiquement, non validés, de ce sample dans cette catégorie. |
+| n_dubious | bigint | Objets marqués douteux de ce sample dans cette catégorie. |
+| n_unclassified | bigint | Objets jamais classés de ce sample dans cette catégorie. |
+
+```sql
+SELECT ecotaxa_project_id, taxon_name, SUM(n_validated) AS valides, SUM(n_objects) AS objets FROM explore.ecotaxa_sample_taxa WHERE 'Copepoda' = ANY(taxon_lineage) AND ecotaxa_project_id = 14859 GROUP BY 1,2 ORDER BY 4 DESC;
+```
+
+## explore.ecotaxa_taxa
+
+Les catégories EcoTaxa présentes dans le warehouse, avec leur lignée jusqu’à la racine (taxonomie EcoTaxa), leur type, leur rang, leur AphiaID WoRMS et leurs totaux.
+
+**Grain :** Une catégorie EcoTaxa par ligne (340).
+
+**Relations :** taxon_id vers ecotaxa_sample_taxa.taxon_id et ecotaxa_objects.taxon_id; taxon_name identique au taxon_name des objets.
+
+**Limites :** Pour savoir quelles catégories appartiennent à un groupe : WHERE 'Copepoda' = ANY(taxon_lineage); taxon_short_name donne le qualificatif d’une catégorie morphologique (part, cut, dead, like...). Les totaux ne couvrent que ce que le compte peut lire. La lignée est celle d’EcoTaxa au moment du chargement (fetched_at dans la source), pas une révision taxonomique.
+
+| Colonne | Type SQL | Définition |
+|---|---|---|
+| taxon_id | integer | Identifiant de catégorie EcoTaxa fourni; pas une équivalence FILET implicite. |
+| taxon_name | text | Libellé taxonomique EcoTaxa (ex. Copepoda<Multicrustacea), pour lire et afficher; la clé de jointure reste taxon_key/taxon_id. Ne prouve pas un mapping FILET ni une validation. |
+| taxon_short_name | text | Nom court EcoTaxa de la catégorie (pour une catégorie morphologique, son qualificatif : part, cut, dead, like, female+lateral...). |
+| taxon_type | text | Type de catégorie EcoTaxa : P (phylogénétique, un taxon) ou M (morphologique : stade, vue, taille, mais aussi part, cut, dead, eggs, like...). M ne veut pas dire fragment. |
+| taxon_rank | text | Rang taxonomique EcoTaxa (Class, Order, Genus...), NULL pour les catégories morphologiques. |
+| taxon_lineage | ARRAY | Lignée EcoTaxa de la catégorie, du taxon lui-même jusqu’à la racine (ex. Calanoida, Gymnoplea, Neocopepoda, Copepoda, …, Biota) : un groupe se filtre par 'Copepoda' = ANY(taxon_lineage). Inclut les catégories morphologiques (stades, vues, mais aussi part, dead, eggs, like) : dire lesquelles sont gardées. NULL si la taxonomie n’est pas chargée. |
+| taxon_id_lineage | ARRAY | Identifiants EcoTaxa de la lignée, dans le même ordre que taxon_lineage. |
+| aphia_id | integer | AphiaID WoRMS fourni par EcoTaxa, NULL si absent; pas une équivalence FILET implicite. |
+| n_projects | bigint | Nombre de projets EcoTaxa où la catégorie a au moins un objet lisible par le compte. |
+| n_samples | bigint | Nombre de samples EcoTaxa où la catégorie a au moins un objet lisible par le compte. |
+| n_objects | numeric | Nombre d’objets de cette catégorie, tous projets lisibles. |
+| n_validated | numeric | Objets validés (annotation_status = validated) de cette catégorie, tous projets lisibles. |
+| n_predicted | numeric | Objets prédits automatiquement, non validés, de cette catégorie, tous projets lisibles. |
+| n_dubious | numeric | Objets marqués douteux de cette catégorie, tous projets lisibles. |
+
+```sql
+SELECT taxon_name, taxon_type, taxon_rank, n_projects, n_objects, n_validated FROM explore.ecotaxa_taxa WHERE 'Copepoda' = ANY(taxon_lineage) ORDER BY n_objects DESC NULLS LAST;
+```
+
+## explore.ctd_profiles
+
+Tous les profils CTD Amundsen chargés, liés ou non à EcoTaxa.
+
+**Grain :** Un profil CTD par ligne.
+
+**Relations :** ctd_profile_id vers ctd_measurements; zone_membership (row_kind = ctd_profile, row_id = ctd_profile_id).
+
+**Limites :** ecotaxa_ctd_profile ne montre que les profils liés à un sample EcoTaxa (une ligne par liaison); ici chaque profil une fois. max_depth_m est la profondeur maximale mesurée.
+
+| Colonne | Type SQL | Définition |
+|---|---|---|
+| ctd_profile_id | bigint | Clé technique du profil CTD; pas une clé d’alignement des mesures individuelles. |
+| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir catalogue.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
+| source_profile_key | text | Identifiant natif du profil CTD. |
+| cruise_key | text | Libellé/clé de campagne de la source; pas de normalisation inter-source implicite. |
+| station_key | text | Libellé/clé de station UVP de la source; ne prouve pas une identité inter-source. |
+| sampled_at | timestamp with time zone | Horodatage source ou borne agrégée selon le nom; vérifier le type SQL et le fuseau. Le rapprochement FILET existant interprète ses dates sans fuseau en UTC. |
+| latitude | double precision | Coordonnée géographique source en degrés WGS84; suffixe min/max = étendue agrégée, pas un point de prélèvement. |
+| longitude | double precision | Coordonnée géographique source en degrés WGS84; suffixe min/max = étendue agrégée, pas un point de prélèvement. |
+| marine_zone_key | text | Clé de zone maritime attribuée; consulter source, version et statut. |
+| marine_zone_name | text | Libellé de zone; dans uvp_projects, MIN ne représente pas toutes les zones du projet. |
+| marine_zone_assignment_status | text | assigned, ambiguous, outside ou unresolved; un chevauchement peut être ambiguous. |
+| max_depth_m | double precision | Profondeur maximale mesurée dans ce profil CTD, en mètres. |
+| has_ecotaxa_link | boolean | Vrai si le profil CTD a au moins une liaison acceptée avec un sample EcoTaxa. |
+
+```sql
+SELECT cruise_key, COUNT(*), MIN(sampled_at), MAX(sampled_at) FROM explore.ctd_profiles GROUP BY 1;
+```
+
+## explore.ctd_measurements
+
+Mesures CTD (température, salinité, densité, oxygène, nitrate, fluorescence, pH) de tous les profils, format long.
+
+**Grain :** Profil CTD × scan × variable.
+
+**Relations :** ctd_profile_id vers ctd_profiles pour position, date et zone.
+
+**Limites :** Filtrer variable_key et ctd_profile_id avant d’agréger (5 M lignes). Unité dans unit telle que fournie; ne convertir pression/profondeur ni salinité sans le dire. SIGT est le sigma-t (densité moins 1000 kg/m³) : 27 signifie 1027 kg/m³. depth_m est la pression en dbar prise pour des mètres (écart ≈ 1 % à 2000 m). qc est toujours NULL : aucun contrôle qualité fourni, à signaler. Pour un profil moyen, moyenner d’abord par profil et classe de profondeur, puis entre profils.
+
+| Colonne | Type SQL | Définition |
+|---|---|---|
+| ctd_profile_id | bigint | Clé technique du profil CTD; pas une clé d’alignement des mesures individuelles. |
+| depth_m | double precision | Pression en dbar utilisée comme profondeur en mètres (1 dbar ≈ 0,99 m; écart d’environ 1 % à 2000 m), telle que fournie par le chargeur CTD; pas une profondeur recalculée (TEOS-10). |
+| pressure_dbar | double precision | Pression CTD en dbar; ne pas assimiler automatiquement à la profondeur en mètres. |
+| variable_key | text | Code de variable CTD; conserver les codes source et ne pas assimiler des variables sans vérifier définition/unité. |
+| variable_name | text | Nom lisible de la variable CTD (référentiel ctd_variable), ex. température, salinité. |
+| value | double precision | Valeur CTD fournie; interpréter avec unit, variable_key, sensor_channel et qc. |
+| unit | text | Unité CTD fournie; aucune conversion implicite entre codes/sources. |
+| qc | text | Indicateur qualité source CTD; NULL signifie absent, pas bon. |
+| sensor_channel | text | Canal/capteur source CTD; deux canaux ne sont pas des répétitions à moyenner implicitement. |
+
+```sql
+SELECT ctd_profile_id, depth_m, value AS temperature FROM explore.ctd_measurements WHERE variable_key = 'TE90' AND ctd_profile_id = 1 ORDER BY depth_m;
+```
 
 ## explore.uvp_projects
 
@@ -25,7 +265,7 @@ Inventaire agrégé des projets UVP liés à EcoTaxa/EcoPart.
 
 **Relations :** Navigation vers uvp_samples par ecotaxa_project_id et ecopart_project_id; sélectionner la campagne.
 
-**Limites :** Ne pas sommer des projets qui réutilisent les mêmes profils. La zone MIN est un libellé représentatif, pas toute la couverture. Pas de dataset_version_id dans cette vue : auditer les versions dans dataset_versions et les vues détaillées. ecotaxa_project_title est le nom natif du projet EcoTaxa, pour affichage (légende, étiquette) : NULL si le projet n’a pas été chargé dans warehouse.ecotaxa_project, et ne pas l’utiliser comme clé (deux projets pourraient en théorie partager un titre) — grouper/joindre sur ecotaxa_project_id.
+**Limites :** Ne pas sommer des projets qui réutilisent les mêmes profils. marine_zone_key/name (MIN) ne montrent qu’UNE zone : pour savoir si un projet touche une zone, filtrer sur marine_zone_keys (toutes les zones attribuées à ses profils/samples), ex. WHERE 'Baie de Baffin' = ANY(marine_zone_keys); les points en chevauchement de zones (AMBIGUOUS) se retrouvent par explore.zone_membership. Pas de dataset_version_id dans cette vue : auditer les versions dans dataset_versions et les vues détaillées. ecotaxa_project_title est le nom natif du projet EcoTaxa, pour affichage (légende, étiquette) : NULL si le projet n’a pas été chargé dans warehouse.ecotaxa_project, et ne pas l’utiliser comme clé (deux projets pourraient en théorie partager un titre) — grouper/joindre sur ecotaxa_project_id.
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
@@ -44,6 +284,7 @@ Inventaire agrégé des projets UVP liés à EcoTaxa/EcoPart.
 | longitude_min | double precision | Coordonnée géographique source en degrés WGS84; suffixe min/max = étendue agrégée, pas un point de prélèvement. |
 | longitude_max | double precision | Coordonnée géographique source en degrés WGS84; suffixe min/max = étendue agrégée, pas un point de prélèvement. |
 | ecotaxa_project_title | text | Nom natif du projet EcoTaxa, pour affichage; NULL si le projet n’a pas été chargé. Ne pas l’utiliser comme clé, préférer ecotaxa_project_id. |
+| marine_zone_keys | ARRAY | Toutes les zones attribuées aux profils/samples du projet (tableau, AMBIGUOUS compris); filtrer avec = ANY(marine_zone_keys). |
 
 ```sql
 SELECT * FROM explore.uvp_projects LIMIT 20;
@@ -61,7 +302,7 @@ Métadonnées des profils UVP liés à un sample EcoTaxa.
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
-| uvp_profile_id | bigint | Clé technique du profil UVP; équivaut à profile_id dans les vues de bins et abondances. |
+| uvp_profile_id | bigint | Clé technique du profil UVP, même nom et même valeur dans toutes les vues UVP : clé de jointure à privilégier. |
 | dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir catalogue.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
 | ecopart_project_id | bigint | Identifiant natif du projet EcoPart; distinct de celui du projet EcoTaxa. |
 | ecopart_sample_id | text | Identifiant natif du sample EcoPart, si fourni. |
@@ -88,11 +329,11 @@ Métadonnées des profils UVP liés à un sample EcoTaxa.
 | marine_zone_source | text | Référentiel utilisé pour l’attribution de zone. |
 | marine_zone_version | text | Version du référentiel ou de l’attribution de zone. |
 | marine_zone_assignment_status | text | assigned, ambiguous, outside ou unresolved; un chevauchement peut être ambiguous. |
-| object_count | bigint | Nombre d’objets déclaré par les métadonnées source, pas un recomptage de tous les objets chargés. |
-| nb_validated | bigint | Nombre validé déclaré dans les métadonnées EcoTaxa; ne qualifie pas chaque objet chargé. |
-| nb_predicted | bigint | Nombre prédit déclaré dans les métadonnées EcoTaxa. |
-| nb_dubious | bigint | Nombre douteux déclaré dans les métadonnées EcoTaxa. |
-| nb_unclassified | bigint | Nombre non classé déclaré dans les métadonnées EcoTaxa. |
+| object_count | bigint | Nombre d’objets chargés de ce sample (recalculé depuis les objets chargés). |
+| nb_validated | bigint | Nombre d’objets chargés de ce sample avec annotation_status = validated (recalculé depuis les objets). |
+| nb_predicted | bigint | Nombre d’objets chargés de ce sample avec annotation_status = predicted (recalculé depuis les objets). |
+| nb_dubious | bigint | Nombre d’objets chargés de ce sample avec annotation_status = dubious (recalculé depuis les objets). |
+| nb_unclassified | bigint | Nombre d’objets chargés de ce sample sans statut (jamais classés), recalculé depuis les objets. |
 | ecotaxa_project_title | text | Nom natif du projet EcoTaxa, pour affichage; NULL si le projet n’a pas été chargé. Ne pas l’utiliser comme clé, préférer ecotaxa_project_id. |
 
 ```sql
@@ -111,7 +352,7 @@ Objets EcoTaxa associés aux profils UVP, avec un bin EcoPart éventuel.
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
-| uvp_profile_id | bigint | Clé technique du profil UVP; équivaut à profile_id dans les vues de bins et abondances. |
+| uvp_profile_id | bigint | Clé technique du profil UVP, même nom et même valeur dans toutes les vues UVP : clé de jointure à privilégier. |
 | dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir catalogue.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
 | ecopart_project_id | bigint | Identifiant natif du projet EcoPart; distinct de celui du projet EcoTaxa. |
 | sample_name | text | Nom natif du profil EcoPart; pas un identifiant global. |
@@ -130,11 +371,11 @@ Objets EcoTaxa associés aux profils UVP, avec un bin EcoPart éventuel.
 | acquisition_id | text | Identifiant natif d’acquisition EcoTaxa. |
 | process_id | text | Identifiant natif de traitement EcoTaxa. |
 | taxon_id | text | Identifiant de catégorie EcoTaxa fourni; pas une équivalence FILET implicite. |
-| taxon_name | text | Libellé taxonomique EcoTaxa fourni; ne prouve pas un mapping FILET ni une validation. |
-| annotation_status | text | Statut d’annotation EcoTaxa chargé; NULL signifie inconnu, pas validated. |
+| taxon_name | text | Libellé taxonomique EcoTaxa (ex. Copepoda<Multicrustacea), pour lire et afficher; la clé de jointure reste taxon_key/taxon_id. Ne prouve pas un mapping FILET ni une validation. |
+| annotation_status | text | Statut d’annotation EcoTaxa (classif_qual) : validated (V, validé par un humain), predicted (P, classification automatique), dubious (D); NULL = objet jamais classé (ou chargé avant l’ajout du statut), pas validated. |
 | object_depth_min_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
 | object_depth_max_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
-| uvp_bin_id | bigint | Clé technique du bin EcoPart lié à l’objet; NULL si non apparié. |
+| uvp_bin_id | bigint | Clé technique du bin de profondeur EcoPart, même nom dans toutes les vues UVP; dans uvp_objects/uvp_object_sizes, NULL si l’objet n’est rattaché à aucun bin. |
 | source_bin_key | text | Identifiant du bin dans l’export source. |
 | depth_min_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
 | depth_max_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
@@ -162,14 +403,16 @@ Bins échantillonnés EcoPart, y compris sans objet, et ligne brute PAR.
 |---|---|---|
 | dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir catalogue.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
 | ecopart_project_id | bigint | Identifiant natif du projet EcoPart; distinct de celui du projet EcoTaxa. |
-| profile_id | bigint | Clé technique du profil UVP; équivaut à uvp_samples.uvp_profile_id. |
+| profile_id | bigint | Ancien nom de la clé du profil UVP dans ecopart_bins et uvp_taxon_abundance; même valeur que uvp_profile_id (présente aussi dans ces vues), à privilégier. |
 | sample_name | text | Nom natif du profil EcoPart; pas un identifiant global. |
-| bin_id | bigint | Clé technique du bin EcoPart. |
+| bin_id | bigint | Ancien nom de la clé du bin EcoPart dans ecopart_bins et uvp_taxon_abundance; même valeur que uvp_bin_id, à privilégier. |
 | depth_min_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
 | depth_max_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
 | sampled_volume_l | numeric | Volume échantillonné du bin EcoPart, en litres; ne pas le répéter dans une somme multi-taxons. |
 | source_depth_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
 | source_row_json | jsonb | Ligne source complète conservée en JSON; noms et unités non harmonisés. Inspecter avant calcul. |
+| uvp_profile_id | bigint | Clé technique du profil UVP, même nom et même valeur dans toutes les vues UVP : clé de jointure à privilégier. |
+| uvp_bin_id | bigint | Clé technique du bin de profondeur EcoPart, même nom dans toutes les vues UVP; dans uvp_objects/uvp_object_sizes, NULL si l’objet n’est rattaché à aucun bin. |
 
 ```sql
 SELECT profile_id,bin_id,depth_min_m,depth_max_m,sampled_volume_l FROM explore.ecopart_bins LIMIT 20;
@@ -183,15 +426,15 @@ Abondances UVP dérivées des objets EcoTaxa et volumes EcoPart.
 
 **Relations :** profile_id vers uvp_samples.uvp_profile_id; bin_id vers ecopart_bins.bin_id. Isoler annotation_policy et dataset_version_id. ecotaxa_project_id vers uvp_projects.ecotaxa_project_id.
 
-**Limites :** Formule : n_objects_taxon / sampled_volume_l × 1000, individus/m³. Agréger par SUM(n_objects_taxon)/SUM(sampled_volume_l)*1000, pas par moyenne simple. La vue ajoute des zéros sur tous les bins uniquement pour les taxons observés dans ce profil et cette annotation_policy; un taxon absent du profil entier ne reçoit pas de zéro. all_loaded_objects inclut les objets non validés. Ne pas sommer le même volume sur plusieurs taxons. marine_zone_key/name/assignment_status viennent directement de uvp_profile : disponibles même quand explore.uvp_samples est vide pour ce profil (pas de sample EcoTaxa lié) — ne pas passer par uvp_samples pour la zone, elle est déjà ici.
+**Limites :** Formule : n_objects_taxon / sampled_volume_l × 1000, individus/m³. Agréger par SUM(n_objects_taxon)/SUM(sampled_volume_l)*1000, pas par moyenne simple. Filtre de zone complet (y compris points AMBIGUOUS) : JOIN explore.zone_membership m ON m.row_kind='uvp_profile' AND m.row_id=profile_id. La vue ajoute des zéros sur tous les bins uniquement pour les taxons observés dans ce profil et cette annotation_policy; un taxon absent du profil entier ne reçoit pas de zéro. annotation_policy vaut all_loaded_objects:ecotaxa_project=N (tous les objets chargés : validés, prédits, douteux et jamais classés) ou validated_only:ecotaxa_project=N (validés seulement, statut V d’EcoTaxa) : toujours filtrer une seule politique et la nommer dans la réponse; comparer les deux pour montrer la part du prédit. Attention avec validated_only : un profil sans aucun objet validé de ce taxon n’a pas de ligne (pas de zéro, l’annotation y est peut-être incomplète), donc le volume de référence diffère de all_loaded_objects; toujours donner, pour chaque politique, le nombre de profils et le volume total utilisés, et ne pas présenter l’écart entre politiques comme une différence biologique. Ne pas sommer le même volume sur plusieurs taxons. marine_zone_key/name/assignment_status viennent directement de uvp_profile : disponibles même quand explore.uvp_samples est vide pour ce profil (pas de sample EcoTaxa lié) — ne pas passer par uvp_samples pour la zone, elle est déjà ici.
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
 | dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir catalogue.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
-| profile_id | bigint | Clé technique du profil UVP; équivaut à uvp_samples.uvp_profile_id. |
-| bin_id | bigint | Clé technique du bin EcoPart. |
+| profile_id | bigint | Ancien nom de la clé du profil UVP dans ecopart_bins et uvp_taxon_abundance; même valeur que uvp_profile_id (présente aussi dans ces vues), à privilégier. |
+| bin_id | bigint | Ancien nom de la clé du bin EcoPart dans ecopart_bins et uvp_taxon_abundance; même valeur que uvp_bin_id, à privilégier. |
 | taxon_key | text | Clé dérivée : ecotaxa:id:…, ecotaxa:name:… ou warehouse:unclassified; ne pas présenter un libellé ou marqueur comme identifiant taxonomique officiel. |
-| annotation_policy | text | Politique de sélection des objets et projet EcoTaxa; all_loaded_objects inclut tous les objets chargés, pas uniquement les validés. |
+| annotation_policy | text | Politique de sélection des objets et projet EcoTaxa : all_loaded_objects:ecotaxa_project=N (tous les objets chargés, validés ou non) ou validated_only:ecotaxa_project=N (annotation_status = validated seulement). Filtrer une seule politique. |
 | n_objects_taxon | bigint | Nombre d’objets du taxon pour le bin et la politique; zéros densifiés selon le contrat de la vue. |
 | sampled_volume_l | numeric | Volume échantillonné du bin EcoPart, en litres; ne pas le répéter dans une somme multi-taxons. |
 | abundance_uvp_ind_m3 | numeric | Abondance UVP dérivée en individus/m³ : n_objects_taxon / sampled_volume_l × 1000. |
@@ -205,6 +448,9 @@ Abondances UVP dérivées des objets EcoTaxa et volumes EcoPart.
 | marine_zone_name | text | Libellé de zone; dans uvp_projects, MIN ne représente pas toutes les zones du projet. |
 | marine_zone_assignment_status | text | assigned, ambiguous, outside ou unresolved; un chevauchement peut être ambiguous. |
 | ecotaxa_project_id | bigint | Identifiant natif du projet EcoTaxa; distinct de celui du projet EcoPart. |
+| taxon_name | text | Libellé taxonomique EcoTaxa (ex. Copepoda<Multicrustacea), pour lire et afficher; la clé de jointure reste taxon_key/taxon_id. Ne prouve pas un mapping FILET ni une validation. |
+| uvp_profile_id | bigint | Clé technique du profil UVP, même nom et même valeur dans toutes les vues UVP : clé de jointure à privilégier. |
+| uvp_bin_id | bigint | Clé technique du bin de profondeur EcoPart, même nom dans toutes les vues UVP; dans uvp_objects/uvp_object_sizes, NULL si l’objet n’est rattaché à aucun bin. |
 
 ```sql
 SELECT profile_id,taxon_key,annotation_policy,SUM(n_objects_taxon)/SUM(sampled_volume_l)*1000 AS ind_m3 FROM explore.uvp_taxon_abundance GROUP BY 1,2,3 LIMIT 20;
@@ -222,13 +468,13 @@ Spectre de tailles des particules UVP (produit EcoPart LPM), sans annotation tax
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
-| uvp_profile_id | bigint | Clé technique du profil UVP; équivaut à profile_id dans les vues de bins et abondances. |
+| uvp_profile_id | bigint | Clé technique du profil UVP, même nom et même valeur dans toutes les vues UVP : clé de jointure à privilégier. |
 | dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir catalogue.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
 | sample_name | text | Nom natif du profil EcoPart; pas un identifiant global. |
 | marine_zone_key | text | Clé de zone maritime attribuée; consulter source, version et statut. |
 | marine_zone_assignment_status | text | assigned, ambiguous, outside ou unresolved; un chevauchement peut être ambiguous. |
 | sampled_at | timestamp with time zone | Horodatage source ou borne agrégée selon le nom; vérifier le type SQL et le fuseau. Le rapprochement FILET existant interprète ses dates sans fuseau en UTC. |
-| uvp_bin_id | bigint | Clé technique du bin EcoPart lié à l’objet; NULL si non apparié. |
+| uvp_bin_id | bigint | Clé technique du bin de profondeur EcoPart, même nom dans toutes les vues UVP; dans uvp_objects/uvp_object_sizes, NULL si l’objet n’est rattaché à aucun bin. |
 | depth_min_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
 | depth_max_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
 | sampled_volume_l | numeric | Volume échantillonné du bin EcoPart, en litres; ne pas le répéter dans une somme multi-taxons. |
@@ -257,7 +503,7 @@ Un objet EcoTaxa identifié (taxon) par ligne, avec sa taille réelle quand elle
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
-| uvp_profile_id | bigint | Clé technique du profil UVP; équivaut à profile_id dans les vues de bins et abondances. |
+| uvp_profile_id | bigint | Clé technique du profil UVP, même nom et même valeur dans toutes les vues UVP : clé de jointure à privilégier. |
 | dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir catalogue.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
 | sample_name | text | Nom natif du profil EcoPart; pas un identifiant global. |
 | marine_zone_key | text | Clé de zone maritime attribuée; consulter source, version et statut. |
@@ -267,12 +513,12 @@ Un objet EcoTaxa identifié (taxon) par ligne, avec sa taille réelle quand elle
 | object_id | text | Identifiant natif de l’objet EcoTaxa, qualifié par son sample/source. |
 | acquisition_id | text | Identifiant natif d’acquisition EcoTaxa. |
 | taxon_id | text | Identifiant de catégorie EcoTaxa fourni; pas une équivalence FILET implicite. |
-| taxon_name | text | Libellé taxonomique EcoTaxa fourni; ne prouve pas un mapping FILET ni une validation. |
-| annotation_status | text | Statut d’annotation EcoTaxa chargé; NULL signifie inconnu, pas validated. |
+| taxon_name | text | Libellé taxonomique EcoTaxa (ex. Copepoda<Multicrustacea), pour lire et afficher; la clé de jointure reste taxon_key/taxon_id. Ne prouve pas un mapping FILET ni une validation. |
+| annotation_status | text | Statut d’annotation EcoTaxa (classif_qual) : validated (V, validé par un humain), predicted (P, classification automatique), dubious (D); NULL = objet jamais classé (ou chargé avant l’ajout du statut), pas validated. |
 | taxon_key | text | Clé dérivée : ecotaxa:id:…, ecotaxa:name:… ou warehouse:unclassified; ne pas présenter un libellé ou marqueur comme identifiant taxonomique officiel. |
 | object_depth_min_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
 | object_depth_max_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
-| uvp_bin_id | bigint | Clé technique du bin EcoPart lié à l’objet; NULL si non apparié. |
+| uvp_bin_id | bigint | Clé technique du bin de profondeur EcoPart, même nom dans toutes les vues UVP; dans uvp_objects/uvp_object_sizes, NULL si l’objet n’est rattaché à aucun bin. |
 | depth_min_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
 | depth_max_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
 | sampled_volume_l | numeric | Volume échantillonné du bin EcoPart, en litres; ne pas le répéter dans une somme multi-taxons. |
@@ -280,7 +526,7 @@ Un objet EcoTaxa identifié (taxon) par ligne, avec sa taille réelle quand elle
 | esd_px | double precision | Diamètre sphérique équivalent Zooprocess, en pixels; NULL si le projet EcoTaxa ne fournit pas cette colonne libre. |
 | major_px | double precision | Axe majeur de l’ellipse ajustée par Zooprocess, en pixels; valeur source, non recalculée. |
 | minor_px | double precision | Axe mineur de l’ellipse ajustée par Zooprocess, en pixels; valeur source, non recalculée. |
-| pixel_size_mm | double precision | Taille réelle d’un pixel pour l’acquisition de l’objet, en mm; NULL si EcoTaxa ne la fournit pas, auquel cas aucune colonne _um/_um2 n’est calculable pour cet objet. |
+| pixel_size_mm | double precision | Taille réelle d’un pixel pour l’acquisition de l’objet, en mm (EcoTaxa la donne en mm pour UVP5/Zooscan et en µm pour UVP6 : convertie ici; ordre de grandeur 0,07 à 0,17 mm); NULL si EcoTaxa ne la fournit pas (LOKI, Zooscan), auquel cas aucune colonne _um/_um2 n’est calculable pour cet objet. |
 | esd_um | double precision | esd_px converti en micromètres via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une taille nulle. |
 | major_um | double precision | major_px converti en micromètres via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une taille nulle. |
 | minor_um | double precision | minor_px converti en micromètres via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une taille nulle. |
@@ -332,6 +578,31 @@ Contour géométrique (GeoJSON) des zones maritimes utilisées ailleurs comme ma
 
 ```sql
 SELECT zone_key, geometry_geojson FROM explore.marine_zone_boundaries WHERE zone_key = 'Baie de Baffin';
+```
+
+## explore.zone_membership
+
+Toutes les zones maritimes qui couvrent chaque point localisé (profil UVP, sample EcoTaxa, profil CTD, sample FILET), chevauchements compris.
+
+**Grain :** Ligne localisée (row_kind × row_id) × zone qui la couvre; un point dans trois zones superposées = trois lignes.
+
+**Relations :** row_kind=uvp_profile : row_id = uvp_taxon_abundance.profile_id = uvp_samples.uvp_profile_id; ecotaxa_sample : row_id = ecotaxa_sample_id; ctd_profile, filet_sample : id de la table. zone_key = marine_zone_boundaries.zone_key.
+
+**Limites :** Calculée en PostGIS (ST_Covers) sur les coordonnées et les contours à pleine résolution. marine_zone_key des autres vues porte UNE zone choisie au chargement : une zone NeoLab/IHO l’emporte sur une écorégion MEOW (un point de la Baie de Baffin peut aussi être dans « MEOW: West Greenland Shelf »), et AMBIGUOUS signale plusieurs zones NeoLab superposées (ex. Baie d’Ungava dans le composite Nunavik). Un filtre marine_zone_key = X perd donc les points AMBIGUOUS et ne trouve jamais une écorégion MEOW écartée; un filtre par cette vue garde tout. Dire dans la réponse quel filtre est utilisé. Zones de sources différentes superposées : ne pas additionner des résultats de plusieurs zones sans dédoublonner row_id. Ligne sans coordonnées propres mais zone attribuée en amont (ex. profil UVP dont les samples EcoTaxa liés divergent sur la position) : présente avec cette seule zone, geometry_resolution = assigned_without_coordinates; sans coordonnées ni zone, pas de ligne. Vue absente sans PostGIS.
+
+| Colonne | Type SQL | Définition |
+|---|---|---|
+| row_kind | text | Type de ligne localisée : uvp_profile, ecotaxa_sample, ctd_profile ou filet_sample. |
+| row_id | bigint | Identifiant de la ligne dans sa table (uvp_profile_id, ecotaxa_sample_id, id CTD ou FILET), selon row_kind. |
+| dataset_version_id | bigint | Clé technique de version de la source de cette vue; voir catalogue.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ. |
+| zone_key | text | Clé de la zone maritime, même valeur que marine_zone_key ailleurs dans le warehouse; clé de jointure vers les vues d’occurrence. |
+| zone_source | text | Source de la géométrie de la zone (ex. registre IHO Marine Regions, composite NeoLab); voir shared_data/geo/zones_registry.geojson pour le détail. |
+| assigned_zone_key | text | Zone unique attribuée au chargement à cette ligne (marine_zone_key), AMBIGUOUS si plusieurs zones se chevauchent. |
+| marine_zone_assignment_status | text | assigned, ambiguous, outside ou unresolved; un chevauchement peut être ambiguous. |
+| geometry_resolution | text | full : appartenance calculée sur le contour à pleine résolution; simplified : contour simplifié (recharger les zones); assigned_without_coordinates : pas de coordonnées propres, zone reprise de l’attribution amont, non recalculée. |
+
+```sql
+SELECT a.taxon_key, SUM(a.n_objects_taxon)/SUM(a.sampled_volume_l)*1000 AS ind_m3 FROM explore.uvp_taxon_abundance a JOIN explore.zone_membership m ON m.row_kind='uvp_profile' AND m.row_id=a.profile_id WHERE m.zone_key='Baie de Baffin' AND a.annotation_policy LIKE 'validated_only:%' GROUP BY 1 LIMIT 20;
 ```
 
 ## explore.copepod_stages
@@ -413,7 +684,7 @@ Mesures CTD rattachées à un profil UVP.
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
-| uvp_profile_id | bigint | Clé technique du profil UVP; équivaut à profile_id dans les vues de bins et abondances. |
+| uvp_profile_id | bigint | Clé technique du profil UVP, même nom et même valeur dans toutes les vues UVP : clé de jointure à privilégier. |
 | uvp_dataset_version_id | bigint | Version de la source du profil UVP; distincte de la version CTD. |
 | ecopart_project_id | bigint | Identifiant natif du projet EcoPart; distinct de celui du projet EcoTaxa. |
 | ecopart_sample_id | text | Identifiant natif du sample EcoPart, si fourni. |
@@ -425,7 +696,7 @@ Mesures CTD rattachées à un profil UVP.
 | ctd_source_profile_key | text | Identifiant natif du profil CTD. |
 | source_row_key | text | Clé de ligne source CTD; conserve le grain original. |
 | scan_key | text | Identifiant de scan source CTD; qualifier par profil et source. |
-| depth_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
+| depth_m | double precision | Pression en dbar utilisée comme profondeur en mètres (1 dbar ≈ 0,99 m; écart d’environ 1 % à 2000 m), telle que fournie par le chargeur CTD; pas une profondeur recalculée (TEOS-10). |
 | pressure_dbar | double precision | Pression CTD en dbar; ne pas assimiler automatiquement à la profondeur en mètres. |
 | variable_key | text | Code de variable CTD; conserver les codes source et ne pas assimiler des variables sans vérifier définition/unité. |
 | variable_definition | text | Définition source de la variable CTD. |
@@ -503,7 +774,7 @@ Mesures CTD des seuls liens EcoTaxa–CTD acceptés.
 | distance_km | numeric | Écart spatial enregistré du lien EcoTaxa–CTD, en kilomètres; pas le seuil spatial FILET–UVP du navigateur. |
 | time_gap_minutes | numeric | Écart temporel enregistré du lien EcoTaxa–CTD, en minutes. |
 | evidence | text | Preuves de correspondance JSON; conserver les paramètres, sources et éventuelles ambiguïtés. |
-| depth_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
+| depth_m | double precision | Pression en dbar utilisée comme profondeur en mètres (1 dbar ≈ 0,99 m; écart d’environ 1 % à 2000 m), telle que fournie par le chargeur CTD; pas une profondeur recalculée (TEOS-10). |
 | pressure_dbar | double precision | Pression CTD en dbar; ne pas assimiler automatiquement à la profondeur en mètres. |
 | variable_key | text | Code de variable CTD; conserver les codes source et ne pas assimiler des variables sans vérifier définition/unité. |
 | variable_definition | text | Définition source de la variable CTD. |
@@ -675,7 +946,7 @@ Mesures CTD rattachées aux échantillons FILET.
 | station_name | text | Libellé de station FILET fourni par la source. |
 | ctd_profile_id | bigint | Clé technique du profil CTD; pas une clé d’alignement des mesures individuelles. |
 | source_profile_key | text | Identifiant natif du profil CTD. |
-| depth_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
+| depth_m | double precision | Pression en dbar utilisée comme profondeur en mètres (1 dbar ≈ 0,99 m; écart d’environ 1 % à 2000 m), telle que fournie par le chargeur CTD; pas une profondeur recalculée (TEOS-10). |
 | pressure_dbar | double precision | Pression CTD en dbar; ne pas assimiler automatiquement à la profondeur en mètres. |
 | variable_key | text | Code de variable CTD; conserver les codes source et ne pas assimiler des variables sans vérifier définition/unité. |
 | value | double precision | Valeur CTD fournie; interpréter avec unit, variable_key, sensor_channel et qc. |
@@ -703,7 +974,7 @@ Correspondances FILET–UVP stockées, avec statut et preuves.
 | station_id | text | Station déclarée pour le rapprochement; consulter match_method et evidence. |
 | filet_sample_id | bigint | Clé TECHNIQUE de l’échantillon FILET : filet_samples.id. |
 | filet_analysis_id | bigint | Clé technique d’analyse FILET; NULL si rapprochement sans analyse. |
-| uvp_profile_id | bigint | Clé technique du profil UVP; équivaut à profile_id dans les vues de bins et abondances. |
+| uvp_profile_id | bigint | Clé technique du profil UVP, même nom et même valeur dans toutes les vues UVP : clé de jointure à privilégier. |
 | filet_sampled_at | timestamp without time zone | Horodatage source ou borne agrégée selon le nom; vérifier le type SQL et le fuseau. Le rapprochement FILET existant interprète ses dates sans fuseau en UTC. |
 | uvp_sampled_at | timestamp with time zone | Horodatage source ou borne agrégée selon le nom; vérifier le type SQL et le fuseau. Le rapprochement FILET existant interprète ses dates sans fuseau en UTC. |
 | time_gap_hours | numeric | Écart temporel FILET–UVP enregistré, en heures. |
@@ -732,7 +1003,7 @@ Comparaison des abondances via les liens FILET–UVP et le mapping taxonomique a
 | station_id | text | Station déclarée pour le rapprochement; consulter match_method et evidence. |
 | filet_sample_id | bigint | Clé TECHNIQUE de l’échantillon FILET : filet_samples.id. |
 | filet_analysis_id | bigint | Clé technique d’analyse FILET; NULL si rapprochement sans analyse. |
-| uvp_profile_id | bigint | Clé technique du profil UVP; équivaut à profile_id dans les vues de bins et abondances. |
+| uvp_profile_id | bigint | Clé technique du profil UVP, même nom et même valeur dans toutes les vues UVP : clé de jointure à privilégier. |
 | time_gap_hours | numeric | Écart temporel FILET–UVP enregistré, en heures. |
 | match_status | text | Statut de la correspondance; accepted est distinct des candidats ambiguous et des liens non acceptés. |
 | taxon_filet | text | Identifiant taxonomique FILET source du mapping; pas un AphiaID supposé. |

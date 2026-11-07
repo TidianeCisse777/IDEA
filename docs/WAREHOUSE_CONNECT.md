@@ -166,6 +166,14 @@ questions portent sur ce warehouse. Le serveur envoie aussi ces instructions à 
 Baffin ? »), un agent ouvert dans un dossier vide a répondu de mémoire 4 fois sur 4, et dans un dossier de
 travail il a interrogé la base 4 fois sur 4.
 
+Quand une requête échoue, le relais `warehouse_connect.py run` ajoute à l'erreur renvoyée par DbHub un champ
+`hint` qui dit quoi faire ensuite :
+- délai de 30 s dépassé : filtrer par projet ou sample, chercher les taxons dans `explore.ecotaxa_sample_taxa` ;
+- colonne ou vue inconnue : lire `catalogue.warehouse_dictionary` ;
+- droit refusé : lire `explore` et `catalogue`.
+
+Dans les traces de 103 cas de test, 34 requêtes portaient sur un nom deviné et 10 dépassaient le délai.
+
 Une fois l'agent redémarré, demandez-lui :
 
 > « Lis le contexte du warehouse NeoLab, puis dis-moi ce que mon compte a le droit de voir. »

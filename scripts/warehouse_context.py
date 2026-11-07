@@ -91,8 +91,20 @@ VIEWS = {
         'Tous les objets EcoTaxa (15 M), tous projets et instruments : taxon, statut d’annotation, profondeur, taille.',
         'Un objet EcoTaxa par ligne.',
         'ecotaxa_sample_id vers ecotaxa_samples; ecotaxa_project_id vers ecotaxa_projects; ecotaxa_object_id = uvp_objects.ecotaxa_object_id pour les objets liés à un profil UVP.',
-        'Toujours filtrer par ecotaxa_project_id ou ecotaxa_sample_id et agréger dans la requête : un balayage complet dépasse le délai de 30 s. Pour de simples comptes par statut, ecotaxa_samples suffit. Tailles réelles (_um) NULL sans calibration pixel (LOKI notamment), jamais zéro. Pas d’abondance (ind/m³) sans volume : passer par les vues UVP.',
+        'Toujours filtrer par ecotaxa_project_id ou ecotaxa_sample_id et agréger dans la requête : un balayage complet dépasse le délai de 30 s. Pour de simples comptes par statut, ecotaxa_samples suffit; pour chercher un taxon ou compter par taxon, ecotaxa_sample_taxa (un filtre sur taxon_name ici, même avec le projet, peut dépasser 30 s). Ici, réserver ecotaxa_objects à la profondeur et à la taille. Tailles réelles (_um) NULL sans calibration pixel (LOKI notamment), jamais zéro. Pas d’abondance (ind/m³) sans volume : passer par les vues UVP.',
         'SELECT taxon_name, annotation_status, COUNT(*) FROM explore.ecotaxa_objects WHERE ecotaxa_project_id = 12063 GROUP BY 1,2 ORDER BY 3 DESC LIMIT 20;'),
+    'ecotaxa_sample_taxa': view(
+        'Nombre d’objets par sample EcoTaxa et par catégorie (taxon), par statut d’annotation, avec la lignée du taxon : la vue pour chercher un taxon, savoir dans quels projets ou samples il est, et compter par taxon.',
+        'Un sample EcoTaxa × une catégorie par ligne (environ 40 000 lignes); taxon_id NULL = objets jamais classés.',
+        'ecotaxa_sample_id vers ecotaxa_samples et ecotaxa_objects; ecotaxa_project_id vers ecotaxa_projects; taxon_id vers ecotaxa_taxa et ecotaxa_objects.taxon_id.',
+        'Rapide (moins d’une seconde) : chercher ici un taxon par nom (taxon_name ILIKE), jamais dans ecotaxa_objects. Un groupe (« les copépodes ») se lit dans la lignée EcoTaxa : \'Copepoda\' = ANY(taxon_lineage), jamais d’une liste de genres dressée de mémoire. Cette lignée inclut les organismes entiers (taxons, stades et vues comme female+lateral<Metridia longa, small<, ovigerous) mais aussi des catégories qui ne sont pas un copépode entier vivant (part<, cut<, antenna<, copepoda eggs, dead<) ou incertaines (like<, badfocus<, multiple<) : dire lesquelles sont gardées et donner le total avec et sans elles. taxon_type M (morphologique) ne veut pas dire fragment : les stades et vues sont M. Mêmes précautions sur les doublons de projets que ecotaxa_samples (149, 20880, 20890, 13224). Pas de profondeur, de taille ni de volume ici.',
+        "SELECT ecotaxa_project_id, taxon_name, SUM(n_validated) AS valides, SUM(n_objects) AS objets FROM explore.ecotaxa_sample_taxa WHERE 'Copepoda' = ANY(taxon_lineage) AND ecotaxa_project_id = 14859 GROUP BY 1,2 ORDER BY 4 DESC;"),
+    'ecotaxa_taxa': view(
+        'Les catégories EcoTaxa présentes dans le warehouse, avec leur lignée jusqu’à la racine (taxonomie EcoTaxa), leur type, leur rang, leur AphiaID WoRMS et leurs totaux.',
+        'Une catégorie EcoTaxa par ligne (340).',
+        'taxon_id vers ecotaxa_sample_taxa.taxon_id et ecotaxa_objects.taxon_id; taxon_name identique au taxon_name des objets.',
+        'Pour savoir quelles catégories appartiennent à un groupe : WHERE \'Copepoda\' = ANY(taxon_lineage); taxon_short_name donne le qualificatif d’une catégorie morphologique (part, cut, dead, like...). Les totaux ne couvrent que ce que le compte peut lire. La lignée est celle d’EcoTaxa au moment du chargement (fetched_at dans la source), pas une révision taxonomique.',
+        "SELECT taxon_name, taxon_type, taxon_rank, n_projects, n_objects, n_validated FROM explore.ecotaxa_taxa WHERE 'Copepoda' = ANY(taxon_lineage) ORDER BY n_objects DESC NULLS LAST;"),
     'ctd_profiles': view(
         'Tous les profils CTD Amundsen chargés, liés ou non à EcoTaxa.',
         'Un profil CTD par ligne.',
@@ -331,6 +343,13 @@ COLUMNS = {
     'annotation_policy': 'Politique de sélection des objets et projet EcoTaxa : all_loaded_objects:ecotaxa_project=N (tous les objets chargés, validés ou non) ou validated_only:ecotaxa_project=N (annotation_status = validated seulement). Filtrer une seule politique.',
     'ecotaxa_status': 'Statut du projet dans EcoTaxa (ex. Annotate), tel que fourni.',
     'n_samples': 'Nombre de samples EcoTaxa chargés pour ce projet.',
+    'taxon_lineage': 'Lignée EcoTaxa de la catégorie, du taxon lui-même jusqu’à la racine (ex. Calanoida, Gymnoplea, Neocopepoda, Copepoda, …, Biota) : un groupe se filtre par \'Copepoda\' = ANY(taxon_lineage). Inclut les catégories morphologiques (stades, vues, mais aussi part, dead, eggs, like) : dire lesquelles sont gardées. NULL si la taxonomie n’est pas chargée.',
+    'taxon_id_lineage': 'Identifiants EcoTaxa de la lignée, dans le même ordre que taxon_lineage.',
+    'taxon_type': 'Type de catégorie EcoTaxa : P (phylogénétique, un taxon) ou M (morphologique : stade, vue, taille, mais aussi part, cut, dead, eggs, like...). M ne veut pas dire fragment.',
+    'taxon_short_name': 'Nom court EcoTaxa de la catégorie (pour une catégorie morphologique, son qualificatif : part, cut, dead, like, female+lateral...).',
+    'taxon_rank': 'Rang taxonomique EcoTaxa (Class, Order, Genus...), NULL pour les catégories morphologiques.',
+    'aphia_id': 'AphiaID WoRMS fourni par EcoTaxa, NULL si absent; pas une équivalence FILET implicite.',
+    'n_projects': 'Nombre de projets EcoTaxa où la catégorie a au moins un objet lisible par le compte.',
     'n_objects': 'Nombre d’objets chargés du projet (somme de object_count des samples).',
     'n_validated': 'Objets validés (annotation_status = validated) du projet, somme des samples.',
     'n_predicted': 'Objets prédits automatiquement, non validés (annotation_status = predicted), somme des samples.',
@@ -461,6 +480,13 @@ def column_description(view_name, column):
     if column == 'filet_sample_id':
         return ('Identifiant NATIF texte du sample FILET; pas filet_samples.id.' if view_name == 'filet_ctd'
                 else 'Clé TECHNIQUE de l’échantillon FILET : filet_samples.id.')
+    if view_name in ('ecotaxa_sample_taxa', 'ecotaxa_taxa') and column in (
+            'n_objects', 'n_validated', 'n_predicted', 'n_dubious', 'n_unclassified', 'n_samples'):
+        scope = 'de ce sample dans cette catégorie' if view_name == 'ecotaxa_sample_taxa' else 'de cette catégorie, tous projets lisibles'
+        return {'n_objects': f'Nombre d’objets {scope}.', 'n_validated': f'Objets validés (annotation_status = validated) {scope}.',
+                'n_predicted': f'Objets prédits automatiquement, non validés, {scope}.',
+                'n_dubious': f'Objets marqués douteux {scope}.', 'n_unclassified': f'Objets jamais classés {scope}.',
+                'n_samples': 'Nombre de samples EcoTaxa où la catégorie a au moins un objet lisible par le compte.'}[column]
     if column in COLUMNS:
         return COLUMNS[column]
     if column.startswith(('latitude', 'longitude')):

@@ -262,6 +262,8 @@ BEGIN
          'sample_id IN (SELECT id FROM warehouse.ecotaxa_sample)'),
         ('ecotaxa_acquisition',
          'sample_id IN (SELECT id FROM warehouse.ecotaxa_sample)'),
+        ('ecotaxa_sample_taxon',
+         'sample_id IN (SELECT id FROM warehouse.ecotaxa_sample)'),
         ('uvp_bin',
          'profile_id IN (SELECT id FROM warehouse.uvp_profile)'),
         ('uvp_particle',
@@ -448,7 +450,7 @@ FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname = 'warehouse' AND c.relkind = 'r' AND NOT c.relrowsecurity
   AND c.relname NOT IN ('dataset_version', 'dataset_metadata', 'dataset_file', 'column_metadata',
                         'validation_run', 'taxon_mapping', 'ctd_variable', 'access_grant', 'release_history',
-                        'marine_zone', 'copepod_stage')
+                        'marine_zone', 'copepod_stage', 'ecotaxa_taxon')
 UNION ALL
 SELECT DISTINCT 'view bypasses row security', v.relname::text
 FROM pg_class v
