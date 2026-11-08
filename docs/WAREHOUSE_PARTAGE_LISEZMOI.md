@@ -9,10 +9,14 @@ Compter environ 1 h la première fois (dont une bonne part de téléchargements)
 
 | Fichier | Rôle |
 |---|---|
-| `neolab_warehouse_20261108_232541.dump` | la base de données, 657 Mo (environ 8 Go une fois installée) |
+| `neolab_warehouse_20261108_232541.dump.part0` et `.part1` | la base de données en deux morceaux (657 Mo en tout, environ 8 Go une fois installée), un par zip |
 | `neolab_warehouse_20261108_232541.dump.sha256` | l'empreinte qui permet de vérifier que le fichier n'est pas abîmé |
 | `IDEA-code.tar.gz` | les programmes et la documentation |
 | `LISEZMOI.md` | ce fichier |
+
+La copie arrive en **deux zips**, `neolab_warehouse_20261108_1sur2.zip` et `neolab_warehouse_20261108_2sur2.zip`
+(un seul fichier serait trop gros pour certains envois). Les deux se décompressent dans le même dossier
+`neolab_warehouse_20261108`; la partie 3.1 recolle les deux morceaux de la base.
 
 Aucun mot de passe n'est inclus : vous choisirez les vôtres.
 
@@ -48,11 +52,11 @@ ensuite telles quelles, dans le terminal Ubuntu.
    sudo apt install -y python3 python3-venv python3-pip unzip curl ca-certificates
    ```
    Puis suivre la section **Linux** ci-dessous à partir de l'étape 3 (client PostgreSQL et Node.js).
-4. **Copier le dossier dans Ubuntu.** Le zip téléchargé est côté Windows (par exemple dans Téléchargements).
-   Dans le terminal Ubuntu, en remplaçant `VotreNom` par votre nom d'utilisateur Windows :
+4. **Copier le dossier dans Ubuntu.** Les deux zips téléchargés sont côté Windows (par exemple dans
+   Téléchargements). Dans le terminal Ubuntu, en remplaçant `VotreNom` par votre nom d'utilisateur Windows :
    ```bash
-   cp /mnt/c/Users/VotreNom/Downloads/neolab_warehouse_20261108.zip ~/
-   cd ~ && unzip neolab_warehouse_20261108.zip
+   cp /mnt/c/Users/VotreNom/Downloads/neolab_warehouse_20261108_*sur2.zip ~/
+   cd ~ && unzip -o neolab_warehouse_20261108_1sur2.zip && unzip -o neolab_warehouse_20261108_2sur2.zip
    ```
    Le dossier `~/neolab_warehouse_20261108` est celui des parties suivantes.
 
@@ -68,8 +72,11 @@ ensuite telles quelles, dans le terminal Ubuntu.
    brew install python node libpq
    brew link --force libpq
    ```
-4. Décompresser le zip (double-clic dans le Finder), puis dans le Terminal : `cd ` (avec un espace), glisser
-   le dossier `neolab_warehouse_20261108` dans la fenêtre, Entrée.
+4. Décompresser les deux zips **dans le Terminal** (le Finder mettrait le second dans un autre dossier) :
+   ```bash
+   cd ~/Downloads && unzip -o neolab_warehouse_20261108_1sur2.zip && unzip -o neolab_warehouse_20261108_2sur2.zip
+   cd neolab_warehouse_20261108
+   ```
 
 ### Linux (Ubuntu 22.04 ou 24.04)
 
@@ -95,7 +102,8 @@ ensuite telles quelles, dans le terminal Ubuntu.
    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
    sudo apt install -y nodejs
    ```
-5. Décompresser : `cd` vers le dossier du zip, puis `unzip neolab_warehouse_20261108.zip` et
+5. Décompresser : `cd` vers le dossier des zips, puis
+   `unzip -o neolab_warehouse_20261108_1sur2.zip && unzip -o neolab_warehouse_20261108_2sur2.zip` et
    `cd neolab_warehouse_20261108`.
 
 ### Vérifier (tous les systèmes)
@@ -127,15 +135,16 @@ Vérifier avec `claude --version` ou `codex --version` (pour Copilot : l'icône 
 
 Toutes les commandes se tapent dans le terminal, **depuis le dossier `neolab_warehouse_20261108`**.
 
-### 3.1 Vérifier le fichier et décompresser le code
+### 3.1 Recoller la base, la vérifier et décompresser le code
 
 ```bash
+cat neolab_warehouse_20261108_232541.dump.part0 neolab_warehouse_20261108_232541.dump.part1 > neolab_warehouse_20261108_232541.dump
 sha256sum -c neolab_warehouse_20261108_232541.dump.sha256        # macOS : shasum -a 256 -c …
 tar xzf IDEA-code.tar.gz
 cd IDEA
 ```
 
-La première commande doit afficher `OK`. On est maintenant dans le dossier `IDEA`.
+La vérification doit afficher `OK` (sinon, un des deux zips est incomplet : le retélécharger). On est maintenant dans le dossier `IDEA`.
 
 ### 3.2 Préparer Python
 
