@@ -98,7 +98,20 @@ SELECT
     (o.area_px * (a.pixel_size_mm * 1000) ^ 2) AS area_um2,
     t.lineage AS taxon_lineage,
     t.taxon_type,
-    t.object_class
+    t.object_class,
+    o.sun_position,
+    o.classif_who AS annotator_id,
+    o.classif_when AS annotated_at,
+    o.classif_auto_score AS prediction_score,
+    o.image_uri,
+    o.perim_px,
+    o.feret_px,
+    o.circularity,
+    o.elongation,
+    o.mean_grey,
+    o.convex_area_px,
+    (o.perim_px * a.pixel_size_mm * 1000) AS perim_um,
+    (o.feret_px * a.pixel_size_mm * 1000) AS feret_um
 FROM warehouse.ecotaxa_object o
 JOIN warehouse.ecotaxa_sample s ON s.id = o.sample_id
 LEFT JOIN warehouse.ecotaxa_project p ON p.project_id = s.project_id

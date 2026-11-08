@@ -94,7 +94,11 @@ class FakeEcoTaxa:
             return {"obj.orig_id": f"o{o['objid']}", "obj.objdate": o["date"], "obj.depth_min": o["depth"],
                     "obj.depth_max": o["depth"] + 1, "obj.latitude": None, "obj.longitude": None,
                     "txo.display_name": o["taxon"], "obj.classif_id": o["classif_id"],
-                    "obj.classif_qual": o["qual"], "obj.objtime": o.get("time")}[field]
+                    "obj.classif_qual": o["qual"], "obj.objtime": o.get("time"), "obj.sunpos": "D",
+                    "obj.classif_who": 2006 if o["qual"] == "V" else None,
+                    "obj.classif_when": "2024-02-20T14:36:15" if o["qual"] == "V" else None,
+                    "obj.classif_auto_score": 0.87 if o["qual"] == "P" else None,
+                    "img.file_name": f"1670/{o['objid']}.jpg"}[field]
         return FakeResponse({"object_ids": [o["objid"] for o in page], "sample_ids": [o["sampleid"] for o in page],
                              "acquisition_ids": [f"acq{o['sampleid']}" for o in page],
                              "details": [[value(o, f) for f in self.fields] for o in page]})
@@ -129,7 +133,8 @@ def ecotaxa_fixture():
     taxon_ids = {"Calanus": 45072, "Oithona": 61993}
     objects = lambda sid, base: [{"objid": base + i, "sampleid": sid, "date": "2024-07-01", "time": f"14:0{i}:30",
                                   "depth": d, "taxon": t, "classif_id": taxon_ids[t], "qual": q,
-                                  "sizes": {"area": 90.0 + i, "esd": 10.0 + i, "major": 20.0 + i, "minor": 5.0 + i}}
+                                  "sizes": {"area": 90.0 + i, "esd": 10.0 + i, "major": 20.0 + i, "minor": 5.0 + i,
+                                            "perim.": 40.0 + i, "circ.": 0.5}}
                                  for i, (d, t, q) in enumerate([(0, "Calanus", "V"), (4.999, "Calanus", "P"),
                                                                 (5, "Oithona", "D"), (15, "Calanus", "V")])]
     return {
@@ -144,7 +149,8 @@ def ecotaxa_fixture():
         102: {"title": "Projet C2", "obj_free_cols": {},
               "samples": [sample(2001, "c2_baffin", BAFFIN, "C2")],
               "objects": objects(2001, 30_000)},
-        103: {"title": "Projet UVP C1", "obj_free_cols": {"area": "n01", "esd": "n02", "major": "n03", "minor": "n04"},
+        103: {"title": "Projet UVP C1", "obj_free_cols": {"area": "n01", "esd": "n02", "major": "n03", "minor": "n04",
+                                                        "perim.": "n05", "circ.": "n06"},
               "samples": [sample(100, "001_profile", BAFFIN, "C1")],
               "objects": objects(100, 40_000)},
     }
@@ -363,6 +369,13 @@ class LoaderChainTests(unittest.TestCase):
           self.assertEqual(self.owner_sql("SELECT count(*) FROM warehouse.ecotaxa_sample s WHERE s.marine_zone_assignment_status = 'assigned' "
                                           "AND NOT EXISTS (SELECT 1 FROM explore.zone_membership m WHERE m.row_kind = 'ecotaxa_sample' "
                                           "AND m.row_id = s.id AND m.zone_key = s.marine_zone_key)"), "0")
+        # Last enrichment (8 novembre 2026): annotator, validation date, prediction score, image, shape.
+        self.assertEqual(self.owner_sql("SELECT count(*) || '/' || count(classif_who) || '/' || count(classif_auto_score) || '/' || count(image_uri) "
+                                        "FROM warehouse.ecotaxa_object"), "16/8/4/16")
+        self.assertEqual(self.owner_sql("SELECT string_agg(DISTINCT circularity::text, ',') || ':' || count(perim_px) FROM warehouse.ecotaxa_object"), "0.5:4")
+        self.assertEqual(self.owner_sql("SELECT perim_um FROM explore.ecotaxa_objects WHERE object_id = '40000'"), "400")
+        self.assertEqual(self.owner_sql("SELECT image_uri FROM explore.ecotaxa_objects WHERE object_id = '40000'"),
+                         "https://ecotaxa.obs-vlfr.fr/vault/1670/40000.jpg")
         # The hour of capture is kept (obj.objtime; every object was at midnight until 7 novembre 2026).
         self.assertEqual(self.owner_sql("SELECT count(*) FROM warehouse.ecotaxa_object WHERE (object_datetime AT TIME ZONE 'UTC')::time = '00:00'"), "0")
         self.assertEqual(self.owner_sql("SELECT count(DISTINCT pixel_size_mm) FROM warehouse.ecotaxa_acquisition"), "1")

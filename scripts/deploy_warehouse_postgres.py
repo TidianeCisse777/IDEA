@@ -177,14 +177,15 @@ def readiness(env):
                            "WHERE n.nspname = 'warehouse' AND c.relrowsecurity AND NOT c.relforcerowsecurity")
     checks.append(('sécurité par ligne forcée', unsecured == '0', '%s table(s) sans FORCE' % unsecured
                    if unsecured != '0' else 'toutes les tables protégées', True))
-    context = exists("SELECT to_regclass('catalogue.warehouse_context') IS NOT NULL AND "
-                     "EXISTS (SELECT 1 FROM catalogue.warehouse_context WHERE topic = 'overview')")
+    # Two steps: a query naming a missing view fails to parse, whatever its guard.
+    context = (exists("SELECT to_regclass('catalogue.warehouse_context') IS NOT NULL")
+               and exists("SELECT EXISTS (SELECT 1 FROM catalogue.warehouse_context WHERE topic = 'overview')"))
     checks.append(('contexte MCP publié', context, 'warehouse_context(overview)' if context
                    else 'absent: publier le contexte (service warehouse-context ou ce script)', True))
     # A view added without its sheet leaves agents guessing (seen: a failed publication still printed PRÊT).
     unsheeted = query(env, "SELECT coalesce(string_agg(c.relname, ', ' ORDER BY c.relname), '') FROM pg_class c "
                            "JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'explore' "
-                           "AND c.relkind = 'v' AND to_regclass('catalogue.warehouse_context') IS NOT NULL "
+                           "AND c.relkind = 'v' "
                            "AND NOT EXISTS (SELECT 1 FROM catalogue.warehouse_context w WHERE w.topic = c.relname)") if context else ''
     checks.append(('fiche MCP pour chaque vue explore', context and not unsheeted,
                    'sans fiche: ' + unsheeted + ' (publier le contexte)' if unsheeted else

@@ -27,6 +27,35 @@ COMMENT ON COLUMN warehouse.ecotaxa_object.esd_px IS 'Diametre spherique equival
 COMMENT ON COLUMN warehouse.ecotaxa_object.major_px IS 'Axe majeur de l''ellipse ajustee, en pixels; valeur source EcoTaxa (free column "major").';
 COMMENT ON COLUMN warehouse.ecotaxa_object.minor_px IS 'Axe mineur de l''ellipse ajustee, en pixels; valeur source EcoTaxa (free column "minor").';
 
+-- Last enrichment (8 novembre 2026): what EcoTaxa gives per object and the warehouse
+-- did not keep. Checked live on project 149 (/object_set/149/query): obj.objtime
+-- "09:32:28", obj.classif_who 2006, obj.classif_when "2024-02-20T14:36:15",
+-- img.file_name "1670/0097.jpg" (served at https://ecotaxa.obs-vlfr.fr/vault/<file>),
+-- and the ZooProcess free columns perim., feret, circ., elongation, mean, convarea,
+-- common to the UVP5, UVP6 and Zooscan projects (LOKI names its features otherwise).
+-- Filled by scripts/populate_ecotaxa_objects.py --refresh; NULL until then.
+ALTER TABLE warehouse.ecotaxa_object
+    ADD COLUMN IF NOT EXISTS sun_position text,
+    ADD COLUMN IF NOT EXISTS classif_who integer,
+    ADD COLUMN IF NOT EXISTS classif_when timestamptz,
+    ADD COLUMN IF NOT EXISTS classif_auto_score double precision,
+    ADD COLUMN IF NOT EXISTS perim_px double precision,
+    ADD COLUMN IF NOT EXISTS feret_px double precision,
+    ADD COLUMN IF NOT EXISTS circularity double precision,
+    ADD COLUMN IF NOT EXISTS elongation double precision,
+    ADD COLUMN IF NOT EXISTS mean_grey double precision,
+    ADD COLUMN IF NOT EXISTS convex_area_px double precision;
+COMMENT ON COLUMN warehouse.ecotaxa_object.sun_position IS 'Position du soleil calculée par EcoTaxa (obj.sunpos), code tel que fourni; NULL si EcoTaxa ne la calcule pas pour l''objet.';
+COMMENT ON COLUMN warehouse.ecotaxa_object.classif_who IS 'Identifiant EcoTaxa de la personne qui a classé l''objet à la main (obj.classif_who); pas de nom.';
+COMMENT ON COLUMN warehouse.ecotaxa_object.classif_when IS 'Date de la dernière classification manuelle dans EcoTaxa (obj.classif_when).';
+COMMENT ON COLUMN warehouse.ecotaxa_object.classif_auto_score IS 'Score de la prédiction automatique EcoTaxa (obj.classif_auto_score), souvent NULL pour un objet validé.';
+COMMENT ON COLUMN warehouse.ecotaxa_object.perim_px IS 'Périmètre ZooProcess, en pixels (free column "perim.").';
+COMMENT ON COLUMN warehouse.ecotaxa_object.feret_px IS 'Diamètre de Feret maximal ZooProcess, en pixels (free column "feret").';
+COMMENT ON COLUMN warehouse.ecotaxa_object.circularity IS 'Circularité ZooProcess (free column "circ."), sans unité, 1 = disque.';
+COMMENT ON COLUMN warehouse.ecotaxa_object.elongation IS 'Élongation ZooProcess (free column "elongation"), sans unité.';
+COMMENT ON COLUMN warehouse.ecotaxa_object.mean_grey IS 'Niveau de gris moyen de l''objet (free column "mean"), échelle de l''image source.';
+COMMENT ON COLUMN warehouse.ecotaxa_object.convex_area_px IS 'Aire de l''enveloppe convexe ZooProcess, en pixels (free column "convarea").';
+
 CREATE TABLE IF NOT EXISTS warehouse.ecotaxa_acquisition (
     acquisition_id text PRIMARY KEY,
     sample_id bigint NOT NULL REFERENCES warehouse.ecotaxa_sample,
