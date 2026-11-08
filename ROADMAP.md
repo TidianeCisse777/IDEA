@@ -2,7 +2,29 @@
 
 **Période proposée :** du 14 septembre au 30 novembre 2026
 
-**Dernière mise à jour :** 7 novembre 2026
+**Dernière mise à jour :** 8 novembre 2026
+
+### 8 novembre 2026 — Dernier enrichissement des objets EcoTaxa (phase 2)
+
+- Champs EcoTaxa par objet vérifiés en direct (projet 149) puis chargés pour les 23 projets (15 050 002 objets,
+  `populate_ecotaxa_objects.py`, environ 55 min) : heure (`obj.objtime`), position du soleil (`obj.sunpos`),
+  annotateur (`classif_who`, identifiant seulement) et date de validation, score de prédiction, chemin de l'image
+  (`img.file_name`, adresse `https://ecotaxa.obs-vlfr.fr/vault/<chemin>` reconstruite par la vue), et six mesures
+  ZooProcess (périmètre, Feret, circularité, élongation, gris moyen, aire convexe; µm pour périmètre et Feret).
+  Exposés dans `explore.ecotaxa_objects`, chacun documenté.
+- Remplissage : heure 100 % sauf 801 (97 %) et 11469 (82 %); image 100 %; forme 100 % hors LOKI; annotateur et score
+  selon le statut des objets; position du soleil calculée par EcoTaxa pour 3,8 M objets seulement (un espace
+  sinon, ramené à NULL dans la vue). Codes vérifiés sur les données par élévation solaire : D jour (+20° en
+  moyenne), N nuit (-21°), A aube (-7°, le matin), U crépuscule (-8°, le soir), ? indéterminé.
+- Faux départ, corrigé : sans identifiants, EcoTaxa ne sert qu'une partie des objets de projets publics (315 :
+  24 387 sur 65 828; 14622 : 188 384 sur 1 687 393) et refuse les 14 projets privés; ma commande avait aussi
+  coupé l'export des identifiants (`set +a`). Le chargeur liste désormais les projets refusés ou lus en partie
+  et sort en code 3; reprise remise à zéro pour les projets touchés, puis chargement complet : 0 refus, 0 partiel.
+- Identifiants EcoTaxa repris de la capture d'écran de la session, gardés dans un fichier privé le temps du
+  chargement, puis détruits.
+- Base : 6,9 → 8,0 Go (table des objets 3,5 → 4,6 Go après VACUUM FULL); dump 657 Mo (309 avant), les mesures
+  décimales se compressant mal. Zip `neolab_warehouse_20261108.zip` restauré avec son propre code : `PRÊT`.
+  Tests : 163 verts.
 
 ### 7 novembre 2026 — Batterie de robustesse : droits restreints, pièges, CSV des figures (phase 2)
 

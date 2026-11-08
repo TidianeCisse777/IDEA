@@ -370,7 +370,7 @@ class LoaderChainTests(unittest.TestCase):
                                           "AND NOT EXISTS (SELECT 1 FROM explore.zone_membership m WHERE m.row_kind = 'ecotaxa_sample' "
                                           "AND m.row_id = s.id AND m.zone_key = s.marine_zone_key)"), "0")
         # Last enrichment (8 novembre 2026): annotator, validation date, prediction score, image, shape.
-        self.assertEqual(self.owner_sql("SELECT count(*) || '/' || count(classif_who) || '/' || count(classif_auto_score) || '/' || count(image_uri) "
+        self.assertEqual(self.owner_sql("SELECT count(*) || '/' || count(classif_who) || '/' || count(classif_auto_score) || '/' || count(image_file) "
                                         "FROM warehouse.ecotaxa_object"), "16/8/4/16")
         self.assertEqual(self.owner_sql("SELECT string_agg(DISTINCT circularity::text, ',') || ':' || count(perim_px) FROM warehouse.ecotaxa_object"), "0.5:4")
         self.assertEqual(self.owner_sql("SELECT perim_um FROM explore.ecotaxa_objects WHERE object_id = '40000'"), "400")

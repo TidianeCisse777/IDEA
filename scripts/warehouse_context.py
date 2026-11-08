@@ -350,7 +350,7 @@ COLUMNS = {
     'taxon_rank': 'Rang taxonomique EcoTaxa (Class, Order, Genus...), NULL pour les catégories morphologiques.',
     'aphia_id': 'AphiaID WoRMS fourni par EcoTaxa, NULL si absent; pas une équivalence FILET implicite.',
     'n_projects': 'Nombre de projets EcoTaxa où la catégorie a au moins un objet lisible par le compte.',
-    'sun_position': 'Position du soleil calculée par EcoTaxa pour l’objet (obj.sunpos), code tel que fourni; NULL si EcoTaxa ne la calcule pas ou si l’objet n’a pas été rechargé depuis le 8 novembre 2026.',
+    'sun_position': 'Position du soleil calculée par EcoTaxa pour l’objet (obj.sunpos) : D jour, A aube, U crépuscule, N nuit, ? indéterminé; NULL si EcoTaxa ne l’a pas calculée (environ 2 objets sur 3). Sens vérifié sur les données (élévation moyenne +20° pour D, -21° pour N, -7° le matin pour A, -8° le soir pour U). Pour jour/nuit, dire combien d’objets ont un code.',
     'annotator_id': 'Identifiant EcoTaxa de la personne qui a classé l’objet à la main (obj.classif_who), sans nom; NULL pour un objet jamais validé à la main ou pas encore rechargé.',
     'annotated_at': 'Date de la dernière classification manuelle dans EcoTaxa (obj.classif_when); NULL si jamais validé à la main ou pas encore rechargé.',
     'prediction_score': 'Score de la prédiction automatique EcoTaxa (obj.classif_auto_score, entre 0 et 1); souvent NULL pour un objet validé; ne dit rien de la justesse d’une validation humaine.',

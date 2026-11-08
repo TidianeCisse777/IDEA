@@ -44,8 +44,13 @@ ALTER TABLE warehouse.ecotaxa_object
     ADD COLUMN IF NOT EXISTS circularity double precision,
     ADD COLUMN IF NOT EXISTS elongation double precision,
     ADD COLUMN IF NOT EXISTS mean_grey double precision,
-    ADD COLUMN IF NOT EXISTS convex_area_px double precision;
-COMMENT ON COLUMN warehouse.ecotaxa_object.sun_position IS 'Position du soleil calculée par EcoTaxa (obj.sunpos), code tel que fourni; NULL si EcoTaxa ne la calcule pas pour l''objet.';
+    ADD COLUMN IF NOT EXISTS convex_area_px double precision,
+    ADD COLUMN IF NOT EXISTS image_file text;
+COMMENT ON COLUMN warehouse.ecotaxa_object.image_file IS 'Chemin de l''image dans le stockage EcoTaxa (img.file_name, ex. 1670/0097.jpg); l''adresse complète est https://ecotaxa.obs-vlfr.fr/vault/ suivi de ce chemin (explore.ecotaxa_objects.image_uri). Le chemin seul évite de répéter le préfixe pour 15 M objets.';
+-- image_uri was filled with the full address on 8 novembre 2026: move it to image_file (one-time, guarded).
+UPDATE warehouse.ecotaxa_object SET image_file = substr(image_uri, 35), image_uri = NULL
+WHERE image_uri LIKE 'https://ecotaxa.obs-vlfr.fr/vault/%';
+COMMENT ON COLUMN warehouse.ecotaxa_object.sun_position IS 'Position du soleil calculée par EcoTaxa (obj.sunpos), telle que fournie : D jour, A aube, U crépuscule, N nuit, ? indéterminé; un espace quand EcoTaxa ne l''a pas calculée (9,65 M objets sur 15 M au 8 novembre 2026). Sens vérifié sur les données : élévation solaire moyenne +20° (D), -21° (N), -7° le matin (A), -8° le soir (U).';
 COMMENT ON COLUMN warehouse.ecotaxa_object.classif_who IS 'Identifiant EcoTaxa de la personne qui a classé l''objet à la main (obj.classif_who); pas de nom.';
 COMMENT ON COLUMN warehouse.ecotaxa_object.classif_when IS 'Date de la dernière classification manuelle dans EcoTaxa (obj.classif_when).';
 COMMENT ON COLUMN warehouse.ecotaxa_object.classif_auto_score IS 'Score de la prédiction automatique EcoTaxa (obj.classif_auto_score), souvent NULL pour un objet validé.';
