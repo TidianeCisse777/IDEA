@@ -76,6 +76,10 @@ def login():
 class ProjectForbidden(Exception):
     pass
 
+# Projects EcoTaxa served only in part (seen 8 novembre 2026: without login, a public project may serve
+# only some of its objects, e.g. 24 387 of 65 828 for project 315); listed at the end, exit code 3.
+INCOMPLETE=[]
+
 def project_size_labels(s, pid):
     '''Labels among SIZE_LABELS this project actually defines (obj_free_cols), in
     SIZE_LABELS order. A label this project does not have must never be requested:
@@ -146,7 +150,8 @@ def load_project(args,s,pid):
         if not got:
             # EcoTaxa may serve fewer objects than the warehouse counts (149: 1 520 497 against 1 520 846):
             # stop instead of asking for the same empty window forever.
-            print(f'[objects] projet {pid}: EcoTaxa ne renvoie plus d objet après {offset}/{total}; arrêt',flush=True); break
+            print(f'[objects] projet {pid}: EcoTaxa ne renvoie plus d objet après {offset}/{total}; arrêt',flush=True)
+            INCOMPLETE.append((pid,offset,total)); break
     if loaded or offset>=total:
         # Sample-level annotation counts, derived from this project's loaded objects
         # (EcoTaxa's own per-sample statistics are not loaded).
@@ -224,9 +229,13 @@ def main():
         try: total+=load_project(args,s,pid)
         except ProjectForbidden: refused.append(pid); print(f'[objects] projet {pid}: accès refusé par EcoTaxa (identifiants requis), ignoré',flush=True)
     if refused: print(f'[objects] projets non chargés faute de droits EcoTaxa : {refused}',flush=True)
+    if INCOMPLETE:
+        print('[objects] projets lus en partie (objets servis / attendus) : '
+              + ', '.join(f'{pid} ({got}/{want})' for pid,got,want in INCOMPLETE),flush=True)
     print(f'[objects] terminé: {len(ids)} projets, {total} objets traités',flush=True)
     # Per-sample taxon counts and the lineage of any new category (explore.ecotaxa_sample_taxa, ecotaxa_taxa).
     from populate_ecotaxa_taxonomy import load_taxonomy
     taxa,samples=load_taxonomy(db)
     print(f'[objects] taxonomie: {taxa} nouvelle(s) catégorie(s), {samples} sample(s) recompté(s) par taxon',flush=True)
-if __name__=='__main__': main()
+    return 3 if INCOMPLETE or refused else 0
+if __name__=='__main__': raise SystemExit(main())
