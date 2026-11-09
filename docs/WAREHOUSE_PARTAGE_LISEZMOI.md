@@ -1,76 +1,102 @@
-# Warehouse NeoLab — installation sur votre ordinateur
+# Warehouse NeoLab — installation
 
-Ce dossier contient une copie complète du warehouse NeoLab (EcoTaxa, EcoPart/UVP, CTD Amundsen) et de quoi
-la faire tourner sur votre ordinateur, puis lui poser des questions avec un assistant IA : **Claude Code**,
-**Codex** ou **GitHub Copilot** (dans VS Code). Aucune connaissance préalable n'est supposée : le plus simple
-est l'**installation rapide** ci-dessous ; les parties 1 à 4 en sont la version manuelle.
+Une copie complète du warehouse NeoLab (EcoTaxa, EcoPart/UVP, CTD Amundsen), à installer sur votre ordinateur
+pour l'interroger avec un assistant IA (Claude Code, Codex ou GitHub Copilot).
 
-Compter environ 1 h la première fois (dont une bonne part de téléchargements), puis 1 minute pour relancer.
+## Avant de commencer
 
-| Fichier | Rôle |
-|---|---|
-| `neolab_warehouse_20261108_232541.dump.part0` et `.part1` | la base de données en deux morceaux (657 Mo en tout, environ 8 Go une fois installée), un par zip |
-| `neolab_warehouse_20261108_232541.dump.sha256` | l'empreinte qui permet de vérifier que le fichier n'est pas abîmé |
-| `IDEA-code.tar.gz` | les programmes et la documentation |
-| `LISEZMOI.md` | ce fichier |
-| `installer_windows.bat`, `installer_mac.command`, `installer.sh` | l'installation rapide (Windows, Mac, Linux) |
+- Un ordinateur Windows 10/11, Mac ou Linux (Ubuntu) avec 8 Go de mémoire et 20 Go d'espace libre.
+- Les droits d'administrateur sur cet ordinateur.
+- Un compte pour l'assistant : abonnement Claude (Pro ou plus), ou accès à Codex.
+- Les deux fichiers reçus : `neolab_warehouse_20261108_1sur2.zip` et `neolab_warehouse_20261108_2sur2.zip`.
+- 15 à 30 minutes.
 
-La copie arrive en **deux zips**, `neolab_warehouse_20261108_1sur2.zip` et `neolab_warehouse_20261108_2sur2.zip`
-(un seul fichier serait trop gros pour certains envois). Les deux se décompressent dans le même dossier
-`neolab_warehouse_20261108`; la partie 3.1 recolle les deux morceaux de la base.
+## Installer
 
-Aucun mot de passe n'est inclus : vous choisirez les vôtres.
+### Windows
 
-**Ce qu'il faut :** un ordinateur récent (8 Go de mémoire, 20 Go d'espace disque libre), Internet, les droits
-d'administrateur pour installer des logiciels, et un compte pour l'assistant choisi (partie 2).
-
----
-
-## Installation rapide (recommandée)
-
-Un script installe tout : les outils qui manquent, la base, votre compte de lecture et le branchement de
-l'assistant IA. Il demande parfois un mot de passe (celui de l'ordinateur, ou celui d'Ubuntu sous Windows) et
-s'arrête avec un message clair si quelque chose bloque ; une fois le problème réglé, le relancer : les étapes
-déjà faites sont sautées. Il se termine par `INSTALLATION TERMINÉE.` Compter 15 à 30 minutes la première fois.
-
-### Windows 10 ou 11
-
-1. Télécharger les deux zips dans **Téléchargements**.
+1. Mettre les deux zips dans **Téléchargements**.
 2. Clic droit sur `neolab_warehouse_20261108_1sur2.zip` → **Extraire tout** → **Extraire**.
-3. Dans le dossier `neolab_warehouse_20261108` qui s'ouvre, double-cliquer **`installer_windows.bat`**
-   (si Windows affiche « Windows a protégé votre ordinateur » : **Informations complémentaires** → **Exécuter
-   quand même**). Le second zip est retrouvé tout seul dans Téléchargements.
-4. La première fois, le script installe **Ubuntu** et demande de **redémarrer** : redémarrer, ouvrir « Ubuntu »
-   depuis le menu Démarrer, choisir un nom d'utilisateur et un mot de passe Linux (à retenir), puis double-cliquer
-   de nouveau `installer_windows.bat`. Il installe ensuite **Docker Desktop** (accepter ses conditions dans sa
-   fenêtre au premier lancement), puis le reste dans Ubuntu.
-5. À la fin, s'il n'y a pas encore d'assistant IA, il propose d'installer Claude Code. Pour poser une question :
-   ouvrir « Ubuntu », puis taper `cd ~/neolab-travail && claude` (partie 5).
+3. Dans le dossier qui s'ouvre, double-cliquer **`installer_windows.bat`**.
+   Si Windows affiche un avertissement : **Informations complémentaires** → **Exécuter quand même**.
+4. La première fois, le script installe Ubuntu et demande de **redémarrer**. Après le redémarrage : ouvrir
+   « Ubuntu » depuis le menu Démarrer, choisir un nom d'utilisateur et un mot de passe (à retenir), puis
+   double-cliquer de nouveau `installer_windows.bat`.
+5. Le script installe Docker Desktop : accepter ses conditions dans sa fenêtre. Il fait ensuite le reste seul.
 
-### macOS
+### Mac
 
-1. Télécharger les deux zips, puis double-cliquer `neolab_warehouse_20261108_1sur2.zip` (le second n'a pas besoin
-   d'être ouvert : le script le retrouve).
-2. Dans le dossier `neolab_warehouse_20261108`, double-cliquer **`installer_mac.command`**. Si macOS refuse de
-   l'ouvrir : clic droit (ou Ctrl-clic) → **Ouvrir** → **Ouvrir** ; sur les versions récentes, **Réglages Système →
-   Confidentialité et sécurité → Ouvrir quand même**. Autre possibilité : ouvrir le Terminal et taper
-   `bash ~/Downloads/neolab_warehouse_20261108/installer.sh`.
-3. Le script installe ce qui manque (Homebrew, Python, Node.js, client PostgreSQL, Docker Desktop : le mot de passe
-   du Mac est demandé ; accepter les conditions de Docker Desktop dans sa fenêtre), puis le warehouse.
-4. Pour poser une question : Terminal, `cd ~/neolab-travail && claude` (partie 5).
+1. Télécharger les deux zips, puis double-cliquer le premier (`…_1sur2.zip`).
+2. Dans le dossier `neolab_warehouse_20261108`, double-cliquer **`installer_mac.command`**.
+   Si macOS bloque : clic droit → **Ouvrir** → **Ouvrir** (ou **Réglages Système → Confidentialité et sécurité →
+   Ouvrir quand même**).
+3. Donner le mot de passe du Mac quand il est demandé et accepter les conditions de Docker Desktop.
 
-### Linux (Ubuntu 22.04 ou 24.04)
+### Linux (Ubuntu)
 
 ```bash
 unzip -o neolab_warehouse_20261108_1sur2.zip && unzip -o neolab_warehouse_20261108_2sur2.zip
 bash neolab_warehouse_20261108/installer.sh
 ```
 
-Les parties 1 à 4 ci-dessous décrivent les mêmes étapes à la main, si le script ne convient pas.
+C'est fini quand le script affiche **`INSTALLATION TERMINÉE.`** S'il n'y a pas encore d'assistant IA, il propose
+d'installer Claude Code : répondre oui.
+
+## Poser une question
+
+Ouvrir **Ubuntu** (Windows) ou le **Terminal** (Mac, Linux), puis :
+
+```bash
+cd ~/neolab-travail && claude
+```
+
+(`codex` à la place de `claude` pour Codex ; GitHub Copilot : voir l'annexe, partie 4.) La première fois,
+l'assistant demande de se connecter à votre compte et d'autoriser les outils `neolab-warehouse` : accepter.
+
+Exemple : « Quels projets EcoTaxa sont dans le warehouse, et quelle part de leurs objets est validée ? »
+L'assistant répond à partir de la base, explique ses choix et liste les requêtes qu'il a exécutées.
+
+## Les fois suivantes
+
+Lancer **Docker Desktop** (Windows, Mac) : la base redémarre toute seule. Puis l'assistant, comme ci-dessus.
+
+## Si ça bloque
+
+Le script s'arrête en affichant `ÉCHEC :` et la raison. Faire ce qu'il demande, puis le relancer : il reprend
+là où il s'était arrêté. Sinon, envoyer une capture d'écran du message à la personne qui vous a remis la copie.
+
+## Ce que contient la base
+
+| Source | Contenu |
+|---|---|
+| EcoTaxa | 23 projets (UVP, Zooscan, LOKI), 6 138 samples, 15 millions d'objets : taxon et lignée, statut d'annotation (validé, prédit, douteux), date et heure, profondeur, taille et forme, lien vers l'image |
+| EcoPart (UVP) | 12 projets, 686 profils : volumes échantillonnés, particules, abondances par taxon |
+| CTD Amundsen | 456 profils, 5,1 millions de mesures (température, salinité, densité, oxygène, nitrate, fluorescence, pH) |
+| Référentiels | 65 zones maritimes, stades de copépodes, taxonomie EcoTaxa |
+
+## À savoir
+
+- **Validé ou prédit** : beaucoup d'objets sont classés automatiquement. Exemple : copépodes 0–200 m en Baie de
+  Baffin (am_leg3, 2024) : 750,9 ind/m³ avec tous les objets, 2,1 avec les seuls validés.
+- **Projets en double** : 149, 20880, 20890 et 13224 contiennent les mêmes images GreenEdge 2016 ; 149 seul
+  donne GreenEdge 2016 sans doublon.
+- **Non chargé** : FILET. Les tailles LOKI sont en pixels seulement.
+- **Données exploratoires**, à vérifier avant publication.
+- **Confidentialité** : la copie contient les noms et courriels des responsables de projets et donne accès à
+  tous les projets. Ne pas la transmettre sans l'accord de la personne qui vous l'a remise.
+- Pour interroger la base soi-même (DBeaver, R, Python) : `IDEA/docs/WAREHOUSE_SQL_GUIDE.md`.
 
 ---
 
-## Partie 1 — Installer les outils à la main (si le script ne convient pas)
+# Annexe — installation à la main
+
+À suivre seulement si le script ne convient pas. Fichiers de la copie : `installer_windows.bat`,
+`installer_mac.command` et `installer.sh` (installation automatique), `IDEA-code.tar.gz` (le code),
+`neolab_warehouse_20261108_232541.dump.part0` et `.part1` (la base en deux morceaux, un par zip, 657 Mo en tout),
+`neolab_warehouse_20261108_232541.dump.sha256` (l'empreinte pour vérifier la base). Les deux zips se
+décompressent dans le même dossier `neolab_warehouse_20261108`. Aucun mot de passe n'est inclus.
+
+## Partie 1 — Installer les outils
 
 Suivez **une seule** des trois sections, celle de votre système. Le « terminal » est la fenêtre où l'on tape
 les commandes : copiez chaque ligne, collez-la, appuyez sur Entrée.
@@ -282,77 +308,14 @@ demandé). Dans VS Code, créer le fichier `.vscode/mcp.json` et y coller le blo
 VS Code demande d'autoriser le serveur `neolab-warehouse` : accepter (il ne fait que lire la base). Ouvrir
 la fenêtre Copilot Chat et choisir le mode **Agent**.
 
----
-
-## Partie 5 — Poser une question
-
-Créer d'abord un **dossier de travail NeoLab** : il contient un court fichier d'instructions que chaque
-assistant lit au démarrage (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.github/copilot-instructions.md`), pour
-qu'une question même courte (« combien de copépodes ? ») soit comprise comme une question sur le warehouse.
-Sans lui, un assistant répond parfois de mémoire ou cherche sur le web. Le fichier ne contient aucun mot de passe.
+Enfin, créer le dossier de travail (il dit à l'assistant que les questions portent sur le warehouse), puis
+poser une question comme dans la partie principale :
 
 ```bash
 python scripts/warehouse_connect.py workspace ~/neolab-travail
-cd ~/neolab-travail
 ```
 
-Ouvrir l'assistant dans ce dossier (`claude` ou `codex`, ou, pour Copilot, `code ~/neolab-travail` puis Copilot
-Chat en mode Agent) et demander par exemple :
-
-> Quels projets EcoTaxa sont dans le warehouse, et quelle part de leurs objets est validée ?
-
-L'assistant répond à partir de la base, en lecture seule, et termine par les requêtes SQL qu'il a exécutées.
-La première fois, il peut demander l'autorisation d'utiliser les outils `neolab-warehouse` : accepter.
-
----
-
-## Les fois suivantes
-
-1. Lancer Docker Desktop (Windows, macOS).
-2. Dans le terminal : aller dans le dossier `IDEA`, puis
-   `docker compose --env-file .env.warehouse -f docker-compose.warehouse.yml up -d`.
-3. Ouvrir l'assistant. Rien d'autre à refaire.
-
-Une carte des données est aussi visible dans le navigateur web à l'adresse http://127.0.0.1:8090.
-
----
-
-## Ce que contient la base
-
-| Source | Volume |
-|---|---|
-| EcoTaxa | 23 projets (UVP, Zooscan, LOKI), 6 138 samples, 15 050 002 objets : taxon, statut d'annotation (6 645 676 validés, 7 700 806 prédits, 14 319 douteux, 689 201 jamais classés), profondeur, taille |
-| EcoPart (UVP) | 12 projets, 686 profils, 71 520 tranches de profondeur, abondances par taxon (tous objets, ou validés seulement) |
-| CTD Amundsen | 456 profils, 5 130 421 mesures (température, salinité, densité, oxygène, nitrate, fluorescence, pH) |
-| Référentiels | 65 zones maritimes, 18 stades de copépodes, taxonomie EcoTaxa des 340 catégories (lignée, rang, AphiaID) |
-
-Deux schémas se lisent : **`explore`** (les données ; point de départ `ecotaxa_projects`) et **`catalogue`**
-(mes droits, le catalogue des jeux de données, le dictionnaire des colonnes). Pour interroger la base
-soi-même (DBeaver, pgAdmin, R, Python) : `IDEA/docs/WAREHOUSE_SQL_GUIDE.md`.
-
-## À savoir
-
-- **Validé ou prédit** : une abondance « tous objets » inclut les prédictions automatiques. Exemple réel :
-  copépodes 0–200 m en Baie de Baffin, am_leg3 2024 : 750,9 ind/m³ tous objets, 2,1 avec les seuls validés.
-- **Projets en double** : 149 contient les 199 samples de 20880 + 20890 (mêmes comptes) plus 5 samples
-  propres, et 13224 est un extrait de 149 ; ne pas additionner ces projets : 149 seul donne GreenEdge 2016
-  sans doublon.
-- **Non chargé** : FILET. **Tailles LOKI** : en pixels seulement (pas de calibration).
-- **Tailles UVP6** : corrigées dans cette version (EcoTaxa donne le pixel UVP6 en µm, lu par erreur en mm
-  dans les versions précédentes, d'où des tailles 1 000 fois trop grandes). Ne pas réutiliser un résultat de
-  taille UVP6 obtenu avec une copie antérieure au 4 novembre 2026 (zips v1 à v4).
-- **Positions** : 197 profils GreenEdge 2016 sans position propre (sources contradictoires) ; le projet
-  17808 n'a pas de projet EcoPart lié.
-- **Heures** : objets et samples EcoTaxa avec l'heure EcoTaxa, profils UVP avec l'heure de capture EcoPart (UTC).
-- **Par objet** (`explore.ecotaxa_objects`) : annotateur (identifiant) et date de validation, score de prédiction,
-  adresse de l'image, position du soleil (D, A, U, N, quand EcoTaxa la calcule), forme ZooProcess (périmètre,
-  Feret, circularité, élongation, gris moyen, aire convexe; pas pour LOKI).
-- **Statut** : données exploratoires.
-- **Confidentialité** : la copie contient les métadonnées des projets, dont le nom et le courriel de leurs
-  responsables, et donne accès à tous les projets. Ne pas la transmettre plus loin sans l'accord de la
-  personne qui vous l'a remise.
-
-## En cas de problème
+## En cas de problème (installation à la main)
 
 | Symptôme | Que faire |
 |---|---|
