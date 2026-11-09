@@ -2,8 +2,8 @@
 
 Ce dossier contient une copie complète du warehouse NeoLab (EcoTaxa, EcoPart/UVP, CTD Amundsen) et de quoi
 la faire tourner sur votre ordinateur, puis lui poser des questions avec un assistant IA : **Claude Code**,
-**Codex** ou **GitHub Copilot** (dans VS Code). Aucune connaissance préalable n'est supposée : suivez les
-parties dans l'ordre.
+**Codex** ou **GitHub Copilot** (dans VS Code). Aucune connaissance préalable n'est supposée : le plus simple
+est l'**installation rapide** ci-dessous ; les parties 1 à 4 en sont la version manuelle.
 
 Compter environ 1 h la première fois (dont une bonne part de téléchargements), puis 1 minute pour relancer.
 
@@ -13,7 +13,7 @@ Compter environ 1 h la première fois (dont une bonne part de téléchargements)
 | `neolab_warehouse_20261108_232541.dump.sha256` | l'empreinte qui permet de vérifier que le fichier n'est pas abîmé |
 | `IDEA-code.tar.gz` | les programmes et la documentation |
 | `LISEZMOI.md` | ce fichier |
-| `installer.sh` | l'installation en une commande (après les parties 1 et 2) |
+| `installer_windows.bat`, `installer_mac.command`, `installer.sh` | l'installation rapide (Windows, Mac, Linux) |
 
 La copie arrive en **deux zips**, `neolab_warehouse_20261108_1sur2.zip` et `neolab_warehouse_20261108_2sur2.zip`
 (un seul fichier serait trop gros pour certains envois). Les deux se décompressent dans le même dossier
@@ -26,7 +26,51 @@ d'administrateur pour installer des logiciels, et un compte pour l'assistant cho
 
 ---
 
-## Partie 1 — Installer les outils (une seule fois)
+## Installation rapide (recommandée)
+
+Un script installe tout : les outils qui manquent, la base, votre compte de lecture et le branchement de
+l'assistant IA. Il demande parfois un mot de passe (celui de l'ordinateur, ou celui d'Ubuntu sous Windows) et
+s'arrête avec un message clair si quelque chose bloque ; une fois le problème réglé, le relancer : les étapes
+déjà faites sont sautées. Il se termine par `INSTALLATION TERMINÉE.` Compter 15 à 30 minutes la première fois.
+
+### Windows 10 ou 11
+
+1. Télécharger les deux zips dans **Téléchargements**.
+2. Clic droit sur `neolab_warehouse_20261108_1sur2.zip` → **Extraire tout** → **Extraire**.
+3. Dans le dossier `neolab_warehouse_20261108` qui s'ouvre, double-cliquer **`installer_windows.bat`**
+   (si Windows affiche « Windows a protégé votre ordinateur » : **Informations complémentaires** → **Exécuter
+   quand même**). Le second zip est retrouvé tout seul dans Téléchargements.
+4. La première fois, le script installe **Ubuntu** et demande de **redémarrer** : redémarrer, ouvrir « Ubuntu »
+   depuis le menu Démarrer, choisir un nom d'utilisateur et un mot de passe Linux (à retenir), puis double-cliquer
+   de nouveau `installer_windows.bat`. Il installe ensuite **Docker Desktop** (accepter ses conditions dans sa
+   fenêtre au premier lancement), puis le reste dans Ubuntu.
+5. À la fin, s'il n'y a pas encore d'assistant IA, il propose d'installer Claude Code. Pour poser une question :
+   ouvrir « Ubuntu », puis taper `cd ~/neolab-travail && claude` (partie 5).
+
+### macOS
+
+1. Télécharger les deux zips, puis double-cliquer `neolab_warehouse_20261108_1sur2.zip` (le second n'a pas besoin
+   d'être ouvert : le script le retrouve).
+2. Dans le dossier `neolab_warehouse_20261108`, double-cliquer **`installer_mac.command`**. Si macOS refuse de
+   l'ouvrir : clic droit (ou Ctrl-clic) → **Ouvrir** → **Ouvrir** ; sur les versions récentes, **Réglages Système →
+   Confidentialité et sécurité → Ouvrir quand même**. Autre possibilité : ouvrir le Terminal et taper
+   `bash ~/Downloads/neolab_warehouse_20261108/installer.sh`.
+3. Le script installe ce qui manque (Homebrew, Python, Node.js, client PostgreSQL, Docker Desktop : le mot de passe
+   du Mac est demandé ; accepter les conditions de Docker Desktop dans sa fenêtre), puis le warehouse.
+4. Pour poser une question : Terminal, `cd ~/neolab-travail && claude` (partie 5).
+
+### Linux (Ubuntu 22.04 ou 24.04)
+
+```bash
+unzip -o neolab_warehouse_20261108_1sur2.zip && unzip -o neolab_warehouse_20261108_2sur2.zip
+bash neolab_warehouse_20261108/installer.sh
+```
+
+Les parties 1 à 4 ci-dessous décrivent les mêmes étapes à la main, si le script ne convient pas.
+
+---
+
+## Partie 1 — Installer les outils à la main (si le script ne convient pas)
 
 Suivez **une seule** des trois sections, celle de votre système. Le « terminal » est la fenêtre où l'on tape
 les commandes : copiez chaque ligne, collez-la, appuyez sur Entrée.
@@ -129,23 +173,6 @@ Il en faut un seul. Sous Windows, l'installer **dans le terminal Ubuntu**.
 | **GitHub Copilot** (dans VS Code) | installer VS Code (https://code.visualstudio.com), puis l'extension **GitHub Copilot** et se connecter avec son compte GitHub. Sous Windows, ajouter aussi l'extension **WSL** | un compte GitHub avec Copilot activé |
 
 Vérifier avec `claude --version` ou `codex --version` (pour Copilot : l'icône de Copilot apparaît dans VS Code).
-
----
-
-## Installation en une commande (après les parties 1 et 2)
-
-Depuis le dossier `neolab_warehouse_20261108` (celui des deux zips décompressés) :
-
-```bash
-bash installer.sh
-```
-
-Le script fait tout ce que décrivent les parties 3 et 4 : il vérifie les outils, recolle et vérifie la base,
-choisit des mots de passe (sans les afficher), lance Docker, installe les données (5 à 10 minutes), crée votre
-compte de lecture, branche Claude Code ou Codex s'ils sont installés, et crée le dossier de travail
-`~/neolab-travail`. Il se termine par `INSTALLATION TERMINÉE.` et la commande pour poser une première question
-(partie 5). En cas d'arrêt, il dit pourquoi ; une fois corrigé, le relancer : les étapes déjà faites sont
-sautées. Les parties 3 et 4 ci-dessous décrivent les mêmes étapes à la main.
 
 ---
 
