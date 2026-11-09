@@ -2,7 +2,19 @@
 
 **Période proposée :** du 14 septembre au 30 novembre 2026
 
-**Dernière mise à jour :** 8 novembre 2026
+**Dernière mise à jour :** 9 novembre 2026
+
+### 9 novembre 2026 — Batterie sur les données d'objet enrichies (phase 2)
+
+- `tests/agent_battery/objects_cases.json` (9 cas) : jour/nuit (am_leg4 avec codes, am_leg3 sans aucun code),
+  annotateurs (identifiants, sans nom), année de validation, score de prédiction, liens d'images, circularité
+  copépodes / détritus, Feret en mm, forme absente pour LOKI. Premier passage : 9/9, valeurs exactes; les trois
+  liens d'images rendus par l'agent s'ouvrent (HTTP 200, images EcoTaxa réelles).
+- Relecture des réponses : trois imprécisions dues à la fiche `ecotaxa_objects`, qui ne décrivait pas les nouvelles
+  colonnes (codes du soleil devinés, liens d'images supposés protégés, forme LOKI supposée absente à l'export).
+  Fiche complétée (codes vérifiés, couverture partielle, identifiant sans nom, date de validation, score des seuls
+  objets prédits, liens publics, LOKI sans mesures ZooProcess); trois cas rejoués : 3/3, explications justes.
+- Contrôle de forme étendu à tous les fichiers de cas (identifiants uniques, question et attendu par tour).
 
 ### 8 novembre 2026 — Dernier enrichissement des objets EcoTaxa (phase 2)
 

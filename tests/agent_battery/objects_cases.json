@@ -1,0 +1,72 @@
+{
+  "description": "Données d'objet ajoutées le 8 novembre 2026 : heure et position du soleil, annotateur et date de validation, score de prédiction, image, forme ZooProcess. Valeurs attendues recalculées à chaque lancement.",
+  "cases": [
+    {
+      "id": "obj_daynight_leg4",
+      "question": "Dans am_leg4, combien d'objets validés ont été imagés de jour et combien de nuit ?",
+      "expect_sql": "SELECT count(*) FROM explore.ecotaxa_objects WHERE ecotaxa_project_id = 17498 AND annotation_status = 'validated' AND sun_position IN ('D', 'N') GROUP BY sun_position ORDER BY sun_position",
+      "must_mention": ["(?i)sans (code|position)|pas de (code|position)|non (calcul|renseign|disponible|déterminé)|NULL|indéterminé|aube|crépuscule"],
+      "trap": "position du soleil EcoTaxa : D 122 544, N 2 623, mais 230 413 objets validés sans code (et A, U, ?) : donner aussi ce qui n'est ni jour ni nuit"
+    },
+    {
+      "id": "obj_daynight_leg3_absent",
+      "question": "Combien d'objets validés de am_leg3 ont été imagés de nuit ?",
+      "expect_sql": "SELECT 0",
+      "must_mention": ["(?i)aucun (code|objet)|pas (de|calculé)|non (calcul|renseign|disponible|déterminé)|indéterminé|ne (fournit|donne|calcule)|NULL|\\?"],
+      "trap": "EcoTaxa ne donne aucun code jour/nuit pour am_leg3 (599 « ? », le reste vide) : le dire, ou calculer soi-même depuis l'heure et la position en le disant"
+    },
+    {
+      "id": "obj_annotators_amundsen2023",
+      "question": "Combien de personnes ont validé des objets dans le projet Amundsen 2023, et combien d'objets a validé la plus active ?",
+      "expect_sql": "SELECT count(DISTINCT annotator_id), (SELECT count(*) FROM explore.ecotaxa_objects WHERE ecotaxa_project_id = 10101 AND annotator_id IS NOT NULL GROUP BY annotator_id ORDER BY 1 DESC LIMIT 1) FROM explore.ecotaxa_objects WHERE ecotaxa_project_id = 10101",
+      "must_mention": ["(?i)identifiant"],
+      "trap": "annotator_id est un identifiant EcoTaxa sans nom : ne pas inventer de nom"
+    },
+    {
+      "id": "obj_validation_year_greenedge",
+      "question": "En quelle année ont été validés la plupart des objets du projet 149 ?",
+      "expect_sql": "SELECT extract(year FROM annotated_at) FROM explore.ecotaxa_objects WHERE ecotaxa_project_id = 149 AND annotated_at IS NOT NULL GROUP BY 1 ORDER BY count(*) DESC LIMIT 1",
+      "trap": "date de la dernière validation manuelle (annotated_at), pas la date de prélèvement"
+    },
+    {
+      "id": "obj_prediction_score_leg4",
+      "question": "Quel est le score moyen de prédiction des copépodes prédits (non validés) dans am_leg4 ?",
+      "expect_sql": ["SELECT round(avg(prediction_score)::numeric, 2) FROM explore.ecotaxa_objects WHERE ecotaxa_project_id = 17498 AND annotation_status = 'predicted' AND 'Copepoda' = ANY(taxon_lineage) AND object_class = 'organism'",
+                     "SELECT round(avg(prediction_score)::numeric, 2) FROM explore.ecotaxa_objects WHERE ecotaxa_project_id = 17498 AND annotation_status = 'predicted' AND taxon_name = 'Copepoda<Multicrustacea'"],
+      "tolerance": 0.01,
+      "trap": "prediction_score n'existe que pour les objets prédits; dire quelles catégories de copépodes sont comptées"
+    },
+    {
+      "id": "obj_images_metridia_loki",
+      "question": "Donne-moi les liens de 3 images de Metridia longa validées dans LOKI ArcticNet 2015.",
+      "expect_sql": "SELECT 0",
+      "must_mention": ["(?i)https://ecotaxa\\.obs-vlfr\\.fr/vault/\\d+/\\d+\\.(jpg|png)"],
+      "trap": "image_uri donne l'adresse directe de l'image EcoTaxa; ne pas fabriquer d'adresse"
+    },
+    {
+      "id": "obj_circularity_copepods_vs_detritus",
+      "question": "Dans am_leg3, les copépodes validés sont-ils plus ronds que les détritus validés ? Donne la circularité moyenne de chacun.",
+      "expect_sql": ["SELECT round(avg(circularity)::numeric, 3) FROM explore.ecotaxa_objects WHERE ecotaxa_project_id = 14859 AND annotation_status = 'validated' AND ((('Copepoda' = ANY(taxon_lineage) AND object_class = 'organism')) OR taxon_name = 'detritus<not-living') GROUP BY taxon_name = 'detritus<not-living' ORDER BY 1",
+                     "SELECT round(avg(circularity)::numeric, 3) FROM explore.ecotaxa_objects WHERE ecotaxa_project_id = 14859 AND annotation_status = 'validated' AND (taxon_name = 'Copepoda<Multicrustacea' OR taxon_name = 'detritus<not-living') GROUP BY taxon_name ORDER BY 1",
+                     "SELECT round(avg(circularity)::numeric, 3) FROM explore.ecotaxa_objects WHERE ecotaxa_project_id = 14859 AND annotation_status = 'validated' AND (('Copepoda' = ANY(taxon_lineage) AND object_class = 'organism') OR object_class = 'not_living') GROUP BY object_class ORDER BY 1"],
+      "tolerance": 0.005,
+      "trap": "circularité ZooProcess sans unité, 1 = disque ; différence faible (0,234 détritus contre 0,251 copépodes) : la décrire sans l'interpréter"
+    },
+    {
+      "id": "obj_feret_copepods_mm",
+      "question": "Quelle est la longueur moyenne (diamètre de Feret), en mm, des copépodes validés du projet Amundsen 2023 ?",
+      "expect_sql": ["SELECT round((avg(feret_um) / 1000)::numeric, 2) FROM explore.ecotaxa_objects WHERE ecotaxa_project_id = 10101 AND annotation_status = 'validated' AND 'Copepoda' = ANY(taxon_lineage) AND object_class = 'organism'",
+                     "SELECT round((avg(feret_um) / 1000)::numeric, 2) FROM explore.ecotaxa_objects WHERE ecotaxa_project_id = 10101 AND annotation_status = 'validated' AND taxon_name = 'Copepoda<Multicrustacea'"],
+      "tolerance": 0.02,
+      "must_mention": ["(?i)feret"],
+      "trap": "feret_um est en micromètres ; 3,57 mm pour toute la lignée Copepoda, 2,56 mm pour la seule catégorie Copepoda : dire ce qui est compté"
+    },
+    {
+      "id": "obj_shape_loki_absent",
+      "question": "Quelle est la circularité moyenne des objets du projet LOKI ArcticNet 2015 ?",
+      "expect_sql": "SELECT 0",
+      "must_mention": ["(?i)aucun|pas de|NULL|non (disponible|fourni|renseign)|n'existe|vide"],
+      "trap": "les projets LOKI n'ont pas les mesures ZooProcess : circularity est NULL, ne pas répondre 0"
+    }
+  ]
+}

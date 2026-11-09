@@ -71,8 +71,8 @@ Tous les samples EcoTaxa, tous projets et instruments, avec position, date, zone
 | ecotaxa_station_id | text | Station fournie dans les métadonnées EcoTaxa. |
 | ecotaxa_cruise_id | text | Campagne fournie dans les métadonnées EcoTaxa. |
 | ecotaxa_profile_id | text | Identifiant de profil fourni dans les métadonnées EcoTaxa; pas une clé technique UVP. |
-| datetime_min | timestamp with time zone | Horodatage source ou borne agrégée selon le nom; vérifier le type SQL et le fuseau. Le rapprochement FILET existant interprète ses dates sans fuseau en UTC. |
-| datetime_max | timestamp with time zone | Horodatage source ou borne agrégée selon le nom; vérifier le type SQL et le fuseau. Le rapprochement FILET existant interprète ses dates sans fuseau en UTC. |
+| datetime_min | timestamp with time zone | Date EcoTaxa du sample ou de l’objet. Les données chargées n’ont pas d’heure (toujours 00:00 UTC : l’heure EcoTaxa obj.objtime n’était pas demandée au chargement) : ne pas en déduire jour ou nuit. L’heure des profils UVP est dans uvp_samples.sampled_at (EcoPart). |
+| datetime_max | timestamp with time zone | Date EcoTaxa du sample ou de l’objet. Les données chargées n’ont pas d’heure (toujours 00:00 UTC : l’heure EcoTaxa obj.objtime n’était pas demandée au chargement) : ne pas en déduire jour ou nuit. L’heure des profils UVP est dans uvp_samples.sampled_at (EcoPart). |
 | latitude | double precision | Coordonnée géographique source en degrés WGS84; suffixe min/max = étendue agrégée, pas un point de prélèvement. |
 | longitude | double precision | Coordonnée géographique source en degrés WGS84; suffixe min/max = étendue agrégée, pas un point de prélèvement. |
 | depth_min | double precision | Borne de profondeur fournie dans les métadonnées EcoTaxa; unité à vérifier dans la source. |
@@ -86,7 +86,7 @@ Tous les samples EcoTaxa, tous projets et instruments, avec position, date, zone
 | nb_dubious | bigint | Nombre d’objets chargés de ce sample avec annotation_status = dubious (recalculé depuis les objets). |
 | nb_unclassified | bigint | Nombre d’objets chargés de ce sample sans statut (jamais classés), recalculé depuis les objets. |
 | has_uvp_profile | boolean | Vrai si ce sample est lié à au moins un profil UVP (voir uvp_samples). |
-| sampled_at | timestamp with time zone | Horodatage source ou borne agrégée selon le nom; vérifier le type SQL et le fuseau. Le rapprochement FILET existant interprète ses dates sans fuseau en UTC. |
+| sampled_at | timestamp with time zone | Date EcoTaxa du sample ou de l’objet. Les données chargées n’ont pas d’heure (toujours 00:00 UTC : l’heure EcoTaxa obj.objtime n’était pas demandée au chargement) : ne pas en déduire jour ou nuit. L’heure des profils UVP est dans uvp_samples.sampled_at (EcoPart). |
 
 ```sql
 SELECT ecotaxa_project_id, SUM(nb_validated) AS valides, SUM(nb_predicted) AS predits FROM explore.ecotaxa_samples GROUP BY 1;
@@ -100,7 +100,7 @@ Tous les objets EcoTaxa (15 M), tous projets et instruments : taxon, statut d’
 
 **Relations :** ecotaxa_sample_id vers ecotaxa_samples; ecotaxa_project_id vers ecotaxa_projects; ecotaxa_object_id = uvp_objects.ecotaxa_object_id pour les objets liés à un profil UVP.
 
-**Limites :** Toujours filtrer par ecotaxa_project_id ou ecotaxa_sample_id et agréger dans la requête : un balayage complet dépasse le délai de 30 s. Pour de simples comptes par statut, ecotaxa_samples suffit; pour chercher un taxon ou compter par taxon, ecotaxa_sample_taxa (un filtre sur taxon_name ici, même avec le projet, peut dépasser 30 s). Ici, réserver ecotaxa_objects à la profondeur et à la taille. Tailles réelles (_um) NULL sans calibration pixel (LOKI notamment), jamais zéro. Pas d’abondance (ind/m³) sans volume : passer par les vues UVP.
+**Limites :** Toujours filtrer par ecotaxa_project_id ou ecotaxa_sample_id et agréger dans la requête : un balayage complet dépasse le délai de 30 s. Pour de simples comptes par statut, ecotaxa_samples suffit; pour chercher un taxon ou compter par taxon, ecotaxa_sample_taxa (un filtre sur taxon_name ici, même avec le projet, peut dépasser 30 s). Ici, réserver ecotaxa_objects à la profondeur, à la taille et aux données propres à chaque objet. Depuis le 8 novembre 2026 : object_datetime porte l’heure EcoTaxa; sun_position est le code EcoTaxa de position du soleil (D jour, A aube, U crépuscule, N nuit, ? indéterminé; sens vérifié sur les données par l’élévation solaire; NULL pour environ 2 objets sur 3, que EcoTaxa ne calcule pas, ex. aucun code pour am_leg3 : toujours dire combien d’objets ont un code); annotator_id est un identifiant EcoTaxa sans nom, annotated_at la date de la dernière validation manuelle (pas la date de prélèvement); prediction_score n’existe que pour les objets prédits; image_uri est l’adresse publique directe de l’image (vérifiée, s’ouvre sans connexion); perim_px, feret_px (et perim_um, feret_um), circularity, elongation, mean_grey, convex_area_px sont les mesures ZooProcess, NULL pour tous les projets LOKI (qui ont leurs propres descripteurs, non chargés), pas une absence d’export. Tailles réelles (_um) NULL sans calibration pixel (LOKI notamment), jamais zéro. Pas d’abondance (ind/m³) sans volume : passer par les vues UVP.
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
@@ -131,6 +131,19 @@ Tous les objets EcoTaxa (15 M), tous projets et instruments : taxon, statut d’
 | taxon_lineage | ARRAY | Lignée EcoTaxa de la catégorie, du taxon lui-même jusqu’à la racine (ex. Calanoida, Gymnoplea, Neocopepoda, Copepoda, …, Biota) : un groupe se filtre par 'Copepoda' = ANY(taxon_lineage). Inclut les catégories morphologiques (stades, vues, mais aussi part, dead, eggs, like) : dire lesquelles sont gardées. NULL si la taxonomie n’est pas chargée. |
 | taxon_type | text | Type de catégorie EcoTaxa : P (phylogénétique, un taxon) ou M (morphologique : stade, vue, taille, mais aussi part, cut, dead, eggs, like...). M ne veut pas dire fragment. |
 | object_class | text | Nature des objets de la catégorie, d’après la racine de sa lignée EcoTaxa : organism (sous Biota), not_living (détritus, artefacts, fèces), technical (Biota : badsegmentation, oversegmented, duplicate), temporary (catégories provisoires t0xx), unknown. Un total d’organismes exige organism; NULL si la taxonomie n’est pas chargée. |
+| sun_position | text | Position du soleil calculée par EcoTaxa pour l’objet (obj.sunpos) : D jour, A aube, U crépuscule, N nuit, ? indéterminé; NULL si EcoTaxa ne l’a pas calculée (environ 2 objets sur 3). Sens vérifié sur les données (élévation moyenne +20° pour D, -21° pour N, -7° le matin pour A, -8° le soir pour U). Pour jour/nuit, dire combien d’objets ont un code. |
+| annotator_id | integer | Identifiant EcoTaxa de la personne qui a classé l’objet à la main (obj.classif_who), sans nom; NULL pour un objet jamais validé à la main ou pas encore rechargé. |
+| annotated_at | timestamp with time zone | Date de la dernière classification manuelle dans EcoTaxa (obj.classif_when); NULL si jamais validé à la main ou pas encore rechargé. |
+| prediction_score | double precision | Score de la prédiction automatique EcoTaxa (obj.classif_auto_score, entre 0 et 1); souvent NULL pour un objet validé; ne dit rien de la justesse d’une validation humaine. |
+| image_uri | text | Référence d’image source de l’objet; sa présence ne garantit pas l’accessibilité de l’image. |
+| perim_px | double precision | Périmètre ZooProcess de l’objet, en pixels (free column « perim. »); NULL si le projet ne le fournit pas (LOKI) ou pas encore rechargé. |
+| feret_px | double precision | Diamètre de Feret maximal ZooProcess, en pixels (free column « feret »). |
+| circularity | double precision | Circularité ZooProcess (free column « circ. »), sans unité, 1 pour un disque. |
+| elongation | double precision | Élongation ZooProcess (free column « elongation »), sans unité. |
+| mean_grey | double precision | Niveau de gris moyen de l’objet (free column « mean »), dans l’échelle de l’image source : ne pas comparer entre instruments. |
+| convex_area_px | double precision | Aire de l’enveloppe convexe ZooProcess, en pixels (free column « convarea »). |
+| perim_um | double precision | Périmètre en micromètres : perim_px × pixel_size_mm × 1000; NULL sans calibration pixel. |
+| feret_um | double precision | Diamètre de Feret en micromètres : feret_px × pixel_size_mm × 1000; NULL sans calibration pixel. |
 
 ```sql
 SELECT taxon_name, annotation_status, COUNT(*) FROM explore.ecotaxa_objects WHERE ecotaxa_project_id = 12063 GROUP BY 1,2 ORDER BY 3 DESC LIMIT 20;
@@ -153,7 +166,7 @@ Nombre d’objets par sample EcoTaxa et par catégorie (taxon), par statut d’a
 | ecotaxa_project_title | text | Nom natif du projet EcoTaxa, pour affichage; NULL si le projet n’a pas été chargé. Ne pas l’utiliser comme clé, préférer ecotaxa_project_id. |
 | instrument | text | Instrument déclaré dans les métadonnées EcoTaxa; NULL ne permet pas d’en inférer le modèle à partir du nom de projet. |
 | ecotaxa_native_sample_id | text | Identifiant natif du sample EcoTaxa; qualifier par projet/version. |
-| sampled_at | timestamp with time zone | Horodatage source ou borne agrégée selon le nom; vérifier le type SQL et le fuseau. Le rapprochement FILET existant interprète ses dates sans fuseau en UTC. |
+| sampled_at | timestamp with time zone | Date EcoTaxa du sample ou de l’objet. Les données chargées n’ont pas d’heure (toujours 00:00 UTC : l’heure EcoTaxa obj.objtime n’était pas demandée au chargement) : ne pas en déduire jour ou nuit. L’heure des profils UVP est dans uvp_samples.sampled_at (EcoPart). |
 | latitude | double precision | Coordonnée géographique source en degrés WGS84; suffixe min/max = étendue agrégée, pas un point de prélèvement. |
 | longitude | double precision | Coordonnée géographique source en degrés WGS84; suffixe min/max = étendue agrégée, pas un point de prélèvement. |
 | marine_zone_key | text | Clé de zone maritime attribuée; consulter source, version et statut. |
@@ -314,7 +327,7 @@ Métadonnées des profils UVP liés à un sample EcoTaxa.
 | cruise_key | text | Libellé/clé de campagne de la source; pas de normalisation inter-source implicite. |
 | station_key | text | Libellé/clé de station UVP de la source; ne prouve pas une identité inter-source. |
 | cast_key | text | Identifiant/libellé de cast du profil UVP. |
-| sampled_at | timestamp with time zone | Horodatage source ou borne agrégée selon le nom; vérifier le type SQL et le fuseau. Le rapprochement FILET existant interprète ses dates sans fuseau en UTC. |
+| sampled_at | timestamp with time zone | Heure de capture du profil UVP donnée par EcoPart (métadonnées « yyyy-mm-dd hh:mm »), lue en UTC, convention du warehouse pour une heure source sans fuseau. Utilisable pour jour/nuit, en le disant. |
 | latitude | double precision | Coordonnée géographique source en degrés WGS84; suffixe min/max = étendue agrégée, pas un point de prélèvement. |
 | longitude | double precision | Coordonnée géographique source en degrés WGS84; suffixe min/max = étendue agrégée, pas un point de prélèvement. |
 | ecotaxa_sample_id | bigint | Clé technique du sample EcoTaxa; distincte de son identifiant natif. |
@@ -362,7 +375,7 @@ Objets EcoTaxa associés aux profils UVP, avec un bin EcoPart éventuel.
 | sample_name | text | Nom natif du profil EcoPart; pas un identifiant global. |
 | cruise_key | text | Libellé/clé de campagne de la source; pas de normalisation inter-source implicite. |
 | station_key | text | Libellé/clé de station UVP de la source; ne prouve pas une identité inter-source. |
-| sampled_at | timestamp with time zone | Horodatage source ou borne agrégée selon le nom; vérifier le type SQL et le fuseau. Le rapprochement FILET existant interprète ses dates sans fuseau en UTC. |
+| sampled_at | timestamp with time zone | Heure de capture du profil UVP donnée par EcoPart (métadonnées « yyyy-mm-dd hh:mm »), lue en UTC, convention du warehouse pour une heure source sans fuseau. Utilisable pour jour/nuit, en le disant. |
 | marine_zone_key | text | Clé de zone maritime attribuée; consulter source, version et statut. |
 | marine_zone_name | text | Libellé de zone; dans uvp_projects, MIN ne représente pas toutes les zones du projet. |
 | marine_zone_version | text | Version du référentiel ou de l’attribution de zone. |
@@ -447,7 +460,7 @@ Abondances UVP dérivées des objets EcoTaxa et volumes EcoPart.
 | sample_name | text | Nom natif du profil EcoPart; pas un identifiant global. |
 | cruise_key | text | Libellé/clé de campagne de la source; pas de normalisation inter-source implicite. |
 | station_key | text | Libellé/clé de station UVP de la source; ne prouve pas une identité inter-source. |
-| sampled_at | timestamp with time zone | Horodatage source ou borne agrégée selon le nom; vérifier le type SQL et le fuseau. Le rapprochement FILET existant interprète ses dates sans fuseau en UTC. |
+| sampled_at | timestamp with time zone | Heure de capture du profil UVP donnée par EcoPart (métadonnées « yyyy-mm-dd hh:mm »), lue en UTC, convention du warehouse pour une heure source sans fuseau. Utilisable pour jour/nuit, en le disant. |
 | marine_zone_key | text | Clé de zone maritime attribuée; consulter source, version et statut. |
 | marine_zone_name | text | Libellé de zone; dans uvp_projects, MIN ne représente pas toutes les zones du projet. |
 | marine_zone_assignment_status | text | assigned, ambiguous, outside ou unresolved; un chevauchement peut être ambiguous. |
@@ -477,7 +490,7 @@ Spectre de tailles des particules UVP (produit EcoPart LPM), sans annotation tax
 | sample_name | text | Nom natif du profil EcoPart; pas un identifiant global. |
 | marine_zone_key | text | Clé de zone maritime attribuée; consulter source, version et statut. |
 | marine_zone_assignment_status | text | assigned, ambiguous, outside ou unresolved; un chevauchement peut être ambiguous. |
-| sampled_at | timestamp with time zone | Horodatage source ou borne agrégée selon le nom; vérifier le type SQL et le fuseau. Le rapprochement FILET existant interprète ses dates sans fuseau en UTC. |
+| sampled_at | timestamp with time zone | Heure de capture du profil UVP donnée par EcoPart (métadonnées « yyyy-mm-dd hh:mm »), lue en UTC, convention du warehouse pour une heure source sans fuseau. Utilisable pour jour/nuit, en le disant. |
 | uvp_bin_id | bigint | Clé technique du bin de profondeur EcoPart, même nom dans toutes les vues UVP; dans uvp_objects/uvp_object_sizes, NULL si l’objet n’est rattaché à aucun bin. |
 | depth_min_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
 | depth_max_m | double precision | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
@@ -512,7 +525,7 @@ Un objet EcoTaxa identifié (taxon) par ligne, avec sa taille réelle quand elle
 | sample_name | text | Nom natif du profil EcoPart; pas un identifiant global. |
 | marine_zone_key | text | Clé de zone maritime attribuée; consulter source, version et statut. |
 | marine_zone_assignment_status | text | assigned, ambiguous, outside ou unresolved; un chevauchement peut être ambiguous. |
-| sampled_at | timestamp with time zone | Horodatage source ou borne agrégée selon le nom; vérifier le type SQL et le fuseau. Le rapprochement FILET existant interprète ses dates sans fuseau en UTC. |
+| sampled_at | timestamp with time zone | Heure de capture du profil UVP donnée par EcoPart (métadonnées « yyyy-mm-dd hh:mm »), lue en UTC, convention du warehouse pour une heure source sans fuseau. Utilisable pour jour/nuit, en le disant. |
 | ecotaxa_object_id | bigint | Clé technique de l’objet EcoTaxa; utiliser DISTINCT si une jointure peut multiplier ses lignes. |
 | object_id | text | Identifiant natif de l’objet EcoTaxa, qualifié par son sample/source. |
 | acquisition_id | text | Identifiant natif d’acquisition EcoTaxa. |

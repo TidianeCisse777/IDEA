@@ -129,7 +129,13 @@ class AccountTests(unittest.TestCase):
         self.assertNotIn('--all-access', creates[1])
         self.assertIn('Baie de Baffin', creates[1])
 
-    def test_robustness_cases_are_well_formed(self):
+    def test_every_case_file_is_well_formed(self):
+        for path in sorted((ROOT / 'tests/agent_battery').glob('*_cases.json')):
+            cases = json.loads(path.read_text())['cases']
+            self.assertEqual(len({c['id'] for c in cases}), len(cases), path.name)
+            for case in cases:
+                for turn in ab.turns_of(case):
+                    self.assertTrue(turn.get('expect_sql') and turn.get('question'), (path.name, case['id']))
         cases = json.loads((ROOT / 'tests/agent_battery/robustness_cases.json').read_text())['cases']
         for case in cases:
             self.assertTrue(case.get('expect_sql') and case.get('question'), case['id'])
