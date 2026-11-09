@@ -103,7 +103,8 @@ folder=$(basename "$HERE")
 if [ ! -f "$dump" ] && [ ! -f "$dump.part1" ]; then
     # The Finder (or Explorer) puts the second zip in another folder ("<dossier> 2", "<zip>_2sur2"...),
     # or it is not unpacked yet: look for the piece, then for the zip, next to this folder and in Downloads.
-    piece=$(ls "$HERE"/../*/"$dump.part1" "$HERE"/../*/*/"$dump.part1" 2>/dev/null | head -1 || true)
+    piece=$(ls "$HERE"/../*/"$dump.part1" "$HERE"/../*/*/"$dump.part1" "$HERE"/../../*/*/"$dump.part1" \
+               "$HOME"/Downloads/*/"$dump.part1" "$HOME"/Downloads/*/*/"$dump.part1" 2>/dev/null | head -1 || true)
     if [ -n "$piece" ]; then
         mv "$piece" .
     else

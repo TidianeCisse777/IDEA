@@ -3,4 +3,4 @@
 # Si macOS refuse de l'ouvrir : clic droit (ou Ctrl-clic) → Ouvrir → Ouvrir.
 cd "$(dirname "$0")" && bash installer.sh "$@"
 echo
-read -r -p "Appuyer sur Entrée pour fermer cette fenêtre. " _
+read -r -p "Appuyer sur Entrée pour fermer cette fenêtre. " _ || true

@@ -4,6 +4,22 @@
 
 **Dernière mise à jour :** 9 novembre 2026
 
+### 9 novembre 2026 — Installeurs Windows et macOS (phase 2)
+
+- `installer_windows.bat` (double-clic) → `installer_windows.ps1` : Ubuntu (WSL) s'il manque (redémarrage puis
+  relance), Docker Desktop par winget, attente de Docker dans Ubuntu (intégration WSL), second zip retrouvé et
+  décompressé, dossier copié dans Ubuntu, puis `installer.sh`. `installer_mac.command` (double-clic) → `installer.sh`.
+- `installer.sh` installe désormais les outils manquants : Homebrew, Python, Node, libpq et Docker Desktop
+  (macOS); python3-venv, client PostgreSQL 16 (pgdg) et Node 22 (NodeSource) avec apt; sudo seulement hors root;
+  propose Claude Code si aucun assistant n'est installé; retrouve le second morceau dans un dossier voisin (Finder
+  : « … 2 ») ou décompresse le second zip (à côté, ou dans Téléchargements).
+- Tests : outils installés par le script sur Ubuntu 24.04 et 22.04 vierges (psql 16.15, Node 22, Python 3.12 et
+  3.10 avec venv, 52 et 54 s); installation complète par `installer_mac.command` sur volume vierge avec les zips
+  décompressés « à la Finder » : 3 min 05 s, `PRÊT`, `PASS`, Claude Code branché; second zip laissé fermé dans
+  Téléchargements (disposition « Extraire tout » de Windows) : retrouvé et vérifié; morceau tronqué : refusé
+  (« base incomplète ou abîmée »). PowerShell analysé sans erreur par PowerShell 7 (accents lus, UTF-8 avec BOM).
+- Non testé : exécution réelle sous Windows (WSL, winget, Docker Desktop) et sous macOS (Homebrew, Gatekeeper).
+
 ### 9 novembre 2026 — Installation en une commande, testée depuis les deux zips (phase 2)
 
 - `scripts/install_shared_copy.sh`, livré comme `installer.sh` dans le zip 1 : vérifie les outils, recolle et
