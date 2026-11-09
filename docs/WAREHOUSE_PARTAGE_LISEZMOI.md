@@ -13,6 +13,7 @@ Compter environ 1 h la première fois (dont une bonne part de téléchargements)
 | `neolab_warehouse_20261108_232541.dump.sha256` | l'empreinte qui permet de vérifier que le fichier n'est pas abîmé |
 | `IDEA-code.tar.gz` | les programmes et la documentation |
 | `LISEZMOI.md` | ce fichier |
+| `installer.sh` | l'installation en une commande (après les parties 1 et 2) |
 
 La copie arrive en **deux zips**, `neolab_warehouse_20261108_1sur2.zip` et `neolab_warehouse_20261108_2sur2.zip`
 (un seul fichier serait trop gros pour certains envois). Les deux se décompressent dans le même dossier
@@ -128,6 +129,23 @@ Il en faut un seul. Sous Windows, l'installer **dans le terminal Ubuntu**.
 | **GitHub Copilot** (dans VS Code) | installer VS Code (https://code.visualstudio.com), puis l'extension **GitHub Copilot** et se connecter avec son compte GitHub. Sous Windows, ajouter aussi l'extension **WSL** | un compte GitHub avec Copilot activé |
 
 Vérifier avec `claude --version` ou `codex --version` (pour Copilot : l'icône de Copilot apparaît dans VS Code).
+
+---
+
+## Installation en une commande (après les parties 1 et 2)
+
+Depuis le dossier `neolab_warehouse_20261108` (celui des deux zips décompressés) :
+
+```bash
+bash installer.sh
+```
+
+Le script fait tout ce que décrivent les parties 3 et 4 : il vérifie les outils, recolle et vérifie la base,
+choisit des mots de passe (sans les afficher), lance Docker, installe les données (5 à 10 minutes), crée votre
+compte de lecture, branche Claude Code ou Codex s'ils sont installés, et crée le dossier de travail
+`~/neolab-travail`. Il se termine par `INSTALLATION TERMINÉE.` et la commande pour poser une première question
+(partie 5). En cas d'arrêt, il dit pourquoi ; une fois corrigé, le relancer : les étapes déjà faites sont
+sautées. Les parties 3 et 4 ci-dessous décrivent les mêmes étapes à la main.
 
 ---
 
