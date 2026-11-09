@@ -4,6 +4,20 @@
 
 **Dernière mise à jour :** 9 novembre 2026
 
+### 9 novembre 2026 — Installation en une commande, testée depuis les deux zips (phase 2)
+
+- `scripts/install_shared_copy.sh`, livré comme `installer.sh` dans le zip 1 : vérifie les outils, recolle et
+  vérifie la base, génère les mots de passe sans les afficher, lance Docker, restaure, contrôle `PRÊT`, crée le
+  compte de lecture, installe DbHub, enregistre Claude Code ou Codex s'ils sont présents, crée
+  `~/neolab-travail`. Relançable (étapes faites sautées), compatible bash 3.2 (macOS). `scripts/build_shared_copy.sh`
+  fabrique les deux zips sous 400 Mo (limite d'envoi constatée : 659 Mo refusés, puis 402 Mo refusés).
+- Test comme sur une machine neuve : installation existante arrêtée, volume de données supprimé, deux zips
+  décompressés dans un dossier vide, `bash installer.sh fred_test` dans un environnement sans aucune variable
+  de connexion : terminé en 3 min 35 s (`PRÊT`, `PASS`, Claude Code `✓ Connected`). Question posée ensuite à
+  Claude Code depuis `~/neolab-travail` par ce serveur : 69 574 validés, première image am_leg3 le 2024-08-12
+  à 15:36:06 UTC, vérifié en base. Second passage : 13 s, tout sauté sans erreur.
+- Non testé : Windows (WSL) et macOS réels, Codex.
+
 ### 9 novembre 2026 — Batterie sur les données d'objet enrichies (phase 2)
 
 - `tests/agent_battery/objects_cases.json` (9 cas) : jour/nuit (am_leg4 avec codes, am_leg3 sans aucun code),
