@@ -250,7 +250,7 @@ SELECT cruise_key, COUNT(*), MIN(sampled_at), MAX(sampled_at) FROM explore.ctd_p
 
 ## explore.ctd_measurements
 
-Mesures CTD (température, salinité, densité, oxygène, nitrate, fluorescence, pH) de tous les profils, format long.
+Mesures CTD (température, salinité, sigma-t, oxygène, nitrate, fluorescence, pression) de tous les profils, format long; pas de pH dans les données chargées.
 
 **Grain :** Profil CTD × scan × variable.
 

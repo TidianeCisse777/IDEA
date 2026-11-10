@@ -4,6 +4,20 @@
 
 **Dernière mise à jour :** 10 novembre 2026
 
+### 10 novembre 2026 — État CTD / EcoPart mesuré; pH absent corrigé dans les textes (phase 2)
+
+- CTD : 456 profils (2016 : 200, 2021 : 36, 2023 : 73, 2024 : 147), 5 130 421 mesures, 7 variables (PRES, TE90,
+  FLOR, PSAL, SIGT, OXYM, NTRA; nitrate sur 469 318 mesures seulement), jusqu'à 2 130 m, `qc` jamais renseigné.
+  Les 456 profils ont au moins une liaison acceptée à un sample EcoTaxa (904 liaisons); aucun lien direct
+  UVP–CTD (`uvp_ctd` vide), chemin par les samples EcoTaxa.
+- Aucune mesure de pH chargée, alors que le LISEZMOI, les fiches, les instructions du serveur, la description
+  DbHub et le courriel préparé pour Cyril citaient le pH : textes corrigés (« pas de pH »). Le chargeur demande
+  bien `pH` à ERDDAP; la source n'en fournit pas pour ce jeu.
+- EcoPart : 12 projets, 686 profils (heure 686/686, sans position propre 183, AMBIGUOUS 13), 71 520 tranches toutes
+  de 5 m, toutes avec volume (6 427 m³), 1 001 280 lignes de particules, 12 151 035 objets rattachés à une tranche;
+  abondances : 492 415 lignes tous objets, 303 989 validés seulement. Projets UVP EcoTaxa sans profil EcoPart :
+  13224 (extrait de 149) et 17808.
+
 ### 10 novembre 2026 — Applications de bureau branchées par l'installeur (phase 2)
 
 - `warehouse_connect.py register-apps` : inscrit le serveur dans les applications installées (dossier de

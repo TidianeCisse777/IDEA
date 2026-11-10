@@ -75,7 +75,7 @@ là où il s'était arrêté. Sinon, envoyer une capture d'écran du message à 
 |---|---|
 | EcoTaxa | 23 projets (UVP, Zooscan, LOKI), 6 138 samples, 15 millions d'objets : taxon et lignée, statut d'annotation (validé, prédit, douteux), date et heure, profondeur, taille et forme, lien vers l'image |
 | EcoPart (UVP) | 12 projets, 686 profils : volumes échantillonnés, particules, abondances par taxon |
-| CTD Amundsen | 456 profils, 5,1 millions de mesures (température, salinité, densité, oxygène, nitrate, fluorescence, pH) |
+| CTD Amundsen | 456 profils, 5,1 millions de mesures (température, salinité, densité, oxygène, nitrate, fluorescence, pression ; pas de pH) |
 | Référentiels | 65 zones maritimes, stades de copépodes, taxonomie EcoTaxa |
 
 ## À savoir

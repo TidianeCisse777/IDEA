@@ -112,7 +112,7 @@ VIEWS = {
         'ecotaxa_ctd_profile ne montre que les profils liés à un sample EcoTaxa (une ligne par liaison); ici chaque profil une fois. max_depth_m est la profondeur maximale mesurée.',
         'SELECT cruise_key, COUNT(*), MIN(sampled_at), MAX(sampled_at) FROM explore.ctd_profiles GROUP BY 1;'),
     'ctd_measurements': view(
-        'Mesures CTD (température, salinité, densité, oxygène, nitrate, fluorescence, pH) de tous les profils, format long.',
+        'Mesures CTD (température, salinité, sigma-t, oxygène, nitrate, fluorescence, pression) de tous les profils, format long; pas de pH dans les données chargées.',
         'Profil CTD × scan × variable.',
         'ctd_profile_id vers ctd_profiles pour position, date et zone.',
         'Filtrer variable_key et ctd_profile_id avant d’agréger (5 M lignes). Unité dans unit telle que fournie; ne convertir pression/profondeur ni salinité sans le dire. SIGT est le sigma-t (densité moins 1000 kg/m³) : 27 signifie 1027 kg/m³. depth_m est la pression en dbar prise pour des mètres (écart ≈ 1 % à 2000 m). qc est toujours NULL : aucun contrôle qualité fourni, à signaler. Pour un profil moyen, moyenner d’abord par profil et classe de profondeur, puis entre profils.',
