@@ -102,5 +102,9 @@ $source = (& wsl.exe -d $ubuntu -- wslpath -a ($here -replace '\\', '/')).Trim()
 $command = "mkdir -p ~/neolab && cp -ru '$source' ~/neolab/ && cd ~/neolab/'$folder' && bash installer.sh"
 & wsl.exe -d $ubuntu -- bash -lc $command
 if ($LASTEXITCODE -ne 0) { Fail "l'installation dans Ubuntu s'est arrêtée (message ci-dessus) : corriger, puis relancer installer_windows.bat." }
+# Applications Windows (Codex, VS Code/Copilot, Claude Desktop) : serveur lancé dans Ubuntu par wsl.exe.
+$winHome = (& wsl.exe -d $ubuntu -- wslpath -a ($env:USERPROFILE -replace '\\', '/')).Trim()
+$register = "cd ~/neolab/'$folder'/IDEA && .venv/bin/python scripts/warehouse_connect.py register-apps --windows-home '$winHome' --wsl-distro '$ubuntu'"
+& wsl.exe -d $ubuntu -- bash -lc $register
 Write-Host "`nPour poser une question : ouvrir « Ubuntu » depuis le menu Démarrer, puis taper  cd ~/neolab-travail && claude" -ForegroundColor Green
-Write-Host "(ou codex). GitHub Copilot : voir LISEZMOI, partie 4."
+Write-Host "(ou codex). Codex, VS Code (Copilot) ou Claude Desktop installés sous Windows : les redémarrer, le serveur neolab-warehouse y est ajouté."

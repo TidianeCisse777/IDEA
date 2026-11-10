@@ -150,7 +150,10 @@ def dbhub_command():
         return override.split()
     base = ['--transport', 'stdio', '--config', str(CONFIG)]
     if LOCAL_DBHUB.exists():
-        return [shutil.which('node') or 'node', str(LOCAL_DBHUB), *base]
+        # An application started from the macOS Finder (Claude Desktop, VS Code) has no Homebrew in its PATH.
+        node = shutil.which('node') or next((c for c in ('/opt/homebrew/bin/node', '/usr/local/bin/node', '/usr/bin/node')
+                                              if os.path.exists(c)), 'node')
+        return [node, str(LOCAL_DBHUB), *base]
     npx = shutil.which('npx') or shutil.which('npx.cmd')
     if not npx:
         raise SystemExit('Node.js 18+ est requis (https://nodejs.org) pour lancer DbHub.')
@@ -539,6 +542,102 @@ def registration(client):
     return json.dumps({'mcpServers': {SERVER_NAME: {'command': python, 'args': [script, 'run']}}}, indent=2)
 
 
+def _server_command(windows_distro=None):
+    """The command an application runs to start the relay; through wsl.exe for a Windows application."""
+    command = [sys.executable, str(Path(__file__).resolve()), 'run']
+    return (['wsl.exe', '-d', windows_distro, '--'] + command) if windows_distro else command
+
+
+def _merge_json(path, key, entry):
+    """Add SERVER_NAME under `key` in a JSON config, keeping everything else; refuse an unreadable file."""
+    data = {}
+    if path.exists() and path.read_text(encoding='utf-8').strip():
+        try:
+            data = json.loads(path.read_text(encoding='utf-8'))
+        except ValueError:
+            return 'fichier illisible, laissé tel quel : ajouter le serveur à la main (python scripts/warehouse_connect.py config …)'
+        backup = path.with_name(path.name + '.avant-neolab')
+        if not backup.exists():
+            backup.write_text(path.read_text(encoding='utf-8'), encoding='utf-8')
+    if not isinstance(data, dict) or not isinstance(data.get(key, {}), dict):
+        return 'structure inattendue, laissé tel quel : ajouter le serveur à la main'
+    data.setdefault(key, {})[SERVER_NAME] = entry
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+    return 'serveur %s enregistré' % SERVER_NAME
+
+
+def _merge_codex(path, command):
+    """Replace or append the [mcp_servers.<name>] table of a Codex config.toml, keeping the rest."""
+    header = '[mcp_servers.%s]' % SERVER_NAME
+    lines = path.read_text(encoding='utf-8').splitlines() if path.exists() else []
+    kept, skipping = [], False
+    for line in lines:
+        stripped = line.strip()
+        if stripped == header or stripped.startswith(header[:-1] + '.'):
+            skipping = True
+            continue
+        if skipping and stripped.startswith('['):
+            skipping = False
+        if not skipping:
+            kept.append(line)
+    if path.exists():
+        backup = path.with_name(path.name + '.avant-neolab')
+        if not backup.exists():
+            backup.write_text(path.read_text(encoding='utf-8'), encoding='utf-8')
+    while kept and not kept[-1].strip():
+        kept.pop()
+    block = [header, 'command = %s' % json.dumps(command[0]), 'args = %s' % json.dumps(command[1:]),
+             'startup_timeout_sec = 30']
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('\n'.join(kept + ([''] if kept else []) + block) + '\n', encoding='utf-8')
+    return 'serveur %s enregistré' % SERVER_NAME
+
+
+def app_targets(home, windows=False, darwin=None):
+    """Installed applications that read an MCP configuration file: (name, config file, kind).
+    An application counts as installed when its configuration folder exists."""
+    home = Path(home)
+    darwin = (sys.platform == 'darwin') if darwin is None else darwin
+    if windows:
+        appdata = home / 'AppData' / 'Roaming'
+        user_dirs = {'vscode': appdata / 'Code' / 'User', 'claude': appdata / 'Claude'}
+    elif darwin:
+        support = home / 'Library' / 'Application Support'
+        user_dirs = {'vscode': support / 'Code' / 'User', 'claude': support / 'Claude'}
+    else:
+        user_dirs = {'vscode': home / '.config' / 'Code' / 'User', 'claude': None}
+    targets = []
+    if (home / '.codex').is_dir():
+        targets.append(('Codex (ligne de commande, extension VS Code, application)', home / '.codex' / 'config.toml', 'codex'))
+    if user_dirs['vscode'] and user_dirs['vscode'].is_dir():
+        targets.append(('VS Code (GitHub Copilot, mode agent)', user_dirs['vscode'] / 'mcp.json', 'vscode'))
+    if user_dirs['claude'] and user_dirs['claude'].is_dir():
+        targets.append(('Claude Desktop', user_dirs['claude'] / 'claude_desktop_config.json', 'claude'))
+    return targets
+
+
+def register_apps(args):
+    """Register the server in the desktop applications found (Codex, VS Code, Claude Desktop); with
+    --windows-home, those of the Windows user, started through wsl.exe (installer_windows.ps1)."""
+    windows = bool(args.windows_home)
+    if windows and not args.wsl_distro:
+        raise SystemExit('--wsl-distro est requis avec --windows-home')
+    command = _server_command(args.wsl_distro if windows else None)
+    targets = app_targets(args.windows_home or Path.home(), windows=windows)
+    if not targets:
+        print('aucune application de bureau trouvée (Codex, VS Code, Claude Desktop)')
+    for name, path, kind in targets:
+        if kind == 'codex':
+            outcome = _merge_codex(path, command)
+        elif kind == 'vscode':
+            outcome = _merge_json(path, 'servers', {'type': 'stdio', 'command': command[0], 'args': command[1:]})
+        else:
+            outcome = _merge_json(path, 'mcpServers', {'command': command[0], 'args': command[1:]})
+        print('%s : %s (%s); redémarrer l\'application pour le charger' % (name, outcome, path))
+    return 0
+
+
 def config(args):
     print(registration(args.client))
     # On stderr: `config json > mcp.json` must produce a valid JSON file.
@@ -707,6 +806,10 @@ def main(argv=None):
     p = sub.add_parser('config', help='afficher la commande ou le fragment de configuration du client')
     p.add_argument('client', choices=('codex', 'claude-code', 'claude-desktop', 'gemini', 'opencode', 'cursor', 'vscode', 'json'))
     p.set_defaults(handler=config)
+    p = sub.add_parser('register-apps', help='enregistrer le serveur dans Codex, VS Code et Claude Desktop s\'ils sont installés')
+    p.add_argument('--windows-home', help='dossier du profil Windows vu depuis WSL (ex. /mnt/c/Users/nom)')
+    p.add_argument('--wsl-distro', help='distribution WSL où tourne le warehouse (avec --windows-home)')
+    p.set_defaults(handler=register_apps)
     p = sub.add_parser('workspace', help='créer un dossier de travail NeoLab (instructions lues par Claude Code, Codex, Gemini, Copilot)')
     p.add_argument('folder', help='dossier à créer ou compléter, ex. ~/neolab-travail')
     p.add_argument('--force', action='store_true', help='réécrire les fichiers d\'instructions existants')

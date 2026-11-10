@@ -2,7 +2,23 @@
 
 **Période proposée :** du 14 septembre au 30 novembre 2026
 
-**Dernière mise à jour :** 9 novembre 2026
+**Dernière mise à jour :** 10 novembre 2026
+
+### 10 novembre 2026 — Applications de bureau branchées par l'installeur (phase 2)
+
+- `warehouse_connect.py register-apps` : inscrit le serveur dans les applications installées (dossier de
+  configuration présent), sans toucher au reste : Codex (`~/.codex/config.toml`, partagé par la ligne de commande
+  et l'extension VS Code selon la documentation OpenAI; l'application de bureau n'est pas documentée
+  officiellement), VS Code/Copilot (`Code/User/mcp.json`, clé `servers`), Claude Desktop
+  (`claude_desktop_config.json`, clé `mcpServers`). Copie `.avant-neolab` du fichier d'origine; JSON illisible
+  laissé tel quel; relançable sans doublon. Sous Windows, `installer_windows.ps1` l'appelle pour le profil
+  Windows avec le serveur lancé dans Ubuntu par `wsl.exe -d <distro> --`.
+- Le relais trouve Node hors du PATH (application lancée depuis le Finder : /opt/homebrew, /usr/local, /usr/bin).
+- Tests : 4 tests unitaires (applications absentes non touchées, autres serveurs conservés, JSON illisible
+  intact, commande wsl.exe); installeur relancé avec VS Code et Codex simulés : deux fichiers écrits; la commande
+  inscrite dans `mcp.json`, lancée avec PATH=/usr/bin:/bin, répond en MCP (DBHub 1.5.0, 3 outils, requête SQL
+  réussie). PowerShell analysé sans erreur. Non testé : les applications réelles (VS Code, Codex app, Claude
+  Desktop) et `wsl.exe` sous Windows.
 
 ### 9 novembre 2026 — Installeurs Windows et macOS (phase 2)
 

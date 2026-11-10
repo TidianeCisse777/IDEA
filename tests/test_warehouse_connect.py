@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -480,3 +481,61 @@ class ErrorHintTests(unittest.TestCase):
                      b'{"jsonrpc": "2.0", "id": 5, "result": {"content": [{"type": "text", "text": "ok"}]}}\n',
                      b'not json isError\n'):
             self.assertIs(self.module.with_hint(line), line)
+
+
+class RegisterAppsTests(unittest.TestCase):
+    """The installer registers the server in the desktop applications found, without touching the rest
+    of their configuration (Codex CLI/extension/app, VS Code Copilot, Claude Desktop; Windows via wsl.exe)."""
+
+    def setUp(self):
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        import warehouse_connect
+        self.module = warehouse_connect
+        self.home = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.home, True)
+
+    def run_register(self, **kwargs):
+        args = mock.Mock(windows_home=kwargs.get('windows_home'), wsl_distro=kwargs.get('wsl_distro'))
+        with mock.patch.object(self.module.Path, 'home', return_value=self.home), \
+                mock.patch.object(self.module.sys, 'platform', 'linux'):
+            self.module.register_apps(args)
+
+    def test_only_installed_applications_are_touched(self):
+        self.run_register()
+        self.assertEqual(list(self.home.iterdir()), [])
+
+    def test_vscode_and_codex_keep_their_other_servers(self):
+        user = self.home / '.config' / 'Code' / 'User'
+        user.mkdir(parents=True)
+        (user / 'mcp.json').write_text(json.dumps({'servers': {'other': {'command': 'x'}}, 'inputs': []}))
+        (self.home / '.codex').mkdir()
+        (self.home / '.codex' / 'config.toml').write_text('model = "o"\n\n[mcp_servers.other]\ncommand = "y"\n\n'
+                                                          '[mcp_servers.neolab-warehouse]\ncommand = "old"\nargs = []\n')
+        self.run_register()
+        self.run_register()  # rerunnable: no duplicate table
+        vscode = json.loads((user / 'mcp.json').read_text())
+        self.assertEqual(set(vscode['servers']), {'other', 'neolab-warehouse'})
+        self.assertEqual(vscode['inputs'], [])
+        self.assertEqual(vscode['servers']['neolab-warehouse']['args'][-1], 'run')
+        toml = (self.home / '.codex' / 'config.toml').read_text()
+        self.assertEqual(toml.count('[mcp_servers.neolab-warehouse]'), 1)
+        self.assertIn('[mcp_servers.other]', toml)
+        self.assertIn('model = "o"', toml)
+        self.assertNotIn('"old"', toml)
+        self.assertTrue((user / 'mcp.json.avant-neolab').exists())
+
+    def test_unreadable_json_is_left_alone(self):
+        user = self.home / '.config' / 'Code' / 'User'
+        user.mkdir(parents=True)
+        (user / 'mcp.json').write_text('{ // comment\n "servers": {}}')
+        self.run_register()
+        self.assertEqual((user / 'mcp.json').read_text(), '{ // comment\n "servers": {}}')
+
+    def test_windows_applications_start_the_server_through_wsl(self):
+        claude = self.home / 'AppData' / 'Roaming' / 'Claude'
+        claude.mkdir(parents=True)
+        self.run_register(windows_home=str(self.home), wsl_distro='Ubuntu')
+        entry = json.loads((claude / 'claude_desktop_config.json').read_text())['mcpServers']['neolab-warehouse']
+        self.assertEqual(entry['command'], 'wsl.exe')
+        self.assertEqual(entry['args'][:3], ['-d', 'Ubuntu', '--'])
+        self.assertTrue(entry['args'][-2].endswith('warehouse_connect.py'))

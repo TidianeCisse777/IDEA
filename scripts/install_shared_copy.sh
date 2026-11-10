@@ -222,13 +222,21 @@ if have codex; then
     echo "Codex : serveur neolab-warehouse enregistré"
 fi
 
+apps=$(python scripts/warehouse_connect.py register-apps)
+printf '%s\n' "$apps"
+printf '%s' "$apps" | grep -q "enregistré" && assistants="$assistants applications"
+
 printf '\nINSTALLATION TERMINÉE.\n\n'
-if [ -n "$assistants" ]; then
+if [ "$(printf '%s' "$assistants" | awk '{print $1}')" = applications ]; then
+    printf 'Pour poser une question : redémarrer l’application ci-dessus (Codex, VS Code ou Claude Desktop) et\n'
+    printf 'ouvrir le dossier ~/neolab-travail (VS Code : Copilot Chat en mode Agent).\n'
+elif [ -n "$assistants" ]; then
     first=$(printf '%s' "$assistants" | awk '{print $1}')
     printf 'Pour poser une question (la première fois, l’assistant demande de se connecter à son compte) :\n'
     printf '    cd ~/neolab-travail && %s\n' "$first"
 else
     printf 'Aucun assistant trouvé (claude, codex). Après en avoir installé un (LISEZMOI, partie 2), relancer ce script.\n'
 fi
-printf 'GitHub Copilot (VS Code) : dans IDEA, « python scripts/warehouse_connect.py config vscode » (LISEZMOI, partie 4).\n'
-printf 'Les fois suivantes : lancer Docker, puis « cd %s && docker compose --env-file .env.warehouse -f docker-compose.warehouse.yml up -d ».\n' "$PWD"
+printf 'Codex (application, extension VS Code), VS Code (Copilot) et Claude Desktop : branchés s’ils sont installés\n'
+printf '(liste ci-dessus) ; en installer un plus tard ? relancer ce script.\n'
+printf 'Les fois suivantes : lancer Docker Desktop (la base redémarre seule), puis l’assistant.\n'

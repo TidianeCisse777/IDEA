@@ -50,8 +50,12 @@ Ouvrir **Ubuntu** (Windows) ou le **Terminal** (Mac, Linux), puis :
 cd ~/neolab-travail && claude
 ```
 
-(`codex` à la place de `claude` pour Codex ; GitHub Copilot : voir l'annexe, partie 4.) La première fois,
-l'assistant demande de se connecter à votre compte et d'autoriser les outils `neolab-warehouse` : accepter.
+(`codex` à la place de `claude` pour Codex.) La première fois, l'assistant demande de se connecter à votre
+compte et d'autoriser les outils `neolab-warehouse` : accepter.
+
+Le script branche aussi les applications déjà installées : **Codex** (application ou extension VS Code),
+**VS Code** (GitHub Copilot, mode Agent) et **Claude Desktop**. Les redémarrer après l'installation ; pour une
+application installée plus tard, relancer le script.
 
 Exemple : « Quels projets EcoTaxa sont dans le warehouse, et quelle part de leurs objets est validée ? »
 L'assistant répond à partir de la base, explique ses choix et liste les requêtes qu'il a exécutées.
