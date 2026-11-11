@@ -7,7 +7,7 @@ Serveur MCP qui donne à un assistant IA (Claude, Codex, OpenCode, VS Code / Cop
 |---|---|
 | EcoTaxa | 23 projets (UVP, Zooscan, LOKI), 15 M d'objets : taxon et lignée, statut validé/prédit, taille, image |
 | EcoPart (UVP) | 686 profils : tranches de profondeur, volumes échantillonnés, particules, abondances par taxon |
-| CTD Amundsen | profils de rosette et CTD montées sur les filets Hydrobios et Bioness (Amundsen Science) : température, salinité, densité, oxygène, nitrate, fluorescence; reliés aux profils UVP et aux déploiements FILET |
+| CTD Amundsen | profils de rosette et CTD du Bioness (Amundsen Science) : température, salinité, densité, oxygène, nitrate, fluorescence; reliés aux profils UVP et aux déploiements FILET |
 | FILET | 6 102 échantillons de filet, abondances et biomasses de copépodes par stade |
 | Référentiels | zones maritimes, stades de copépodes, taxonomie EcoTaxa, documents (protocoles, méthodes) |
 

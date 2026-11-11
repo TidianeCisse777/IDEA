@@ -249,7 +249,7 @@ SERVER_INSTRUCTIONS = (
     "Ce serveur donne accès en lecture au warehouse NeoLab (Université Laval) : plancton et océan en Arctique "
     "canadien (Baie de Baffin, détroit de Davis, mer du Labrador, baie d'Hudson...). Il contient les objets et "
     "annotations EcoTaxa (taxons, statut validé/prédit, tailles), les profils et abondances UVP/EcoPart, les CTD "
-    "Amundsen (température, salinité, sigma-t, oxygène, nitrate, fluorescence, pression; pas de pH) et les zones maritimes. "
+    "Amundsen (température, salinité, sigma-t, oxygène, nitrate, fluorescence, pression; pH pour quelques profils de 2011 seulement) et les zones maritimes. "
     "Une question sur le plancton, les copépodes, l'UVP, EcoTaxa, les CTD, une campagne, une zone ou ces mesures "
     "porte sur ces données, même courte : y répondre avec execute_sql, jamais de mémoire ni par une recherche web. "
     "Lire d'abord warehouse_context(topic=overview) : son champ column_list donne les colonnes réelles de toutes "

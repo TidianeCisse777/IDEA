@@ -124,7 +124,7 @@ Tous les objets EcoTaxa (15 M), tous projets et instruments : taxon, statut d’
 | major_px | double precision | Axe majeur de l’ellipse ajustée par Zooprocess, en pixels; valeur source, non recalculée. |
 | minor_px | double precision | Axe mineur de l’ellipse ajustée par Zooprocess, en pixels; valeur source, non recalculée. |
 | pixel_size_mm | double precision | Taille réelle d’un pixel pour l’acquisition de l’objet, en mm (EcoTaxa la donne en mm pour UVP5/Zooscan et en µm pour UVP6 : convertie ici; ordre de grandeur 0,07 à 0,17 mm); NULL si EcoTaxa ne la fournit pas (LOKI, Zooscan), auquel cas aucune colonne _um/_um2 n’est calculable pour cet objet. |
-| esd_um | double precision | esd_px converti en micromètres via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une taille nulle. |
+| esd_um | double precision | Diamètre sphérique équivalent en micromètres : esd_px source converti par pixel_size_mm, sinon diamètre du disque de même aire, 2·√(area_px/π) (la plupart des projets UVP6 récents donnent l’aire sans l’ESD; les deux sont égaux là où ils coexistent). NULL si pixel_size_mm ou l’aire manquent : taille inconnue, pas nulle. |
 | major_um | double precision | major_px converti en micromètres via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une taille nulle. |
 | minor_um | double precision | minor_px converti en micromètres via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une taille nulle. |
 | area_um2 | double precision | area_px convertie en micromètres carrés via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une aire nulle. |
@@ -250,13 +250,13 @@ SELECT cruise_key, COUNT(*), MIN(sampled_at), MAX(sampled_at) FROM explore.ctd_p
 
 ## explore.ctd_measurements
 
-Mesures CTD (température, salinité, sigma-t, oxygène, nitrate, fluorescence, pression) de tous les profils, format long; pas de pH dans les données chargées.
+Mesures CTD (température, salinité, sigma-t, oxygène, nitrate, fluorescence, pression; pH seulement pour 40 profils des campagnes 2011; NET = numéro du filet ouvert pour la CTD montée sur le Bioness) de tous les profils, format long.
 
 **Grain :** Profil CTD × scan × variable.
 
 **Relations :** ctd_profile_id vers ctd_profiles pour position, date et zone.
 
-**Limites :** Filtrer variable_key et ctd_profile_id avant d’agréger (5 M lignes). Unité dans unit telle que fournie; ne convertir pression/profondeur ni salinité sans le dire. SIGT est le sigma-t (densité moins 1000 kg/m³) : 27 signifie 1027 kg/m³. depth_m est la pression en dbar prise pour des mètres (écart ≈ 1 % à 2000 m). qc est toujours NULL : aucun contrôle qualité fourni, à signaler. Pour un profil moyen, moyenner d’abord par profil et classe de profondeur, puis entre profils.
+**Limites :** VALEURS SOURCE À SIGNALER : nitrate (NTRA) négatif pour 730 mesures de 13 campagnes 2010 (jusqu’à -16,9; physiquement impossible, capteur) et fluorescence légèrement négative : copiées telles quelles, les exclure ou les signaler, ne jamais les corriger. pH : 11 418 mesures, 40 profils de 2011 seulement (pas de pH pour les autres années). Profils de rosette (navire) et de CTD montée sur le Bioness (ctd_profiles, dataset_version_id). Filtrer variable_key et ctd_profile_id avant d’agréger (environ 7,7 M lignes). Unité dans unit telle que fournie; ne convertir pression/profondeur ni salinité sans le dire. SIGT est le sigma-t (densité moins 1000 kg/m³) : 27 signifie 1027 kg/m³. depth_m est la pression en dbar prise pour des mètres (écart ≈ 1 % à 2000 m). qc est toujours NULL : aucun contrôle qualité fourni, à signaler. Pour un profil moyen, moyenner d’abord par profil et classe de profondeur, puis entre profils.
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
@@ -315,7 +315,7 @@ Métadonnées des profils UVP liés à un sample EcoTaxa.
 
 **Relations :** uvp_profile_id = uvp_taxon_abundance.profile_id ou ecopart_bins.profile_id; ecotaxa_sample_id = ecotaxa_ctd_profile.ecotaxa_sample_id.
 
-**Limites :** INNER JOIN : les profils sans sample EcoTaxa lié sont absents. COUNT(DISTINCT uvp_profile_id) pour compter les profils. marine_zone_key est ici la zone du sample EcoTaxa lié (sinon celle du profil) : un profil dont les samples se contredisent (profils GreenEdge 2016 vers 70° N : Baie de Baffin dans 149, Détroit de Davis dans 20890) apparaît dans les deux zones, et son profil est AMBIGUOUS (absent de zone_membership s’il n’a pas de coordonnées propres). Dire quel filtre de zone est utilisé quand le compte diffère de zone_membership. ecotaxa_project_title est le nom natif du projet, pour affichage uniquement (peut être NULL); ecotaxa_project_id reste la clé stable.
+**Limites :** latitude/longitude viennent d’EcoPart et sont NULL pour 182 profils GreenEdge 2016 : prendre alors celles de explore.ecotaxa_samples (ecotaxa_sample_id), sinon une carte les omet sans le dire. COPIES ECOTAXA : 199 profils UVP GreenEdge 2016 sont liés à deux samples EcoTaxa, copies identiques des mêmes images (projet 149 et projet 20880 ou 20890). Cette vue ne garde que le sample du plus petit projet (149) : rien n’y compte deux fois, et les projets 20880 et 20890 n’y apparaissent pas. Les copies restent dans les vues ecotaxa_* (ecotaxa_objects, ecotaxa_samples, ecotaxa_projects) : ne pas additionner 149, 20880, 20890 et 13224. INNER JOIN : les profils sans sample EcoTaxa lié sont absents. COUNT(DISTINCT uvp_profile_id) pour compter les profils. marine_zone_key est ici la zone du sample EcoTaxa lié (sinon celle du profil) : un profil dont les samples se contredisent (profils GreenEdge 2016 vers 70° N : Baie de Baffin dans 149, Détroit de Davis dans 20890) apparaît dans les deux zones, et son profil est AMBIGUOUS (absent de zone_membership s’il n’a pas de coordonnées propres). Dire quel filtre de zone est utilisé quand le compte diffère de zone_membership. ecotaxa_project_title est le nom natif du projet, pour affichage uniquement (peut être NULL); ecotaxa_project_id reste la clé stable.
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
@@ -365,7 +365,7 @@ Objets EcoTaxa associés aux profils UVP, avec un bin EcoPart éventuel.
 
 **Relations :** uvp_profile_id vers uvp_samples; uvp_bin_id vers ecopart_bins.bin_id. ecotaxa_object_id est la clé technique de l’objet.
 
-**Limites :** Les jointures peuvent multiplier les objets : compter DISTINCT ecotaxa_object_id au périmètre choisi. Un bin NULL ne signifie pas volume nul. Ne pas joindre les objets à tous les scans CTD du profil. taxon_id/taxon_name/annotation_status peuvent manquer; aucune validation taxonomique implicite.
+**Limites :** COPIES ECOTAXA : 199 profils UVP GreenEdge 2016 sont liés à deux samples EcoTaxa, copies identiques des mêmes images (projet 149 et projet 20880 ou 20890). Cette vue ne garde que le sample du plus petit projet (149) : rien n’y compte deux fois, et les projets 20880 et 20890 n’y apparaissent pas. Les copies restent dans les vues ecotaxa_* (ecotaxa_objects, ecotaxa_samples, ecotaxa_projects) : ne pas additionner 149, 20880, 20890 et 13224. Les jointures peuvent multiplier les objets : compter DISTINCT ecotaxa_object_id au périmètre choisi. Un bin NULL ne signifie pas volume nul. Ne pas joindre les objets à tous les scans CTD du profil. taxon_id/taxon_name/annotation_status peuvent manquer; aucune validation taxonomique implicite.
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
@@ -443,7 +443,7 @@ Abondances UVP dérivées des objets EcoTaxa et volumes EcoPart.
 
 **Relations :** profile_id vers uvp_samples.uvp_profile_id; bin_id vers ecopart_bins.bin_id. Isoler annotation_policy et dataset_version_id. ecotaxa_project_id vers uvp_projects.ecotaxa_project_id.
 
-**Limites :** Formule : n_objects_taxon / sampled_volume_l × 1000, individus/m³. Agréger par SUM(n_objects_taxon)/SUM(sampled_volume_l)*1000, pas par moyenne simple. Filtre de zone complet (y compris points AMBIGUOUS) : JOIN explore.zone_membership m ON m.row_kind='uvp_profile' AND m.row_id=profile_id. La vue ajoute des zéros sur tous les bins uniquement pour les taxons observés dans ce profil et cette annotation_policy; un taxon absent du profil entier ne reçoit pas de zéro. Pour un profil présent, chaque bin a donc ses lignes, zéros compris : aucun bin ne manque au volume d’un total par tranche. Total « tous taxons » : la vue contient aussi les catégories non vivantes (détritus, artefacts, fèces : 99 % des objets validés du projet 10101 en Baie de Baffin, dont 97 % de détritus) et techniques; une abondance d’organismes se calcule avec JOIN explore.ecotaxa_taxa t ON t.taxon_key = a.taxon_key WHERE t.object_class = 'organism', sinon c’est une concentration de particules (objets/m³, pas individus/m³), à nommer ainsi; toujours dire la composition retenue. annotation_policy vaut all_loaded_objects:ecotaxa_project=N (tous les objets chargés : validés, prédits, douteux et jamais classés) ou validated_only:ecotaxa_project=N (validés seulement, statut V d’EcoTaxa) : toujours filtrer une seule politique et la nommer dans la réponse; comparer les deux pour montrer la part du prédit. Attention avec validated_only : un profil sans aucun objet validé de ce taxon n’a pas de ligne (pas de zéro, l’annotation y est peut-être incomplète), donc le volume de référence diffère de all_loaded_objects; toujours donner, pour chaque politique, le nombre de profils et le volume total utilisés, et ne pas présenter l’écart entre politiques comme une différence biologique. Ne pas sommer le même volume sur plusieurs taxons. marine_zone_key/name/assignment_status viennent directement de uvp_profile : disponibles même quand explore.uvp_samples est vide pour ce profil (pas de sample EcoTaxa lié) — ne pas passer par uvp_samples pour la zone, elle est déjà ici.
+**Limites :** annotation_policy contient le projet EcoTaxa (ex. validated_only:ecotaxa_project=149); un profil n’a ici que les politiques d’un seul projet. COPIES ECOTAXA : 199 profils UVP GreenEdge 2016 sont liés à deux samples EcoTaxa, copies identiques des mêmes images (projet 149 et projet 20880 ou 20890). Cette vue ne garde que le sample du plus petit projet (149) : rien n’y compte deux fois, et les projets 20880 et 20890 n’y apparaissent pas. Les copies restent dans les vues ecotaxa_* (ecotaxa_objects, ecotaxa_samples, ecotaxa_projects) : ne pas additionner 149, 20880, 20890 et 13224. Formule : n_objects_taxon / sampled_volume_l × 1000, individus/m³. Agréger par SUM(n_objects_taxon)/SUM(sampled_volume_l)*1000, pas par moyenne simple. Filtre de zone complet (y compris points AMBIGUOUS) : JOIN explore.zone_membership m ON m.row_kind='uvp_profile' AND m.row_id=profile_id. La vue ajoute des zéros sur tous les bins uniquement pour les taxons observés dans ce profil et cette annotation_policy; un taxon absent du profil entier ne reçoit pas de zéro. Pour un profil présent, chaque bin a donc ses lignes, zéros compris : aucun bin ne manque au volume d’un total par tranche. Total « tous taxons » : la vue contient aussi les catégories non vivantes (détritus, artefacts, fèces : 99 % des objets validés du projet 10101 en Baie de Baffin, dont 97 % de détritus) et techniques; une abondance d’organismes se calcule avec JOIN explore.ecotaxa_taxa t ON t.taxon_key = a.taxon_key WHERE t.object_class = 'organism', sinon c’est une concentration de particules (objets/m³, pas individus/m³), à nommer ainsi; toujours dire la composition retenue. annotation_policy vaut all_loaded_objects:ecotaxa_project=N (tous les objets chargés : validés, prédits, douteux et jamais classés) ou validated_only:ecotaxa_project=N (validés seulement, statut V d’EcoTaxa) : toujours filtrer une seule politique et la nommer dans la réponse; comparer les deux pour montrer la part du prédit. Attention avec validated_only : un profil sans aucun objet validé de ce taxon n’a pas de ligne (pas de zéro, l’annotation y est peut-être incomplète), donc le volume de référence diffère de all_loaded_objects; toujours donner, pour chaque politique, le nombre de profils et le volume total utilisés, et ne pas présenter l’écart entre politiques comme une différence biologique. Ne pas sommer le même volume sur plusieurs taxons. marine_zone_key/name/assignment_status viennent directement de uvp_profile : disponibles même quand explore.uvp_samples est vide pour ce profil (pas de sample EcoTaxa lié) — ne pas passer par uvp_samples pour la zone, elle est déjà ici.
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
@@ -516,7 +516,7 @@ Un objet EcoTaxa identifié (taxon) par ligne, avec sa taille réelle quand elle
 
 **Relations :** uvp_profile_id vers uvp_samples.uvp_profile_id; uvp_bin_id vers le bin de profondeur; taxon_id/taxon_name comme sur explore.uvp_objects. Distinct de uvp_taxon_abundance (agrégée par bin/taxon, sans taille) et de uvp_particle_sizes (taille sans taxon) : ici, taxon et taille sont sur la même ligne. taxon_key suit la même convention que uvp_taxon_abundance.taxon_key (ecotaxa:id:…/ecotaxa:name:…/warehouse:unclassified) : pour comparer à une abondance FILET du même taxon, joindre explore.taxon_mapping sur uvp_taxon_id = taxon_key, comme explore.filet_uvp_abundance le fait en interne.
 
-**Limites :** esd_um/major_um/minor_um/area_um2 sont NULL quand la calibration pixel de l’acquisition EcoTaxa (pixel_size_mm) est inconnue — ne pas traiter un NULL comme une taille nulle ni l’exclure silencieusement sans le signaler. esd_px/major_px/minor_px/area_px sont les valeurs source EcoTaxa (Zooprocess), non recalculées; _um/_um2 sont calculées ici. sampled_volume_l est un attribut du bin, répété sur chaque objet de ce bin : pour une densité par taxon et gamme de taille, agréger ce volume une seule fois par uvp_bin_id (ex. MIN(sampled_volume_l) GROUP BY uvp_bin_id) avant de diviser, comme pour uvp_particle_sizes. Un objet peut ne pas être rattaché à un bin (uvp_bin_id NULL) : l’exclure explicitement d’un calcul de densité plutôt que de le laisser fausser silencieusement une moyenne.
+**Limites :** COPIES ECOTAXA : 199 profils UVP GreenEdge 2016 sont liés à deux samples EcoTaxa, copies identiques des mêmes images (projet 149 et projet 20880 ou 20890). Cette vue ne garde que le sample du plus petit projet (149) : rien n’y compte deux fois, et les projets 20880 et 20890 n’y apparaissent pas. Les copies restent dans les vues ecotaxa_* (ecotaxa_objects, ecotaxa_samples, ecotaxa_projects) : ne pas additionner 149, 20880, 20890 et 13224. esd_um/major_um/minor_um/area_um2 sont NULL quand la calibration pixel de l’acquisition EcoTaxa (pixel_size_mm) est inconnue — ne pas traiter un NULL comme une taille nulle ni l’exclure silencieusement sans le signaler. esd_px/major_px/minor_px/area_px sont les valeurs source EcoTaxa (Zooprocess), non recalculées; _um/_um2 sont calculées ici. sampled_volume_l est un attribut du bin, répété sur chaque objet de ce bin : pour une densité par taxon et gamme de taille, agréger ce volume une seule fois par uvp_bin_id (ex. MIN(sampled_volume_l) GROUP BY uvp_bin_id) avant de diviser, comme pour uvp_particle_sizes. Un objet peut ne pas être rattaché à un bin (uvp_bin_id NULL) : l’exclure explicitement d’un calcul de densité plutôt que de le laisser fausser silencieusement une moyenne.
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
@@ -544,10 +544,12 @@ Un objet EcoTaxa identifié (taxon) par ligne, avec sa taille réelle quand elle
 | major_px | double precision | Axe majeur de l’ellipse ajustée par Zooprocess, en pixels; valeur source, non recalculée. |
 | minor_px | double precision | Axe mineur de l’ellipse ajustée par Zooprocess, en pixels; valeur source, non recalculée. |
 | pixel_size_mm | double precision | Taille réelle d’un pixel pour l’acquisition de l’objet, en mm (EcoTaxa la donne en mm pour UVP5/Zooscan et en µm pour UVP6 : convertie ici; ordre de grandeur 0,07 à 0,17 mm); NULL si EcoTaxa ne la fournit pas (LOKI, Zooscan), auquel cas aucune colonne _um/_um2 n’est calculable pour cet objet. |
-| esd_um | double precision | esd_px converti en micromètres via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une taille nulle. |
+| esd_um | double precision | Diamètre sphérique équivalent en micromètres : esd_px source converti par pixel_size_mm, sinon diamètre du disque de même aire, 2·√(area_px/π) (la plupart des projets UVP6 récents donnent l’aire sans l’ESD; les deux sont égaux là où ils coexistent). NULL si pixel_size_mm ou l’aire manquent : taille inconnue, pas nulle. |
 | major_um | double precision | major_px converti en micromètres via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une taille nulle. |
 | minor_um | double precision | minor_px converti en micromètres via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une taille nulle. |
 | area_um2 | double precision | area_px convertie en micromètres carrés via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une aire nulle. |
+| ecotaxa_sample_id | bigint | Clé technique du sample EcoTaxa; distincte de son identifiant natif. |
+| ecotaxa_project_id | bigint | Identifiant natif du projet EcoTaxa; distinct de celui du projet EcoPart. |
 
 ```sql
 WITH per_bin AS (SELECT uvp_bin_id, MIN(sampled_volume_l) AS vol_l, COUNT(*) AS n FROM explore.uvp_object_sizes WHERE taxon_name ILIKE '%calanus%' AND major_um BETWEEN 500 AND 1000 AND uvp_bin_id IS NOT NULL GROUP BY uvp_bin_id) SELECT SUM(n)/SUM(vol_l)*1000 AS ind_m3 FROM per_bin;
@@ -561,7 +563,7 @@ Correspondance taxonomique FILET↔UVP retenue (statut accepted uniquement).
 
 **Relations :** filet_taxon_id vers filet_data.taxon_id; uvp_taxon_id suit la même convention que uvp_taxon_abundance.taxon_key et uvp_object_sizes.taxon_key (ecotaxa:id:…/ecotaxa:name:…/warehouse:unclassified). C’est la même jointure que explore.filet_uvp_abundance utilise en interne pour comparer les deux sources.
 
-**Limites :** Ne montre que les correspondances mapping_status=accepted : un taxon FILET absent d’ici n’a pas (encore) de correspondance UVP retenue, ce n’est pas la preuve qu’aucune proposition n’existe (ambiguous/rejected sont cachées, pas absentes). Table de référence, non datée ni zonée : pas de filtre d’accès par contrat/zone/année.
+**Limites :** Aucune correspondance taxonomique FILET–UVP validée n’est chargée (table vide au 11 novembre 2026) : rien ne peut en être conclu. Ne montre que les correspondances mapping_status=accepted : un taxon FILET absent d’ici n’a pas (encore) de correspondance UVP retenue, ce n’est pas la preuve qu’aucune proposition n’existe (ambiguous/rejected sont cachées, pas absentes). Table de référence, non datée ni zonée : pas de filtre d’accès par contrat/zone/année.
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
@@ -697,7 +699,7 @@ Mesures CTD rattachées à un profil UVP.
 
 **Relations :** uvp_profile_id vers uvp_samples; ctd_profile_id identifie le profil CTD. Ne pas aligner verticalement par le seul profil.
 
-**Limites :** La présence d’une liaison ne prouve pas l’alignement profondeur/temps de chaque mesure. Valeur/unité/QC doivent être lus ensemble. Ne pas multiplier ces lignes par les objets du profil.
+**Limites :** LIENS CTD : link_method dit comment le profil CTD a été relié. filename_transitive (uvp_ctd seulement) : fichier CTD cité par EcoTaxa pour ce profil. proximity : profil CTD Amundsen Science (ERDDAP) le plus proche, au score distance/10 km + écart/6 h, gardé à ≤ 10 km et ≤ 12 h; match_status accepted si ≤ 5 km et ≤ 6 h, sinon candidate (à dire ou à exclure). ctd_source : rosette (CTD du navire) ou bioness (CTD montée sur le Bioness : pression, température, salinité et NET, numéro du filet ouvert, qui situe chaque couche). La CTD du filet Hydrobios n’est pas utilisée (pression, température et salinité vides sur l’ERDDAP) : les Hydrobios ont la CTD de rosette. Un déploiement Bioness peut avoir un lien rosette et un lien bioness : filtrer par ctd_source. Chargé par scripts/populate_ctd_proximity.py (document ctd-liens-proximite). Sans lien : aucune CTD Amundsen à ≤ 10 km et ≤ 12 h (ex. lac Champlain, camps de glace GreenEdge, 2012, 2025), pas une absence de mesure prouvée. La présence d’une liaison ne prouve pas l’alignement profondeur/temps de chaque mesure. Valeur/unité/QC doivent être lus ensemble. Ne pas multiplier ces lignes par les objets du profil.
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
@@ -721,6 +723,11 @@ Mesures CTD rattachées à un profil UVP.
 | value | double precision | Valeur CTD fournie; interpréter avec unit, variable_key, sensor_channel et qc. |
 | unit | text | Unité CTD fournie; aucune conversion implicite entre codes/sources. |
 | qc | text | Indicateur qualité source CTD; NULL signifie absent, pas bon. |
+| link_method | text | Comment le profil CTD a été relié : filename_transitive (fichier CTD cité par EcoTaxa) ou proximity (profil CTD Amundsen le plus proche en distance et en temps). |
+| ctd_source | text | Origine du profil CTD : rosette (CTD du navire) ou bioness (CTD montée sur le Bioness); NULL pour les liens par fichier. |
+| distance_km | numeric | Distance entre la position de la cible (profil UVP ou déploiement FILET) et celle du profil CTD, en km (haversine); NULL pour les liens par fichier. |
+| time_gap_hours | numeric | Écart absolu entre l’heure de la cible et le début du profil CTD, en heures (UTC); NULL pour les liens par fichier. |
+| match_status | text | accepted : lien par fichier, ou proximité ≤ 5 km et ≤ 6 h; candidate : proximité ≤ 10 km et ≤ 12 h, à signaler ou exclure. |
 
 ```sql
 SELECT sample_name,depth_m,variable_key,value,unit,qc FROM explore.uvp_ctd LIMIT 20;
@@ -812,7 +819,7 @@ Métadonnées des échantillons FILET et nombre d’analyses.
 
 **Relations :** id = filet_uvp_matches.filet_sample_id. sample_id natif se qualifie par dataset_version_id.
 
-**Limites :** Un échantillon = un filet (ou des filets regroupés) pour une couche min_sample_depth–max_sample_depth et une maille. Hydrobios et Bioness : plusieurs couches superposées par déploiement (profil vertical); 2x1m2 et 4x1m2 : une couche, plusieurs mailles. Détails et chiffres : document filet-organisation (search_documents). Un échantillon peut avoir plusieurs analyses ou filets. Zone ambiguous peut signifier chevauchement de polygones, pas exclusion spatiale. Ne pas assimiler station FILET et station UVP par identifiant.
+**Limites :** ENGIN ET TRAIT : gear (Hydrobios, 2x1m2, 4x1m2, 4x1m2 - LOKI, Bioness, Ringnet…) et tow_type sont les libellés du labo, sans nom complet dans l’export (« hydrobios » en minuscules = Hydrobios, un déploiement). tow_type : les commentaires du labo associent V-Tow à un trait vertical (« vertical » 159 fois, « oblique » 1 fois) et O-Tow à un trait oblique (« oblique » 21 fois, « vertical » 2 fois) : le dire ainsi, ce n’est pas une définition du labo. COMMENTAIRES (sample_comments, analysis_comments, et dans filet_samples deployment_comments, net_comments) : les lire avant de comparer, ils signalent des échantillons non quantitatifs, des filets regroupés ou échappés. Un échantillon = un filet (ou des filets regroupés) pour une couche min_sample_depth–max_sample_depth et une maille. Hydrobios et Bioness : plusieurs couches superposées par déploiement (profil vertical); 2x1m2 et 4x1m2 : une couche, plusieurs mailles. Détails et chiffres : document filet-organisation (search_documents). Un échantillon peut avoir plusieurs analyses ou filets. Zone ambiguous peut signifier chevauchement de polygones, pas exclusion spatiale. Ne pas assimiler station FILET et station UVP par identifiant.
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
@@ -828,11 +835,6 @@ Métadonnées des échantillons FILET et nombre d’analyses.
 | cast_number | text | Numéro de cast fourni dans les métadonnées FILET. |
 | latitude | double precision | Coordonnée géographique source en degrés WGS84; suffixe min/max = étendue agrégée, pas un point de prélèvement. |
 | longitude | double precision | Coordonnée géographique source en degrés WGS84; suffixe min/max = étendue agrégée, pas un point de prélèvement. |
-| marine_zone_key | text | Clé de zone maritime attribuée; consulter source, version et statut. |
-| marine_zone_name | text | Libellé de zone; dans uvp_projects, MIN ne représente pas toutes les zones du projet. |
-| marine_zone_source | text | Référentiel utilisé pour l’attribution de zone. |
-| marine_zone_version | text | Version du référentiel ou de l’attribution de zone. |
-| marine_zone_assignment_status | text | assigned, ambiguous, outside ou unresolved; un chevauchement peut être ambiguous. |
 | gear | text | Équipement FILET déclaré par la source. |
 | tow_type | text | Type de trait FILET déclaré par la source. |
 | min_sample_depth | numeric | Profondeur en mètres : bin, objet, mesure ou prélèvement selon le préfixe; ne pas confondre leurs grains. |
@@ -846,6 +848,16 @@ Métadonnées des échantillons FILET et nombre d’analyses.
 | subsampling_quantity | numeric | Quantité de sous-échantillonnage fournie; lire subsampling_unit. |
 | subsampling_unit | text | Unité déclarée du sous-échantillonnage; ne pas la remplacer implicitement. |
 | n_analyses | bigint | Nombre d’analyses FILET DISTINCT liées à l’échantillon. |
+| marine_zone_key | text | Clé de zone maritime attribuée; consulter source, version et statut. |
+| marine_zone_name | text | Libellé de zone; dans uvp_projects, MIN ne représente pas toutes les zones du projet. |
+| marine_zone_source | text | Référentiel utilisé pour l’attribution de zone. |
+| marine_zone_version | text | Version du référentiel ou de l’attribution de zone. |
+| marine_zone_assignment_status | text | assigned, ambiguous, outside ou unresolved; un chevauchement peut être ambiguous. |
+| bottom_depth | numeric | Profondeur du fond (m) au déploiement, selon le dictionnaire du labo (filet-samples-metadata); NULL si non fournie. |
+| net_mouth_aperture | numeric | Surface d’ouverture du filet (m²), selon le dictionnaire du labo (filet-samples-metadata). |
+| deployment_comments | text | Commentaire libre du labo sur le déploiement (météo, incidents, méthode), copié tel quel. |
+| net_comments | text | Commentaire libre du labo sur le filet et son trait, copié tel quel. |
+| sample_comments | text | Commentaire libre du labo sur l’échantillon (ex. « non quantitatif », filet échappé), copié tel quel : à lire avant de comparer. |
 
 ```sql
 SELECT id,sample_id,station_name,latitude,longitude,n_analyses FROM explore.filet_samples LIMIT 20;
@@ -859,7 +871,7 @@ Abondances et biomasses FILET fournies, avec métadonnées éventuellement non a
 
 **Relations :** sample_id + metadata_dataset_version_id vers filet_samples.sample_id + dataset_version_id; ne pas utiliser la version d’abondance à la place de la version des métadonnées.
 
-**Limites :** Valeurs source : ne pas recalculer les volumes ou concentrations. Depth et flowmeter restent deux dénominateurs distincts. Ne pas sommer stades détaillés et agrégats; metadata_matched=false garde la ligne sans inventer de coordonnées. analysis_contract est un libellé source, pas une règle validée de séparation.
+**Limites :** ANOMALIE SOURCE : l’échantillon 22497 (station 308, 2010) a un volume débitmètre négatif (-4181,4 m3) dans l’export du labo; ses abondances et biomasses au débitmètre sont négatives (111 lignes) : les exclure (abundance_flowmeter_ind_m3 < 0) et le dire. 84 échantillons ont un volume débitmètre de 0 : leurs valeurs au débitmètre sont NULL (inconnues), pas nulles. ENGIN ET TRAIT : gear (Hydrobios, 2x1m2, 4x1m2, 4x1m2 - LOKI, Bioness, Ringnet…) et tow_type sont les libellés du labo, sans nom complet dans l’export (« hydrobios » en minuscules = Hydrobios, un déploiement). tow_type : les commentaires du labo associent V-Tow à un trait vertical (« vertical » 159 fois, « oblique » 1 fois) et O-Tow à un trait oblique (« oblique » 21 fois, « vertical » 2 fois) : le dire ainsi, ce n’est pas une définition du labo. COMMENTAIRES (sample_comments, analysis_comments, et dans filet_samples deployment_comments, net_comments) : les lire avant de comparer, ils signalent des échantillons non quantitatifs, des filets regroupés ou échappés. Valeurs source : ne pas recalculer les volumes ou concentrations. Depth et flowmeter restent deux dénominateurs distincts. Ne pas sommer stades détaillés et agrégats; metadata_matched=false garde la ligne sans inventer de coordonnées. analysis_contract est un libellé source, pas une règle validée de séparation.
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
@@ -894,6 +906,12 @@ Abondances et biomasses FILET fournies, avec métadonnées éventuellement non a
 | analysis_contract | text | Contrat d’analyse FILET fourni; aucune règle métier de séparation des contrats validée. |
 | analysis_protocol_id | text | Identifiant source du protocole d’analyse FILET. |
 | metadata_matched | boolean | Vrai si la ligne FILET rejoint une analyse/métadonnée; faux conserve la ligne sans inventer de contexte. |
+| gear | text | Équipement FILET déclaré par la source. |
+| tow_type | text | Type de trait FILET déclaré par la source. |
+| net_mouth_aperture | numeric | Surface d’ouverture du filet (m²), selon le dictionnaire du labo (filet-samples-metadata). |
+| bottom_depth | numeric | Profondeur du fond (m) au déploiement, selon le dictionnaire du labo (filet-samples-metadata); NULL si non fournie. |
+| sample_comments | text | Commentaire libre du labo sur l’échantillon (ex. « non quantitatif », filet échappé), copié tel quel : à lire avant de comparer. |
+| analysis_comments | text | Commentaire libre du labo sur l’analyse (ex. filets regroupés), copié tel quel; NULL sans analyse. |
 
 ```sql
 SELECT sample_id,analysis_id,taxon_id,stage,abundance_depth_ind_m3,abundance_flowmeter_ind_m3,metadata_matched FROM explore.filet_data LIMIT 20;
@@ -907,7 +925,7 @@ Sous-ensemble FILET au stade ALL_STAGES.
 
 **Relations :** Même contrat de jointure et de versions que filet_data.
 
-**Limites :** Ne pas additionner ALL_STAGES avec les sous-stades. Ne pas mélanger depth et flowmeter. Un total fourni n’autorise pas une équivalence taxonomique avec UVP.
+**Limites :** Même anomalie source que filet_data pour l’échantillon 22497 (valeurs au débitmètre négatives). ENGIN ET TRAIT : gear (Hydrobios, 2x1m2, 4x1m2, 4x1m2 - LOKI, Bioness, Ringnet…) et tow_type sont les libellés du labo, sans nom complet dans l’export (« hydrobios » en minuscules = Hydrobios, un déploiement). tow_type : les commentaires du labo associent V-Tow à un trait vertical (« vertical » 159 fois, « oblique » 1 fois) et O-Tow à un trait oblique (« oblique » 21 fois, « vertical » 2 fois) : le dire ainsi, ce n’est pas une définition du labo. COMMENTAIRES (sample_comments, analysis_comments, et dans filet_samples deployment_comments, net_comments) : les lire avant de comparer, ils signalent des échantillons non quantitatifs, des filets regroupés ou échappés. Ne pas additionner ALL_STAGES avec les sous-stades. Ne pas mélanger depth et flowmeter. Un total fourni n’autorise pas une équivalence taxonomique avec UVP.
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
@@ -942,6 +960,12 @@ Sous-ensemble FILET au stade ALL_STAGES.
 | analysis_contract | text | Contrat d’analyse FILET fourni; aucune règle métier de séparation des contrats validée. |
 | analysis_protocol_id | text | Identifiant source du protocole d’analyse FILET. |
 | metadata_matched | boolean | Vrai si la ligne FILET rejoint une analyse/métadonnée; faux conserve la ligne sans inventer de contexte. |
+| gear | text | Équipement FILET déclaré par la source. |
+| tow_type | text | Type de trait FILET déclaré par la source. |
+| net_mouth_aperture | numeric | Surface d’ouverture du filet (m²), selon le dictionnaire du labo (filet-samples-metadata). |
+| bottom_depth | numeric | Profondeur du fond (m) au déploiement, selon le dictionnaire du labo (filet-samples-metadata); NULL si non fournie. |
+| sample_comments | text | Commentaire libre du labo sur l’échantillon (ex. « non quantitatif », filet échappé), copié tel quel : à lire avant de comparer. |
+| analysis_comments | text | Commentaire libre du labo sur l’analyse (ex. filets regroupés), copié tel quel; NULL sans analyse. |
 
 ```sql
 SELECT sample_id,taxon_id,abundance_depth_ind_m3 FROM explore.filet_totals LIMIT 20;
@@ -955,7 +979,7 @@ Déploiements FILET : engin, type de trait, couches de profondeur, mailles et an
 
 **Relations :** deployment_id vers filet_samples.deployment_id (même dataset_version_id) pour descendre aux échantillons, puis filet_data pour les abondances.
 
-**Limites :** sampling_layout « couches superposées » = profil vertical (Hydrobios, Bioness); « une couche, plusieurs mailles » = filets simultanés de mailles différentes (2x1m2, 4x1m2) : comparer des mailles, pas des profondeurs. Latitude et longitude sont la moyenne des échantillons du déploiement. tow_type V-Tow et O-Tow : libellés source non définis dans le dictionnaire du labo. Détails : document filet-organisation.
+**Limites :** ENGIN ET TRAIT : gear (Hydrobios, 2x1m2, 4x1m2, 4x1m2 - LOKI, Bioness, Ringnet…) et tow_type sont les libellés du labo, sans nom complet dans l’export (« hydrobios » en minuscules = Hydrobios, un déploiement). tow_type : les commentaires du labo associent V-Tow à un trait vertical (« vertical » 159 fois, « oblique » 1 fois) et O-Tow à un trait oblique (« oblique » 21 fois, « vertical » 2 fois) : le dire ainsi, ce n’est pas une définition du labo. COMMENTAIRES (sample_comments, analysis_comments, et dans filet_samples deployment_comments, net_comments) : les lire avant de comparer, ils signalent des échantillons non quantitatifs, des filets regroupés ou échappés. sampling_layout « couches superposées » = profil vertical (Hydrobios, Bioness); « une couche, plusieurs mailles » = filets simultanés de mailles différentes (2x1m2, 4x1m2) : comparer des mailles, pas des profondeurs. Latitude et longitude sont la moyenne des échantillons du déploiement. tow_type V-Tow et O-Tow : libellés source non définis dans le dictionnaire du labo. Détails : document filet-organisation.
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
@@ -994,7 +1018,7 @@ Mesures CTD rattachées aux échantillons FILET.
 
 **Relations :** filet_sample_id est ici le sample_id NATIF texte; dans filet_uvp_matches, filet_sample_id est au contraire la clé technique bigint. Qualifier les versions via les vues sources avant jointure.
 
-**Limites :** Pas de statut de liaison ni de dataset_version_id exposé : ne pas inférer une validation de correspondance ou une unicité inter-version. Lire unit et qc; pas d’alignement vertical implicite.
+**Limites :** LIENS CTD : link_method dit comment le profil CTD a été relié. filename_transitive (uvp_ctd seulement) : fichier CTD cité par EcoTaxa pour ce profil. proximity : profil CTD Amundsen Science (ERDDAP) le plus proche, au score distance/10 km + écart/6 h, gardé à ≤ 10 km et ≤ 12 h; match_status accepted si ≤ 5 km et ≤ 6 h, sinon candidate (à dire ou à exclure). ctd_source : rosette (CTD du navire) ou bioness (CTD montée sur le Bioness : pression, température, salinité et NET, numéro du filet ouvert, qui situe chaque couche). La CTD du filet Hydrobios n’est pas utilisée (pression, température et salinité vides sur l’ERDDAP) : les Hydrobios ont la CTD de rosette. Un déploiement Bioness peut avoir un lien rosette et un lien bioness : filtrer par ctd_source. Chargé par scripts/populate_ctd_proximity.py (document ctd-liens-proximite). Sans lien : aucune CTD Amundsen à ≤ 10 km et ≤ 12 h (ex. lac Champlain, camps de glace GreenEdge, 2012, 2025), pas une absence de mesure prouvée. filet_sample_id est le sample_id natif; le même profil CTD est répété pour chaque échantillon (couche, maille) du déploiement. Lire unit et qc; pas d’alignement vertical implicite : comparer la couche du filet aux mesures CTD de la même profondeur.
 
 | Colonne | Type SQL | Définition |
 |---|---|---|
@@ -1008,6 +1032,12 @@ Mesures CTD rattachées aux échantillons FILET.
 | value | double precision | Valeur CTD fournie; interpréter avec unit, variable_key, sensor_channel et qc. |
 | unit | text | Unité CTD fournie; aucune conversion implicite entre codes/sources. |
 | qc | text | Indicateur qualité source CTD; NULL signifie absent, pas bon. |
+| filet_deployment_id | text | Déploiement FILET de l’échantillon (filet_deployments.deployment_id). |
+| link_method | text | Comment le profil CTD a été relié : filename_transitive (fichier CTD cité par EcoTaxa) ou proximity (profil CTD Amundsen le plus proche en distance et en temps). |
+| ctd_source | text | Origine du profil CTD : rosette (CTD du navire) ou bioness (CTD montée sur le Bioness); NULL pour les liens par fichier. |
+| distance_km | numeric | Distance entre la position de la cible (profil UVP ou déploiement FILET) et celle du profil CTD, en km (haversine); NULL pour les liens par fichier. |
+| time_gap_hours | numeric | Écart absolu entre l’heure de la cible et le début du profil CTD, en heures (UTC); NULL pour les liens par fichier. |
+| match_status | text | accepted : lien par fichier, ou proximité ≤ 5 km et ≤ 6 h; candidate : proximité ≤ 10 km et ≤ 12 h, à signaler ou exclure. |
 
 ```sql
 SELECT filet_sample_id,ctd_profile_id,depth_m,variable_key,value,unit FROM explore.filet_ctd LIMIT 20;
@@ -1050,7 +1080,7 @@ Comparaison des abondances via les liens FILET–UVP et le mapping taxonomique a
 
 **Relations :** match_id vers filet_uvp_matches.id; uvp_profile_id vers uvp_samples.uvp_profile_id. Les taxons passent par warehouse.taxon_mapping accepted.
 
-**Limites :** Pour une comparaison sur la même couche d’eau, préférer explore.filet_uvp_compare(max_km, max_hours, same_station, station_if_no_position, uvp_taxon, filet_taxon_pattern, filet_stages, min_size_um, max_size_um, esd|major, validated_only, best_only, min_filet_ug_c_per_ind, filet_stations) et explore.filet_uvp_pairs(max_km, max_hours, same_station, station_if_no_position, filet_stations); garder les critères demandés par l’utilisateur et, si la requête dépasse 30 s, la refaire par stations (filet_stations) : paires par distance et temps, abondance UVP intégrée sur le trait de filet (tranches vides comprises), stades agrégés refusés avec leurs parties; une ligne par échantillon filet : compter les couples par filet_deployment_id; méthode et tests dans le document filet-uvp-comparaison (search_documents). La vue ne filtre PAS m.match_status : exiger accepted si nécessaire. La jointure FILET par identifiants natifs et UVP par profil/taxon n’isole pas toutes les versions ou annotation_policy : risque de multiplication. Le dénominateur FILET est répété par bin UVP; ne pas le sommer. Cette vue n’est pas un comparatif scientifique validé; qualifier versions, profondeur, stades et mapping avant calcul.
+**Limites :** Vide tant que explore.taxon_mapping est vide (aucune correspondance taxonomique validée) : utiliser explore.filet_uvp_compare. Pour une comparaison sur la même couche d’eau, préférer explore.filet_uvp_compare(max_km, max_hours, same_station, station_if_no_position, uvp_taxon, filet_taxon_pattern, filet_stages, min_size_um, max_size_um, esd|major, validated_only, best_only, min_filet_ug_c_per_ind, filet_stations) et explore.filet_uvp_pairs(max_km, max_hours, same_station, station_if_no_position, filet_stations); garder les critères demandés par l’utilisateur et, si la requête dépasse 30 s, la refaire par stations (filet_stations) : paires par distance et temps, abondance UVP intégrée sur le trait de filet (tranches vides comprises), stades agrégés refusés avec leurs parties; une ligne par échantillon filet : compter les couples par filet_deployment_id; méthode et tests dans le document filet-uvp-comparaison (search_documents). La vue ne filtre PAS m.match_status : exiger accepted si nécessaire. La jointure FILET par identifiants natifs et UVP par profil/taxon n’isole pas toutes les versions ou annotation_policy : risque de multiplication. Le dénominateur FILET est répété par bin UVP; ne pas le sommer. Cette vue n’est pas un comparatif scientifique validé; qualifier versions, profondeur, stades et mapping avant calcul.
 
 | Colonne | Type SQL | Définition |
 |---|---|---|

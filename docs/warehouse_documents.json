@@ -54,6 +54,15 @@
       "date": "2026-11-11",
       "dataset_key": "neolab-filet",
       "summary": "Hiérarchie déploiement → échantillon (une couche, une maille) → analyse → taxon × stade; engins et types de trait; profils verticaux Hydrobios et Bioness contre couches uniques multi-mailles; conséquences pour les calculs et la comparaison UVP."
+    },
+    {
+      "key": "ctd-liens-proximite",
+      "path": "docs/ctd_liens_proximite.md",
+      "title": "Liens CTD par proximité : profils UVP et déploiements FILET (Amundsen Science)",
+      "kind": "méthode",
+      "date": "2026-11-12",
+      "dataset_key": null,
+      "summary": "Sources CTD Amundsen (rosette, CTD du Bioness; CTD de l'Hydrobios vide donc non utilisée), règle de proximité (≤ 10 km, ≤ 12 h; accepted ≤ 5 km, ≤ 6 h), résultats, profils restés sans CTD, valeurs source à signaler (pH 2011, nitrate négatif 2010)."
     }
   ]
 }

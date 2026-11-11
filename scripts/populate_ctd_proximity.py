@@ -5,8 +5,10 @@ d'Amundsen Science (ERDDAP), et charger les profils CTD nécessaires.
     python scripts/populate_ctd_proximity.py [--dry-run]
 
 Sources ERDDAP (https://erddap.amundsenscience.com) : CTD de rosette amundsen12713 (2014-2024) et jeux de campagne
-ArcticNet 2010-2013 (mêmes variables); CTD montée sur le filet Hydrobios (amundsen12717) et Bioness (amundsen12716 :
-pression, température ITS-90, salinité PSS-78, numéro de filet, d'après les métadonnées ERDDAP).
+ArcticNet 2010-2013 (mêmes variables); CTD montée sur le Bioness (amundsen12716 : pression, température ITS-90,
+salinité PSS-78, numéro de filet, d'après les métadonnées ERDDAP). La CTD du filet Hydrobios (amundsen12717) n'est pas
+utilisée : ses pression, température et salinité sont vides (NaN) sur tout le jeu ERDDAP. Jamais de lien vers un
+profil CTD sans pression.
 
 Règle : pour chaque cible (profil UVP sans lien CTD par fichier; déploiement FILET), le profil CTD le plus proche
 de chaque source applicable (rosette pour tous; filet Hydrobios ou Bioness pour ces engins), au score
@@ -35,7 +37,9 @@ ERDDAP = 'https://erddap.amundsenscience.com/erddap/tabledap'
 ROSETTE = ['amundsen12713', 'amundsen11150', 'amundsen11151', 'amundsen11153', 'amundsen11154', 'amundsen11155',
            'amundsen11943', 'amundsen11156', 'amundsen11922', 'amundsen11919', 'amundsen11920', 'amundsen11921',
            'amundsen11923', 'amundsen11924', 'amundsen11927', 'amundsen11926']
-NET = {'amundsen12717': 'hydrobios', 'amundsen12716': 'bioness'}
+# amundsen12717 (CTD of the Hydrobios net) is not used: Pres, Temp and Sal are NaN for the whole dataset on the
+# ERDDAP (only Net is filled, checked 12 November 2026), so its profiles carry no measurement to compare.
+NET = {'amundsen12716': 'bioness'}
 ROSETTE_VARS = {'PRES': 'PRES', 'TE90': 'TE90', 'PSAL': 'PSAL', 'SIGT': 'SIGT', 'OXYM': 'OXYM', 'pH': 'pH',
                 'NTRA': 'NTRA', 'FLOR': 'FLOR'}
 NET_VARS = {'Pres': 'PRES', 'Temp': 'TE90', 'Sal': 'PSAL', 'Net': 'NET'}
@@ -112,7 +116,7 @@ def targets(conn) -> list[dict]:
 def match(target_rows: list[dict], casts: list[dict]) -> list[dict]:
     links = []
     for t in target_rows:
-        families = ['rosette'] + ([t['gear']] if t['kind'] == 'filet' and t['gear'] in ('hydrobios', 'bioness') else [])
+        families = ['rosette'] + ([t['gear']] if t['kind'] == 'filet' and t['gear'] in NET.values() else [])
         for family in families:
             best = None
             for c in casts:
@@ -197,6 +201,9 @@ def load_profiles(conn, casts: list[dict]) -> dict[str, int]:
 
 
 def write_links(conn, links: list[dict], ids: dict[str, int]) -> dict:
+    # Never link to a CTD profile without pressure: its measurements cannot be placed on the water column.
+    with_pressure = {pid for (pid,) in conn.execute(
+        "SELECT DISTINCT profile_id FROM warehouse.ctd_measurement WHERE variable_key = 'PRES' AND value IS NOT NULL").fetchall()}
     with conn.transaction():
         conn.execute("DELETE FROM warehouse.uvp_ctd WHERE link_method = 'proximity'")
         conn.execute("DELETE FROM warehouse.filet_ctd WHERE link_method = 'proximity'")
@@ -204,7 +211,7 @@ def write_links(conn, links: list[dict], ids: dict[str, int]) -> dict:
         for link in links:
             c = link['cast']
             pid = ids.get(c['filename'])
-            if pid is None:
+            if pid is None or pid not in with_pressure:
                 continue
             evidence = json.dumps({'rule': 'nearest CTD by distance/10 km + gap/6 h', 'erddap_dataset': c['dataset'],
                                    'ctd_filename': c['filename'], 'ctd_station': c['station'],

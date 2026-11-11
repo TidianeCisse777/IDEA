@@ -169,14 +169,14 @@ class CtdProximityTests(unittest.TestCase):
 
     def test_nearest_cast_per_source_with_status(self):
         casts = [self.cast('rosette', 1, 1, 'near'), self.cast('rosette', 8, 2, 'far'),
-                 self.cast('hydrobios', 7, 8, 'net')]
-        links = {l['cast']['filename']: l for l in self.module.match([self.target()], casts)}
+                 self.cast('bioness', 7, 8, 'net')]
+        links = {l['cast']['filename']: l for l in self.module.match([self.target(gear='bioness')], casts)}
         self.assertEqual(set(links), {'near', 'net'})
         self.assertEqual(links['near']['status'], 'accepted')
         self.assertEqual(links['net']['status'], 'candidate')      # 7 km, 8 h : beyond 5 km / 6 h
 
     def test_nothing_beyond_ten_km_or_twelve_hours_and_net_ctd_only_for_its_gear(self):
-        casts = [self.cast('rosette', 11, 0, 'a'), self.cast('rosette', 0, 13, 'b'), self.cast('hydrobios', 0, 0, 'n')]
+        casts = [self.cast('rosette', 11, 0, 'a'), self.cast('rosette', 0, 13, 'b'), self.cast('bioness', 0, 0, 'n')]
         self.assertEqual(self.module.match([self.target(kind='uvp', gear=None)], casts), [])
         self.assertEqual([l['cast']['filename'] for l in self.module.match([self.target(gear='2x1m2')], casts)], [])
 
@@ -185,3 +185,5 @@ class CtdProximityTests(unittest.TestCase):
         self.assertIn("u.link_method = 'filename_transitive'", sql)
         code = (ROOT / 'scripts' / 'populate_ctd_proximity.py').read_text(encoding='utf-8')
         self.assertIn("DELETE FROM warehouse.uvp_ctd WHERE link_method = 'proximity'", code)
+        self.assertIn('pid not in with_pressure', code)                 # never a link to a CTD without pressure
+        self.assertNotIn("'amundsen12717'", code.split('NET = ')[1].split('\n')[0])   # Hydrobios CTD: all NaN

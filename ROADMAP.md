@@ -4,6 +4,23 @@
 
 **Dernière mise à jour :** 11 novembre 2026
 
+### 12 novembre 2026 — CTD : liens par proximité pour UVP et FILET (Amundsen Science)
+
+- Avant : 190 profils UVP sans CTD, aucun déploiement FILET relié à une CTD (`explore.filet_ctd` vide).
+- `scripts/populate_ctd_proximity.py` : index des profils CTD de l'ERDDAP d'Amundsen Science (rosette 2014–2024,
+  campagnes ArcticNet 2010–2013, CTD du Bioness), profil le plus proche (distance/10 km + écart/6 h), gardé à
+  ≤ 10 km et ≤ 12 h, `accepted` si ≤ 5 km et ≤ 6 h, sinon `candidate`; liens par fichier EcoTaxa jamais touchés;
+  jamais de lien vers un profil sans pression. `neolab-load-ctd` pour le conteneur (Internet requis).
+- Résultat : UVP 594/686 reliés (97 + 1 par proximité); restent le camp de glace GreenEdge 2015–2016 (61), le lac
+  Champlain (30) et 1 profil 2022. FILET 1 297/1 588 déploiements; restent 291 (162 en 2025, absents de l'ERDDAP).
+  826 profils CTD ajoutés (1 282 au total, 7,7 M mesures). Note de méthode : document `ctd-liens-proximite`.
+- Trouvé et corrigé pendant le chargement : la CTD du filet Hydrobios (`amundsen12717`) n'a ni pression, ni
+  température, ni salinité sur l'ERDDAP (NaN partout, seul le numéro de filet) : ses 151 liens et 150 profils ont été
+  retirés. pH désormais présent pour 40 profils de 2011 (textes « pas de pH » corrigés); nitrate négatif dans 730
+  mesures de 2010 (valeurs source gardées, fiche avertie).
+- Vérifié avec le compte de lecture : liens par méthode, source et statut; aucun profil sans mesure; audit d'accès
+  vide; serveur MCP PASS; 173 tests.
+
 ### 12 novembre 2026 — Partage par registre privé : image avec la base déjà installée
 
 - `scripts/publish_prebuilt_image.ps1` refait : l'image part du conteneur à jour (instantané : code mis à jour,

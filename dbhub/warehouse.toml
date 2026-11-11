@@ -1,7 +1,7 @@
 # Secrets fournis uniquement par l'environnement du lanceur.
 [[sources]]
 id = "neolab"
-description = "Warehouse NeoLab (lecture seule) : mesures et annotations du plancton et de l'océan en Arctique canadien (Baie de Baffin, détroit de Davis, mer du Labrador, baie d'Hudson…) — EcoTaxa (objets, taxons, statut d'annotation, tailles), UVP/EcoPart (profils, abondances), CTD Amundsen (température, salinité, densité sigma-t, oxygène, nitrate, fluorescence, pression; pas de pH), zones maritimes. Toute question sur ces données se répond avec ces outils, jamais de mémoire. Commencer par warehouse_context(topic=overview); droits dans catalogue.my_access."
+description = "Warehouse NeoLab (lecture seule) : mesures et annotations du plancton et de l'océan en Arctique canadien (Baie de Baffin, détroit de Davis, mer du Labrador, baie d'Hudson…) — EcoTaxa (objets, taxons, statut d'annotation, tailles), UVP/EcoPart (profils, abondances), CTD Amundsen (température, salinité, densité sigma-t, oxygène, nitrate, fluorescence, pression; pH pour quelques profils de 2011 seulement), zones maritimes. Toute question sur ces données se répond avec ces outils, jamais de mémoire. Commencer par warehouse_context(topic=overview); droits dans catalogue.my_access."
 type = "postgres"
 host = "${WAREHOUSE_READER_HOST}"
 port = 55432

@@ -126,10 +126,11 @@ VIEWS = {
         'ecotaxa_ctd_profile ne montre que les profils liés à un sample EcoTaxa (une ligne par liaison); ici chaque profil une fois. max_depth_m est la profondeur maximale mesurée.',
         'SELECT cruise_key, COUNT(*), MIN(sampled_at), MAX(sampled_at) FROM explore.ctd_profiles GROUP BY 1;'),
     'ctd_measurements': view(
-        'Mesures CTD (température, salinité, sigma-t, oxygène, nitrate, fluorescence, pression) de tous les profils, format long; pas de pH dans les données chargées.',
+        'Mesures CTD (température, salinité, sigma-t, oxygène, nitrate, fluorescence, pression; pH seulement pour 40 profils des campagnes 2011; NET = numéro du filet ouvert pour la CTD montée sur le Bioness) de tous les profils, format long.',
         'Profil CTD × scan × variable.',
         'ctd_profile_id vers ctd_profiles pour position, date et zone.',
-        'Filtrer variable_key et ctd_profile_id avant d’agréger (5 M lignes). Unité dans unit telle que fournie; ne convertir pression/profondeur ni salinité sans le dire. SIGT est le sigma-t (densité moins 1000 kg/m³) : 27 signifie 1027 kg/m³. depth_m est la pression en dbar prise pour des mètres (écart ≈ 1 % à 2000 m). qc est toujours NULL : aucun contrôle qualité fourni, à signaler. Pour un profil moyen, moyenner d’abord par profil et classe de profondeur, puis entre profils.',
+        'VALEURS SOURCE À SIGNALER : nitrate (NTRA) négatif pour 730 mesures de 13 campagnes 2010 (jusqu’à -16,9; physiquement impossible, capteur) et fluorescence légèrement négative : copiées telles quelles, les exclure ou les signaler, ne jamais les corriger. pH : 11 418 mesures, 40 profils de 2011 seulement (pas de pH pour les autres années). Profils de rosette (navire) et de CTD montée sur le Bioness (ctd_profiles, dataset_version_id). '
+        'Filtrer variable_key et ctd_profile_id avant d’agréger (environ 7,7 M lignes). Unité dans unit telle que fournie; ne convertir pression/profondeur ni salinité sans le dire. SIGT est le sigma-t (densité moins 1000 kg/m³) : 27 signifie 1027 kg/m³. depth_m est la pression en dbar prise pour des mètres (écart ≈ 1 % à 2000 m). qc est toujours NULL : aucun contrôle qualité fourni, à signaler. Pour un profil moyen, moyenner d’abord par profil et classe de profondeur, puis entre profils.',
         "SELECT ctd_profile_id, depth_m, value AS temperature FROM explore.ctd_measurements WHERE variable_key = 'TE90' AND ctd_profile_id = 1 ORDER BY depth_m;"),
     'uvp_projects': view(
         'Inventaire agrégé des projets UVP liés à EcoTaxa/EcoPart.',
@@ -355,9 +356,10 @@ CTD_LINKS = (
     'LIENS CTD : link_method dit comment le profil CTD a été relié. filename_transitive (uvp_ctd seulement) : fichier '
     'CTD cité par EcoTaxa pour ce profil. proximity : profil CTD Amundsen Science (ERDDAP) le plus proche, au score '
     'distance/10 km + écart/6 h, gardé à ≤ 10 km et ≤ 12 h; match_status accepted si ≤ 5 km et ≤ 6 h, sinon candidate '
-    '(à dire ou à exclure). ctd_source : rosette (CTD du navire), hydrobios ou bioness (CTD montée sur le filet : '
-    'pression, température, salinité et NET, numéro du filet ouvert, qui situe chaque couche). Un déploiement FILET peut '
-    'avoir un lien rosette et un lien filet : filtrer par ctd_source. Chargé par scripts/populate_ctd_proximity.py '
+    '(à dire ou à exclure). ctd_source : rosette (CTD du navire) ou bioness (CTD montée sur le Bioness : pression, '
+    'température, salinité et NET, numéro du filet ouvert, qui situe chaque couche). La CTD du filet Hydrobios n’est pas '
+    'utilisée (pression, température et salinité vides sur l’ERDDAP) : les Hydrobios ont la CTD de rosette. Un '
+    'déploiement Bioness peut avoir un lien rosette et un lien bioness : filtrer par ctd_source. Chargé par scripts/populate_ctd_proximity.py '
     '(document ctd-liens-proximite). Sans lien : aucune CTD Amundsen à ≤ 10 km et ≤ 12 h (ex. lac Champlain, camps de '
     'glace GreenEdge, 2012, 2025), pas une absence de mesure prouvée. ')
 VIEWS['filet_ctd']['caveats'] = CTD_LINKS + (
@@ -367,7 +369,7 @@ VIEWS['filet_ctd']['caveats'] = CTD_LINKS + (
 VIEWS['uvp_ctd']['caveats'] = CTD_LINKS + VIEWS['uvp_ctd']['caveats']
 CTD_LINK_COLUMNS = {
     'link_method': 'Comment le profil CTD a été relié : filename_transitive (fichier CTD cité par EcoTaxa) ou proximity (profil CTD Amundsen le plus proche en distance et en temps).',
-    'ctd_source': 'Origine du profil CTD : rosette (CTD du navire), hydrobios ou bioness (CTD montée sur le filet); NULL pour les liens par fichier.',
+    'ctd_source': 'Origine du profil CTD : rosette (CTD du navire) ou bioness (CTD montée sur le Bioness); NULL pour les liens par fichier.',
     'distance_km': 'Distance entre la position de la cible (profil UVP ou déploiement FILET) et celle du profil CTD, en km (haversine); NULL pour les liens par fichier.',
     'time_gap_hours': 'Écart absolu entre l’heure de la cible et le début du profil CTD, en heures (UTC); NULL pour les liens par fichier.',
     'match_status': 'accepted : lien par fichier, ou proximité ≤ 5 km et ≤ 6 h; candidate : proximité ≤ 10 km et ≤ 12 h, à signaler ou exclure.',
