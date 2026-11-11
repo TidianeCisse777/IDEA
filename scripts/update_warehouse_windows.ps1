@@ -80,7 +80,10 @@ function Get-GitHub($url, $token, $outFile, $accept) {
     $headers = @{ 'User-Agent' = 'neolab-update'; 'Accept' = $accept }
     if ($token) { $headers['Authorization'] = "Bearer $token" }
     if ($outFile) { Invoke-WebRequest -UseBasicParsing -Uri $url -Headers $headers -OutFile $outFile -ErrorAction Stop; return $null }
-    return (Invoke-WebRequest -UseBasicParsing -Uri $url -Headers $headers -ErrorAction Stop).Content
+    $content = (Invoke-WebRequest -UseBasicParsing -Uri $url -Headers $headers -ErrorAction Stop).Content
+    # Windows PowerShell 5.1 hands non-text media types (application/vnd.github.sha) back as bytes.
+    if ($content -is [byte[]]) { $content = [System.Text.Encoding]::ASCII.GetString($content) }
+    return $content
 }
 function Save-GitHubArchive($url, $token, $outFile) {
     # GitHub answers with a redirect to codeload.github.com carrying its own temporary access: follow it by
@@ -121,6 +124,7 @@ for ($try = 0; $try -lt 2 -and -not $latest; $try++) {
         $token = Read-Token
     }
 }
+if ($latest -notmatch '^[0-9a-f]{40}$') { Fail "version GitHub illisible ($latest)." }
 $current = ((& $docker exec $container sh -c 'cat /opt/neolab/version 2>/dev/null') | Out-String).Trim()
 if ($current -eq $latest) {
     Say "Déjà à jour ($($latest.Substring(0, 7)))." Green
