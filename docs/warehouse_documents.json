@@ -9,6 +9,33 @@
       "date": "2026-09-18",
       "dataset_key": null,
       "summary": "Grain et cardinalités des trois CSV FILET, jointure échantillons-abondances (106 lignes 2024 sans métadonnées), conséquences pour le SQL."
+    },
+    {
+      "key": "filet-samples-metadata",
+      "path": "docs/filet/filet_samples_metadata.md",
+      "title": "FILET — échantillons taxonomiques 2010–2025 : description et colonnes",
+      "kind": "méthode",
+      "date": "2026-05-26",
+      "dataset_key": "neolab-filet",
+      "summary": "Description du jeu « taxonomy samples » (déploiements, filets, volumes, analyses) et définition de ses colonnes. Source : Classeur FILET « project_IDEA_taxonomy_samples+analyses-data & metadata », 26 mai 2026 (texte copié tel quel)."
+    },
+    {
+      "key": "filet-copepod-metadata",
+      "path": "docs/filet/filet_copepod_metadata.md",
+      "title": "FILET — abondances et biomasses des copépodes par stade : description et colonnes",
+      "kind": "méthode",
+      "date": "2026-05-26",
+      "dataset_key": "neolab-filet",
+      "summary": "Description du jeu « copepod abund&biomass » (stades C1–C5, M, F, nauplii; ind./m3 et µg C/m3 par volume profondeur ou débitmètre) et définition de ses 93 colonnes. Source : Classeur FILET « project_IDEA_taxonomy_samples+analyses-data & metadata », 26 mai 2026 (texte copié tel quel)."
+    },
+    {
+      "key": "filet-zooplankton-metadata",
+      "path": "docs/filet/filet_zooplankton_metadata.md",
+      "title": "FILET — abondances du zooplancton (grande et petite fractions) : description et colonnes",
+      "kind": "méthode",
+      "date": "2026-05-26",
+      "dataset_key": "neolab-filet",
+      "summary": "Description du jeu « zooplankton abundances » (copépodes, autres zooplancton, œufs; fractions >1 mm et <1 mm; ind./m3) et définition de ses 30 colonnes. Source : Classeur FILET « project_IDEA_taxonomy_samples+analyses-data & metadata », 26 mai 2026 (texte copié tel quel)."
     }
   ]
 }
