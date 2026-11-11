@@ -495,7 +495,9 @@ class RegisterAppsTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.home, True)
 
     def run_register(self, **kwargs):
-        args = mock.Mock(windows_home=kwargs.get('windows_home'), wsl_distro=kwargs.get('wsl_distro'))
+        args = mock.Mock(windows_home=kwargs.get('windows_home'), wsl_distro=kwargs.get('wsl_distro'),
+                         home=kwargs.get('home'), platform=kwargs.get('platform'),
+                         docker_container=kwargs.get('docker_container'))
         with mock.patch.object(self.module.Path, 'home', return_value=self.home), \
                 mock.patch.object(self.module.sys, 'platform', 'linux'):
             self.module.register_apps(args)
@@ -539,3 +541,15 @@ class RegisterAppsTests(unittest.TestCase):
         self.assertEqual(entry['command'], 'wsl.exe')
         self.assertEqual(entry['args'][:3], ['-d', 'Ubuntu', '--'])
         self.assertTrue(entry['args'][-2].endswith('warehouse_connect.py'))
+
+
+class RegisterAppsDockerTests(RegisterAppsTests):
+    def test_all_in_one_image_is_started_with_docker_exec(self):
+        # Mounted Windows profile seen from a container: the applications start the server with docker exec.
+        user = self.home / 'AppData' / 'Roaming' / 'Code' / 'User'
+        user.mkdir(parents=True)
+        (self.home / '.codex').mkdir()
+        self.run_register(home=str(self.home), platform='windows', docker_container='neolab-warehouse')
+        entry = json.loads((user / 'mcp.json').read_text())['servers']['neolab-warehouse']
+        self.assertEqual([entry['command']] + entry['args'], ['docker', 'exec', '-i', 'neolab-warehouse', 'neolab-mcp'])
+        self.assertIn('command = "docker"', (self.home / '.codex' / 'config.toml').read_text())

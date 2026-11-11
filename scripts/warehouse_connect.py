@@ -542,8 +542,11 @@ def registration(client):
     return json.dumps({'mcpServers': {SERVER_NAME: {'command': python, 'args': [script, 'run']}}}, indent=2)
 
 
-def _server_command(windows_distro=None):
-    """The command an application runs to start the relay; through wsl.exe for a Windows application."""
+def _server_command(windows_distro=None, docker_container=None):
+    """The command an application runs to start the relay: through `docker exec` for the all-in-one image,
+    through wsl.exe for a Windows application reaching Ubuntu, else this Python and script."""
+    if docker_container:
+        return ['docker', 'exec', '-i', docker_container, 'neolab-mcp']
     command = [sys.executable, str(Path(__file__).resolve()), 'run']
     return (['wsl.exe', '-d', windows_distro, '--'] + command) if windows_distro else command
 
@@ -620,11 +623,16 @@ def app_targets(home, windows=False, darwin=None):
 def register_apps(args):
     """Register the server in the desktop applications found (Codex, VS Code, Claude Desktop); with
     --windows-home, those of the Windows user, started through wsl.exe (installer_windows.ps1)."""
-    windows = bool(args.windows_home)
-    if windows and not args.wsl_distro:
-        raise SystemExit('--wsl-distro est requis avec --windows-home')
-    command = _server_command(args.wsl_distro if windows else None)
-    targets = app_targets(args.windows_home or Path.home(), windows=windows)
+    docker_container = getattr(args, 'docker_container', None)
+    platform = getattr(args, 'platform', None)
+    home = getattr(args, 'home', None)
+    if args.windows_home:
+        if not args.wsl_distro and not docker_container:
+            raise SystemExit('--wsl-distro (ou --docker-container) est requis avec --windows-home')
+        home, platform = args.windows_home, 'windows'
+    command = _server_command(None if docker_container else args.wsl_distro, docker_container)
+    targets = app_targets(home or Path.home(), windows=(platform == 'windows'),
+                          darwin=(platform == 'darwin') if platform else None)
     if not targets:
         print('aucune application de bureau trouvée (Codex, VS Code, Claude Desktop)')
     for name, path, kind in targets:
@@ -809,6 +817,9 @@ def main(argv=None):
     p = sub.add_parser('register-apps', help='enregistrer le serveur dans Codex, VS Code et Claude Desktop s\'ils sont installés')
     p.add_argument('--windows-home', help='dossier du profil Windows vu depuis WSL (ex. /mnt/c/Users/nom)')
     p.add_argument('--wsl-distro', help='distribution WSL où tourne le warehouse (avec --windows-home)')
+    p.add_argument('--home', help='dossier personnel où chercher les applications (défaut : le vôtre)')
+    p.add_argument('--platform', choices=('linux', 'darwin', 'windows'), help='système de ce dossier personnel')
+    p.add_argument('--docker-container', help="lancer le serveur par « docker exec -i <conteneur> neolab-mcp » (image tout-en-un)")
     p.set_defaults(handler=register_apps)
     p = sub.add_parser('workspace', help='créer un dossier de travail NeoLab (instructions lues par Claude Code, Codex, Gemini, Copilot)')
     p.add_argument('folder', help='dossier à créer ou compléter, ex. ~/neolab-travail')
