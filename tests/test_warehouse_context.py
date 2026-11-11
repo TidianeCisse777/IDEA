@@ -9,7 +9,7 @@ from warehouse_context import VIEWS, GRAPHICS, column_description
 
 class WarehouseContextTests(unittest.TestCase):
     def test_every_scientific_view_has_a_grain_and_caveat(self):
-        self.assertEqual(len(VIEWS), 29)
+        self.assertEqual(len(VIEWS), 30)  # + filet_deployments (11 novembre 2026)
         for name, item in VIEWS.items():
             for key in ('purpose', 'grain', 'joins', 'caveats', 'example'):
                 self.assertTrue(item[key], (name, key))
@@ -61,8 +61,15 @@ class WarehouseContextTests(unittest.TestCase):
         self.assertIn('officiel', column_description('uvp_taxon_abundance', 'taxon_key'))
 
     def test_unknown_units_are_not_invented(self):
-        self.assertIn('confirmer', column_description('filet_samples', 'net_mesh_size'))
+        # Mesh unit now taken from the lab's dictionary, with its source named, not assumed.
+        self.assertIn('dictionnaire du labo', column_description('filet_samples', 'net_mesh_size'))
+        self.assertIn('µm', column_description('filet_samples', 'net_mesh_size'))
         self.assertIn('litres', column_description('ecopart_bins', 'sampled_volume_l'))
+
+    def test_graphics_carry_the_filet_uvp_rules(self):
+        text = ' '.join(GRAPHICS.values())
+        for rule in ('filet_deployment_id', 'taille contre taille', 'ligne 1:1', 'uvp_layer_coverage'):
+            self.assertIn(rule, text)
 
     def test_graphics_require_real_complete_results_and_reproducible_outputs(self):
         text = ' '.join(GRAPHICS.values())
