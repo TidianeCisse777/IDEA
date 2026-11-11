@@ -473,6 +473,35 @@ class ToolTitleTests(unittest.TestCase):
         self.assertIs(self.module.with_titles(line), line)
 
 
+class PublicToolNameTests(unittest.TestCase):
+    """Claude Code shows the tool name itself (« neolab-warehouse [execute_sql] »): the relay shows plain
+    English names and calls DbHub under its own."""
+
+    def setUp(self):
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        import warehouse_connect
+        self.module = warehouse_connect
+
+    def test_tool_list_and_texts_use_public_names(self):
+        tools = [{'name': 'execute_sql', 'description': 'Run SQL'},
+                 {'name': 'warehouse_context', 'description': 'SELECT … FROM catalogue.warehouse_context'}]
+        line = json.dumps({'jsonrpc': '2.0', 'id': 2, 'result': {'tools': tools, 'note':
+                           'Lire warehouse_context(topic=overview) puis execute_sql; search_objects.'}}).encode() + b'\n'
+        out = json.loads(self.module.with_public_names(self.module.with_titles(line)))['result']
+        self.assertEqual([t['name'] for t in out['tools']], ['run_sql_query', 'read_data_guide'])
+        self.assertEqual(out['tools'][0]['title'], 'NeoLab Warehouse · Run SQL query')
+        self.assertIn('catalogue.warehouse_context', out['tools'][1]['description'])
+        self.assertEqual(out['note'], 'Lire read_data_guide(topic=overview) puis run_sql_query; find_tables_and_columns.')
+
+    def test_calls_reach_dbhub_under_its_names(self):
+        call = json.dumps({'jsonrpc': '2.0', 'id': 5, 'method': 'tools/call',
+                           'params': {'name': 'run_sql_query', 'arguments': {'sql': 'SELECT 1'}}}).encode() + b'\n'
+        sent = json.loads(self.module.with_internal_name(call))
+        self.assertEqual(sent['params'], {'name': 'execute_sql', 'arguments': {'sql': 'SELECT 1'}})
+        other = b'{"jsonrpc": "2.0", "id": 6, "method": "tools/list"}\n'
+        self.assertIs(self.module.with_internal_name(other), other)
+
+
 class ErrorHintTests(unittest.TestCase):
     """A failed SQL call comes back with what to do next (seen in agent traces: cancelled taxon
     searches over the 15 M objects, guessed column names)."""

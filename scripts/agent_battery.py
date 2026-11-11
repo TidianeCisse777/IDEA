@@ -37,8 +37,8 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CASES = ROOT / 'tests/agent_battery/ecotaxa_cases.json'
-MCP_TOOLS = ('mcp__neolab-warehouse__execute_sql', 'mcp__neolab-warehouse__search_objects',
-             'mcp__neolab-warehouse__warehouse_context')
+MCP_TOOLS = ('mcp__neolab-warehouse__run_sql_query', 'mcp__neolab-warehouse__find_tables_and_columns',
+             'mcp__neolab-warehouse__read_data_guide')
 # A case with "tools": "files" (charts, maps) may also write and run code in its own empty folder.
 FILE_TOOLS = ('Bash', 'Write', 'Read', 'Edit', 'Glob')
 DATA_SUFFIXES = ('.csv', '.tsv', '.json', '.md', '.txt')
@@ -151,7 +151,7 @@ def read_stream(path: Path) -> dict:
         run['session_id'] = event.get('session_id') or run['session_id']
         if event.get('type') == 'assistant':
             for item in event['message'].get('content', []):
-                if item.get('type') == 'tool_use' and item['name'].endswith('execute_sql'):
+                if item.get('type') == 'tool_use' and item['name'].endswith('run_sql_query'):
                     run['sql_queries'] += 1
         if event.get('type') == 'result':
             run.update(answer=event.get('result') or '', turns=event.get('num_turns'), cost_usd=event.get('total_cost_usd'))

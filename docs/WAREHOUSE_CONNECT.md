@@ -184,11 +184,14 @@ pas été redémarré, ou l'enregistrement a échoué (voir [Dépannage](#dépan
 
 Le serveur fournit trois outils, identiques pour tous les agents :
 
-| Outil | Rôle |
+| Outil (titre affiché) | Rôle |
 |---|---|
-| `warehouse_context` | mode d'emploi métier : à lire en premier (`overview`), puis par vue, et `graphs` avant un graphique |
-| `execute_sql` | requêtes SQL en lecture seule (1000 lignes au plus par réponse) |
-| `search_objects` | lister vues, colonnes et types |
+| `read_data_guide` (NeoLab Warehouse · Read data guide) | mode d'emploi métier : à lire en premier (`overview`), puis par vue, et `graphs` avant un graphique |
+| `run_sql_query` (NeoLab Warehouse · Run SQL query) | requêtes SQL en lecture seule (1000 lignes au plus par réponse) |
+| `find_tables_and_columns` (NeoLab Warehouse · Find tables and columns) | lister vues, colonnes et types |
+
+Ces noms sont donnés par le relais `warehouse_connect.py run`; DbHub, derrière lui, garde les siens
+(`warehouse_context`, `execute_sql`, `search_objects`, ceux de `dbhub/*.toml`).
 
 ## Que demander ensuite
 

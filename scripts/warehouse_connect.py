@@ -15,6 +15,7 @@ import argparse
 import getpass
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -296,6 +297,40 @@ TOOL_TITLES = {
 }
 
 
+# Names the agents see (Claude Code shows « neolab-warehouse [name] »): plain English, mapped back to DbHub's
+# own names on each call. catalogue.warehouse_context (the table) keeps its name.
+PUBLIC_TOOL_NAMES = {
+    'warehouse_context': 'read_data_guide',
+    'execute_sql': 'run_sql_query',
+    'search_objects': 'find_tables_and_columns',
+}
+_INTERNAL_TOOL_NAMES = {public: internal for internal, public in PUBLIC_TOOL_NAMES.items()}
+_TOOL_NAME_PATTERN = re.compile(rb'(?<![\w.])(' + b'|'.join(n.encode() for n in PUBLIC_TOOL_NAMES) + rb')(?![\w])')
+
+
+def with_public_names(line):
+    """Server to agent: DbHub's tool names, in the tool list and in every text, become the public names."""
+    if not any(name.encode() in line for name in PUBLIC_TOOL_NAMES):
+        return line
+    return _TOOL_NAME_PATTERN.sub(lambda m: PUBLIC_TOOL_NAMES[m.group(1).decode()].encode(), line)
+
+
+def with_internal_name(line):
+    """Agent to server: a tools/call with a public name goes to DbHub under its own name."""
+    if b'tools/call' not in line:
+        return line
+    try:
+        message = json.loads(line)
+        params = message['params']
+        internal = _INTERNAL_TOOL_NAMES.get(params.get('name'))
+        if message.get('method') != 'tools/call' or internal is None:
+            return line
+        params['name'] = internal
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return line
+    return (json.dumps(message, ensure_ascii=False) + '\n').encode('utf-8')
+
+
 def with_titles(line):
     """Give the tools of a tools/list answer clear titles; any other line unchanged."""
     if b'"tools"' not in line:
@@ -396,7 +431,7 @@ def relay(command, values, trace_file=None):
         try:
             while line:
                 note_request(line)
-                child.stdin.write(line)
+                child.stdin.write(with_internal_name(line))
                 child.stdin.flush()
                 line = sys.stdin.buffer.readline()
         except (BrokenPipeError, OSError):
@@ -414,7 +449,7 @@ def relay(command, values, trace_file=None):
             if updated is not line:
                 initialize_id = None  # done: only the answer to initialize carries the instructions
             line = updated
-        line = with_titles(with_hint(line))
+        line = with_public_names(with_titles(with_hint(line)))
         sys.stdout.buffer.write(line)
         sys.stdout.buffer.flush()
         if trace_file is None:
