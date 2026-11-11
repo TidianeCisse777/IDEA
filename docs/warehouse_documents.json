@@ -45,6 +45,15 @@
       "date": "2026-11-11",
       "dataset_key": null,
       "summary": "Méthode et tests de explore.filet_uvp_pairs et explore.filet_uvp_compare : critères spatiaux, temporels et de station, stades FILET, taxons, taille et statut UVP, couverture de la couche."
+    },
+    {
+      "key": "filet-organisation",
+      "path": "docs/filet/filet_organisation.md",
+      "title": "Organisation des données FILET : déploiements, filets, couches de profondeur, taxons et stades",
+      "kind": "note",
+      "date": "2026-11-11",
+      "dataset_key": "neolab-filet",
+      "summary": "Hiérarchie déploiement → échantillon (une couche, une maille) → analyse → taxon × stade; engins et types de trait; profils verticaux Hydrobios et Bioness contre couches uniques multi-mailles; conséquences pour les calculs et la comparaison UVP."
     }
   ]
 }

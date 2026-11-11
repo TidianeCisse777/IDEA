@@ -262,7 +262,7 @@ VIEWS = {
     'filet_samples': view(
         'Métadonnées des échantillons FILET et nombre d’analyses.', 'Échantillon FILET technique, dans une version.',
         'id = filet_uvp_matches.filet_sample_id. sample_id natif se qualifie par dataset_version_id.',
-        'Un échantillon peut avoir plusieurs analyses ou filets. Zone ambiguous peut signifier chevauchement de polygones, pas exclusion spatiale. Ne pas assimiler station FILET et station UVP par identifiant.',
+        'Un échantillon = un filet (ou des filets regroupés) pour une couche min_sample_depth–max_sample_depth et une maille. Hydrobios et Bioness : plusieurs couches superposées par déploiement (profil vertical); 2x1m2 et 4x1m2 : une couche, plusieurs mailles. Détails et chiffres : document filet-organisation (search_documents). Un échantillon peut avoir plusieurs analyses ou filets. Zone ambiguous peut signifier chevauchement de polygones, pas exclusion spatiale. Ne pas assimiler station FILET et station UVP par identifiant.',
         'SELECT id,sample_id,station_name,latitude,longitude,n_analyses FROM explore.filet_samples LIMIT 20;'),
     'filet_data': view(
         'Abondances et biomasses FILET fournies, avec métadonnées éventuellement non appariées.',
