@@ -2,7 +2,8 @@
 -- même couche d'eau, avec choix des taxons, des stades FILET, de la taille UVP et du statut d'annotation.
 --
 -- explore.filet_uvp_pairs(max_km, max_hours, require_same_station)
---     Paires candidates : distance (haversine, km), écart de temps (h), station identique ou non, nombre de
+--     Une ligne par ÉCHANTILLON filet (un filet, une couche, une maille) : compter les couples par
+--     filet_deployment_id (mise à l'eau), pas par ligne. Paires candidates : distance (haversine, km), écart de temps (h), station identique ou non, nombre de
 --     candidats par échantillon FILET et rang (le plus proche d'abord : distance/max_km + écart/max_hours).
 --     Position UVP : EcoPart, sinon moyenne des samples EcoTaxa du profil (uvp_position_source).
 --     max_km NULL : pas de critère spatial. Un profil UVP sans position ne passe un critère spatial que si
@@ -18,10 +19,15 @@
 -- simple quotient. Les deux fonctions lisent les vues explore (droits du compte appelant).
 -- Additive et relançable (anciennes signatures retirées).
 DROP FUNCTION IF EXISTS explore.filet_uvp_pairs(double precision, double precision, boolean);
-DO $$ BEGIN  -- version without the UVP position (return type changed)
+DO $$ BEGIN  -- earlier versions (return type changed: UVP position, deployment)
     IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'filet_uvp_pairs' AND pronamespace = 'explore'::regnamespace
-               AND NOT 'uvp_position_source' = ANY(proargnames)) THEN
+               AND NOT 'filet_deployment_id' = ANY(proargnames)) THEN
         DROP FUNCTION explore.filet_uvp_pairs(double precision, double precision, boolean, boolean);
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'filet_uvp_compare' AND pronamespace = 'explore'::regnamespace
+               AND NOT 'filet_deployment_id' = ANY(proargnames)) THEN
+        DROP FUNCTION explore.filet_uvp_compare(double precision, double precision, boolean, boolean, text, text, text[],
+                                               double precision, double precision, text, boolean, boolean);
     END IF;
 END $$;
 DROP FUNCTION IF EXISTS explore.filet_uvp_compare(double precision, double precision, boolean, text, text, text[], double precision, double precision, text, boolean, boolean);
@@ -40,7 +46,8 @@ CREATE OR REPLACE FUNCTION explore.filet_uvp_pairs(
     p_max_hours double precision DEFAULT 24,
     p_require_same_station boolean DEFAULT false,
     p_station_if_no_position boolean DEFAULT false)
-RETURNS TABLE (filet_sample_ref bigint, filet_sample_id text, filet_station text, filet_sampled_at timestamp,
+RETURNS TABLE (filet_sample_ref bigint, filet_sample_id text, filet_deployment_id text, filet_station text,
+               filet_sampled_at timestamp,
                filet_latitude double precision, filet_longitude double precision,
                uvp_profile_id bigint, uvp_sample_name text, uvp_station text, uvp_sampled_at timestamp,
                uvp_latitude double precision, uvp_longitude double precision, uvp_position_source text,
@@ -60,7 +67,8 @@ AS $$
         LEFT JOIN explore.ecotaxa_samples e ON e.ecotaxa_sample_id = u.ecotaxa_sample_id
         GROUP BY u.uvp_profile_id
     ), pairs AS (
-        SELECT f.id AS filet_sample_ref, f.sample_id, f.station_name, f.deployment_datetime_start AS f_at,
+        SELECT f.id AS filet_sample_ref, f.sample_id, f.deployment_id::text AS deployment_id, f.station_name,
+               f.deployment_datetime_start AS f_at,
                f.latitude AS f_lat, f.longitude AS f_lon, u.uvp_profile_id, u.sample_name, u.station_key,
                u.sampled_at AS u_at, u.latitude AS u_lat, u.longitude AS u_lon, u.position_source AS u_src,
                CASE WHEN f.latitude IS NULL OR u.latitude IS NULL THEN NULL ELSE
@@ -73,7 +81,7 @@ AS $$
         JOIN uvp u ON abs(extract(epoch FROM (u.sampled_at - f.deployment_datetime_start)) / 3600.0) <= p_max_hours
         WHERE f.deployment_datetime_start IS NOT NULL
     )
-    SELECT filet_sample_ref, sample_id, station_name, f_at, f_lat, f_lon, uvp_profile_id, sample_name, station_key,
+    SELECT filet_sample_ref, sample_id, deployment_id, station_name, f_at, f_lat, f_lon, uvp_profile_id, sample_name, station_key,
            u_at, u_lat, u_lon, u_src, round(km::numeric, 2)::double precision, round(hours::numeric, 2)::double precision, same,
            (count(*) OVER w)::integer,
            (row_number() OVER (w ORDER BY coalesce(km / nullif(p_max_km, 0), 0) + hours / nullif(p_max_hours, 0),
@@ -99,8 +107,8 @@ CREATE OR REPLACE FUNCTION explore.filet_uvp_compare(
     p_size_measure text DEFAULT 'esd',
     p_validated_only boolean DEFAULT true,
     p_best_only boolean DEFAULT true)
-RETURNS TABLE (filet_sample_id text, filet_analysis_id text, filet_station text, filet_sampled_at timestamp,
-               uvp_profile_id bigint, uvp_sample_name text, distance_km double precision,
+RETURNS TABLE (filet_sample_id text, filet_analysis_id text, filet_deployment_id text, filet_station text,
+               filet_sampled_at timestamp, uvp_profile_id bigint, uvp_sample_name text, distance_km double precision,
                time_gap_hours double precision, same_station boolean, rank_for_sample integer,
                layer_min_m numeric, layer_max_m numeric, net_mesh_size_um numeric,
                filet_n_taxa integer, filet_abundance_depth_ind_m3 numeric, filet_abundance_flowmeter_ind_m3 numeric,
@@ -167,7 +175,7 @@ BEGIN
                sum(lb.depth_max_m - lb.depth_min_m) AS thickness, sum(lb.sampled_volume_l) / 1000.0 AS volume_m3
         FROM layer_bins lb GROUP BY 1, 2, 3
     )
-    SELECT l.filet_sample_id, l.analysis_id, l.filet_station, l.filet_sampled_at, l.uvp_profile_id,
+    SELECT l.filet_sample_id, l.analysis_id, l.filet_deployment_id, l.filet_station, l.filet_sampled_at, l.uvp_profile_id,
            l.uvp_sample_name, l.distance_km, l.time_gap_hours, l.same_station, l.rank_for_sample,
            l.dmin, l.dmax, l.mesh, l.n_taxa, round(l.ab_depth, 4), round(l.ab_flow, 4),
            coalesce(u.n_bins, 0), round((u.thickness / nullif(l.dmax - l.dmin, 0))::numeric, 3),

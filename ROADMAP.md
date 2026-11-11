@@ -19,6 +19,11 @@
   intégrée sur la couche du filet (tranches vides comprises), taxons, stades FILET (agrégats refusés avec
   leurs parties, vérifiés égaux à la somme), taille ESD ou grand axe, statut. Tests et chiffres dans le
   document `filet-uvp-comparaison`; `claude -p` l'a trouvé et utilisé. FILET–CTD : aucun lien construit.
+- Positions UVP manquantes (182 profils GreenEdge 2016) prises dans les samples EcoTaxa
+  (`uvp_position_source`); couples comptés par déploiement (`filet_deployment_id`) : même station et 5 h au
+  plus, 232 déploiements filet, 167 profils UVP, 133 stations. `explore.filet_deployments` (engin, couches,
+  mailles). Meilleurs couples copépodes inscrits dans `filet-uvp-comparaison`; `claude -p` les retrouve
+  depuis le document (232 couples, critères repris). Variante Calanus à 50 km/72 h : dépasse 30 s.
 - Limites : compte à périmètre restreint non testé sur les documents; partie Windows du chargement FILET non
   encore lancée.
 

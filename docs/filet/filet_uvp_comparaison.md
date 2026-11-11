@@ -17,6 +17,40 @@ Les valeurs sont posées côte à côte : aucune conversion entre filet et UVP, 
 - `station_if_no_position` : un profil UVP sans aucune position est accepté si la station est la même.
 - Rang 1 = le plus proche (distance/max_km + écart/max_hours). `candidates_for_sample` dit s'il y en avait d'autres.
 
+## Compter les couples : par déploiement, pas par ligne
+
+Les deux fonctions renvoient une ligne par **échantillon** filet (un filet, une couche, une maille) :
+un déploiement Hydrobios à 9 couches donne 9 lignes, un 4x1m2 à 3 mailles en donne 3. Un **couple
+filet–UVP** se compte par déploiement : `count(DISTINCT filet_deployment_id)`. Même station et 5 h au plus
+(`filet_uvp_pairs(NULL, 5, true, true)`, rang 1), le 11 novembre 2026 : 232 déploiements filet, 167 profils
+UVP, 133 stations (955 échantillons). Chaque déploiement a un profil UVP; un profil peut servir à plusieurs
+déploiements de la même station (ex. un 2x1m2 et un Hydrobios).
+
+```sql
+SELECT count(DISTINCT filet_deployment_id) AS couples, count(DISTINCT uvp_profile_id) AS profils_uvp
+FROM explore.filet_uvp_pairs(NULL, 5, true, true) WHERE rank_for_sample = 1;
+```
+
+## Meilleurs couples pour comparer les copépodes (11 novembre 2026)
+
+Même station, 5 h au plus, filet COPEPODID, UVP Copepoda validés : `filet_uvp_compare(NULL, 5, true, true)`.
+Retenus : couche entièrement vue par l'UVP (couverture ≥ 0,95), au moins 50 objets UVP, annotation UVP
+validée à 100 %, abondance filet renseignée. Abondances en ind./m3.
+
+| Station (déploiement) | Date | Engin, couche | km / h | Filet (vol. profondeur / débitmètre) | UVP (objets) |
+|---|---|---|---|---|---|
+| G707 (1272) | 2016-07-08 | 4x1m2 - LOKI, 0–700 m | 0,1 / 1,1 | 126,8 / 250,3 | 37,0 (634) |
+| G507 (1253) | 2016-06-30 | 4x1m2 - LOKI, 0–286 m | 0,1 / 0,8 | 347,5 / 555,0 | 131,1 (490) |
+| G413 (1245) | 2016-06-27 | 4x1m2 - LOKI, 0–270 m | 0,7 / 0,7 | 531,0 / 503,5 | 91,5 (354) |
+| 133 (2253) | 2023-09-18 | 2x1m2, 0–170 m | 1,4 / 1,8 | 420,9 / 502,2 | 63,2 (122) |
+| 134 (2250) | 2023-09-17 | 2x1m2, 0–240 m | 0,2 / 1,7 | 149,3 / 177,2 | 34,0 (92) |
+
+Aussi propres : G204, G201, G418, G512 (GreenEdge 2016). Profil vertical : RA62 (2488, Hydrobios,
+2024-09-25), couches 40–60 et 60–100 m, filet 387,3 et 279,0, UVP 52,1 (14 objets) et 39,5 (21 objets),
+0,1 km, 2,1 h; peu d'objets. À éviter : TCA-BB2 (21 % des copépodes UVP validés), stations 2024 au filet de
+500 µm (aucun copépode UVP validé), traits 0–700 m où l'UVP ne voit que 37 à 72 % de la couche (G318, G324,
+G312, G409…).
+
 ## Abondances sur la même couche
 
 `explore.filet_uvp_compare(max_km, max_hours, require_same_station, station_if_no_position, uvp_taxon,
