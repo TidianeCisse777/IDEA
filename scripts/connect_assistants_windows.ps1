@@ -131,7 +131,17 @@ Ok "Codex (terminal, extension VS Code, application) : $codexToml"
 if (Get-Command opencode -ErrorAction SilentlyContinue) {
     $null | & opencode mcp add $name '--' $docker @mcpArgs *> $null
     if ($LASTEXITCODE -eq 0) { Ok "OpenCode (configuration globale)" } else { Note "OpenCode : enregistrement refusé; à la main : opencode mcp add $name -- `"$docker`" exec -i $container neolab-mcp" }
-} else { Note "OpenCode non installé : sauté" }
+} else {
+    # OpenCode Desktop alone installs no « opencode » command: write its global configuration directly
+    # (format written by OpenCode 1.19: mcp.<name>, type local, command array); an unreadable file is left as is.
+    $ocDir = Join-Path $HOME '.config\opencode'
+    $ocFile = @('opencode.jsonc', 'opencode.json') | ForEach-Object { Join-Path $ocDir $_ } | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $ocFile) { New-Item -ItemType Directory -Force $ocDir | Out-Null; $ocFile = Join-Path $ocDir 'opencode.jsonc' }
+    Backup $ocFile
+    if (Set-JsonServer $ocFile 'mcp' ([ordered]@{ type = 'local'; command = @($docker) + $mcpArgs })) {
+        Ok "OpenCode (application ou terminal) : $ocFile"
+    } else { Note "OpenCode : $ocFile illisible (commentaires ?), non modifié : y ajouter le serveur à la main (LISEZMOI)" }
+}
 
 $vscode = Join-Path $env:APPDATA 'Code\User'
 if (Test-Path $vscode) {
