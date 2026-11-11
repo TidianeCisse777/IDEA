@@ -1,0 +1,8 @@
+#!/bin/sh
+# Serveur MCP du warehouse NeoLab sur l'entrée et la sortie standard : docker exec -i neolab-warehouse neolab-mcp
+if [ ! -f "$NEOLAB_STATE/ready" ]; then
+    echo "Warehouse NeoLab en cours d'installation (premier démarrage) : réessayer dans quelques minutes." >&2
+    exit 1
+fi
+NEOLAB_WAREHOUSE_CREDENTIALS="$NEOLAB_STATE/credentials.env" \
+    exec /opt/neolab/venv/bin/python /opt/neolab/IDEA/scripts/warehouse_connect.py run

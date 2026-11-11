@@ -1,0 +1,5 @@
+#!/bin/sh
+# Recette de la connexion MCP depuis l'intérieur du conteneur : docker exec neolab-warehouse neolab-check
+[ -f "$NEOLAB_STATE/ready" ] || { echo "installation en cours"; exit 1; }
+NEOLAB_WAREHOUSE_CREDENTIALS="$NEOLAB_STATE/credentials.env" \
+    exec /opt/neolab/venv/bin/python /opt/neolab/IDEA/scripts/warehouse_connect.py check
