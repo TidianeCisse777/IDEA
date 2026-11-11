@@ -148,6 +148,12 @@ if have codex; then
     codex mcp add neolab-warehouse -- "$docker_exe" exec -i "$CONTAINER" neolab-mcp >/dev/null 2>&1 || true
     assistants="$assistants codex"
 fi
+if have opencode; then
+    # Its own command writes the format of the installed version, in its global configuration.
+    if opencode mcp add neolab-warehouse -- "$docker_exe" exec -i "$CONTAINER" neolab-mcp </dev/null >/dev/null 2>&1; then
+        echo "OpenCode : serveur neolab-warehouse enregistré"; assistants="$assistants opencode"
+    fi
+fi
 platform=linux; [ "$os" = Darwin ] && platform=darwin
 user_opt=""; [ "$os" = Darwin ] || user_opt="--user $(id -u):$(id -g)"
 # shellcheck disable=SC2086

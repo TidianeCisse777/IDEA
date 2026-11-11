@@ -7,7 +7,8 @@
 # Écrit le chemin complet de docker.exe (les applications lancées depuis le menu Démarrer n'ont pas
 # forcément le PATH du terminal : « program not found ») dans :
 #   Claude Code (ligne de commande et extension VS Code), Codex (config.toml : ligne de commande, extension
-#   VS Code, application), VS Code / Copilot (mcp.json), Claude Desktop (claude_desktop_config.json).
+#   VS Code, application), OpenCode (opencode mcp add), VS Code / Copilot (mcp.json), Claude Desktop
+#   (claude_desktop_config.json).
 # -CodexWsl : pour une application Codex réglée pour exécuter l'agent dans WSL (chemin /mnt/c/...).
 # Chaque fichier modifié est d'abord copié en <fichier>.avant-neolab. Aucun mot de passe écrit ni affiché.
 param([switch]$CodexWsl)
@@ -124,6 +125,13 @@ if ($CodexWsl) {
 Backup $codexToml
 Set-CodexServer $codexToml $codexCommand $mcpArgs
 Ok "Codex (terminal, extension VS Code, application) : $codexToml"
+
+# OpenCode: its own command writes the config format of the installed version (the format is changing),
+# in its global configuration; adding again replaces the entry.
+if (Get-Command opencode -ErrorAction SilentlyContinue) {
+    $null | & opencode mcp add $name '--' $docker @mcpArgs *> $null
+    if ($LASTEXITCODE -eq 0) { Ok "OpenCode (configuration globale)" } else { Note "OpenCode : enregistrement refusé; à la main : opencode mcp add $name -- `"$docker`" exec -i $container neolab-mcp" }
+} else { Note "OpenCode non installé : sauté" }
 
 $vscode = Join-Path $env:APPDATA 'Code\User'
 if (Test-Path $vscode) {

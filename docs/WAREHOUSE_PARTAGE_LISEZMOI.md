@@ -52,7 +52,7 @@ cd ~/neolab-travail
 claude
 ```
 
-(`codex` à la place de `claude` pour Codex.) La première fois, l'assistant demande de se connecter à votre
+(`codex` ou `opencode` à la place de `claude` pour Codex ou OpenCode.) La première fois, l'assistant demande de se connecter à votre
 compte et d'autoriser les outils `neolab-warehouse` : accepter. VS Code (Copilot, mode Agent) et Claude Desktop
 sont aussi branchés s'ils étaient installés : les redémarrer.
 
@@ -117,6 +117,7 @@ docker exec neolab-warehouse neolab-check                           # doit finir
 # 3. Brancher l'assistant
 claude mcp add --scope user neolab-warehouse -- docker exec -i neolab-warehouse neolab-mcp
 codex mcp add neolab-warehouse -- docker exec -i neolab-warehouse neolab-mcp
+opencode mcp add neolab-warehouse -- docker exec -i neolab-warehouse neolab-mcp
 ```
 
 VS Code (Copilot, mode Agent), fichier `mcp.json` de l'utilisateur (« MCP: Open User Configuration ») :

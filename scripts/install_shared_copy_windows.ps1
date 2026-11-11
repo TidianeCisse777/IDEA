@@ -170,6 +170,10 @@ if ($hasCodex) {
     Quiet "codex mcp remove neolab-warehouse" | Out-Null
     Quiet "codex mcp add neolab-warehouse -- $server" | Out-Null
 }
+if (Get-Command opencode -ErrorAction SilentlyContinue) {
+    # Its own command writes the format of the installed version, in its global configuration.
+    if (Quiet "opencode mcp add neolab-warehouse -- $server <nul") { Write-Host "OpenCode : serveur neolab-warehouse enregistré" }
+}
 # Codex (config.toml), VS Code (Copilot) and Claude Desktop, if installed: written from a throwaway container
 # with the Windows profile mounted, by the same tested code as on Mac and Linux.
 & cmd.exe /c "docker run --rm -e HOME=/tmp -v `"$($env:USERPROFILE):/h`" --entrypoint /opt/neolab/venv/bin/python $image /opt/neolab/IDEA/scripts/warehouse_connect.py register-apps --home /h --platform windows --docker-container $container --docker-command `"$dockerExe`" 2>&1"
