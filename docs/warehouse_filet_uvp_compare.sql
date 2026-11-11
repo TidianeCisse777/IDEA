@@ -29,6 +29,11 @@ DO $$ BEGIN  -- earlier versions (return type changed: UVP position, deployment)
         DROP FUNCTION explore.filet_uvp_compare(double precision, double precision, boolean, boolean, text, text, text[],
                                                double precision, double precision, text, boolean, boolean);
     END IF;
+    IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'filet_uvp_compare' AND pronamespace = 'explore'::regnamespace
+               AND NOT 'p_min_filet_ug_c_per_ind' = ANY(proargnames)) THEN
+        DROP FUNCTION explore.filet_uvp_compare(double precision, double precision, boolean, boolean, text, text, text[],
+                                               double precision, double precision, text, boolean, boolean);
+    END IF;
 END $$;
 DROP FUNCTION IF EXISTS explore.filet_uvp_compare(double precision, double precision, boolean, text, text, text[], double precision, double precision, text, boolean, boolean);
 
@@ -106,7 +111,8 @@ CREATE OR REPLACE FUNCTION explore.filet_uvp_compare(
     p_max_size_um double precision DEFAULT NULL,
     p_size_measure text DEFAULT 'esd',
     p_validated_only boolean DEFAULT true,
-    p_best_only boolean DEFAULT true)
+    p_best_only boolean DEFAULT true,
+    p_min_filet_ug_c_per_ind double precision DEFAULT NULL)
 RETURNS TABLE (filet_sample_id text, filet_analysis_id text, filet_deployment_id text, filet_station text,
                filet_sampled_at timestamp, uvp_profile_id bigint, uvp_sample_name text, distance_km double precision,
                time_gap_hours double precision, same_station boolean, rank_for_sample integer,
@@ -131,6 +137,11 @@ BEGIN
        OR ('NAUPLIUS' = ANY(p_filet_stages) AND p_filet_stages && nauplius) THEN
         RAISE EXCEPTION 'p_filet_stages % : un stade agrégé et ses parties comptent deux fois les mêmes individus', p_filet_stages;
     END IF;
+    -- Size on the net side: carbon per individual (biomass / abundance, both supplied by the lab) of each
+    -- taxon × detailed stage row; an aggregate stage would average small and large individuals.
+    IF p_min_filet_ug_c_per_ind IS NOT NULL AND p_filet_stages && ARRAY['COPEPODID','NAUPLIUS','ALL_STAGES'] THEN
+        RAISE EXCEPTION 'p_min_filet_ug_c_per_ind : donner des stades détaillés (ex. {C1,C2,C3,C4,C5,M,F,COP_NS}), pas un agrégat';
+    END IF;
     IF p_size_measure NOT IN ('esd', 'major') THEN
         RAISE EXCEPTION 'p_size_measure : esd (diamètre sphérique équivalent) ou major (grand axe)';
     END IF;
@@ -144,6 +155,8 @@ BEGIN
                sum(d.abundance_depth_ind_m3) AS ab_depth, sum(d.abundance_flowmeter_ind_m3) AS ab_flow
         FROM explore.filet_data d
         WHERE d.metadata_matched AND d.taxon_id ILIKE p_filet_taxon_pattern AND d.stage = ANY(p_filet_stages)
+          AND (p_min_filet_ug_c_per_ind IS NULL
+               OR d.biomass_depth_ug_c_m3 / nullif(d.abundance_depth_ind_m3, 0) >= p_min_filet_ug_c_per_ind)
           AND d.sample_id IN (SELECT p.filet_sample_id FROM pairs p)
         GROUP BY d.sample_id, d.analysis_id
     ), bins AS (
@@ -188,5 +201,5 @@ BEGIN
     ORDER BY l.filet_sampled_at, l.filet_sample_id, l.analysis_id, l.rank_for_sample;
 END
 $$;
-COMMENT ON FUNCTION explore.filet_uvp_compare(double precision, double precision, boolean, boolean, text, text, text[], double precision, double precision, text, boolean, boolean) IS
+COMMENT ON FUNCTION explore.filet_uvp_compare(double precision, double precision, boolean, boolean, text, text, text[], double precision, double precision, text, boolean, boolean, double precision) IS
     'Abondances FILET et UVP sur la même couche (tranches UVP entièrement dans le trait de filet), taxons, stades, taille UVP (esd ou major, µm) et statut choisis; volumes des tranches vides compris.';
