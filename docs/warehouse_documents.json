@@ -1,0 +1,14 @@
+{
+  "description": "Documents du dépôt chargés dans le warehouse à chaque déploiement (scripts/add_warehouse_document.py sync). Chemins relatifs au dépôt. Les documents privés se chargent avec « add », hors du dépôt.",
+  "documents": [
+    {
+      "key": "filet-export-review",
+      "path": "docs/FILET_EXPORT_REVIEW.md",
+      "title": "Vérification des exports FILET du Bureau (grain, clés, jointure)",
+      "kind": "note",
+      "date": "2026-09-18",
+      "dataset_key": null,
+      "summary": "Grain et cardinalités des trois CSV FILET, jointure échantillons-abondances (106 lignes 2024 sans métadonnées), conséquences pour le SQL."
+    }
+  ]
+}

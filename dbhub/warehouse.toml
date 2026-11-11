@@ -36,3 +36,31 @@ name = "topic"
 type = "string"
 description = "overview (défaut), graphs (règles de graphiques), all, ou nom de vue sans préfixe explore."
 required = false
+
+[[tools]]
+name = "search_documents"
+source = "neolab"
+description = "Chercher dans les documents écrits du warehouse (protocoles, notes de méthode, rapports, publications) : renvoie doc_key, section, un extrait et un score. Pour une question de méthode, de protocole, d'unité ou de provenance, chercher ici avant de répondre, puis lire la section avec read_document et citer doc_key et section. Liste complète : catalogue.documents."
+readonly = true
+max_rows = 25
+statement = "SELECT doc_key,title,ordinal AS section,heading,excerpt,round(rank::numeric,3) AS score FROM catalogue.search_documents($1, 8)"
+
+[[tools.parameters]]
+name = "query"
+type = "string"
+description = "Mots à chercher (français ou anglais), ex. « volume filtré débitmètre » ou « mesh size »; guillemets pour une expression exacte."
+required = true
+
+[[tools]]
+name = "read_document"
+source = "neolab"
+description = "Lire le texte d'un document du warehouse, section par section dans l'ordre d'origine (doc_key donné par search_documents ou catalogue.documents). Citer le doc_key et le numéro de section utilisés."
+readonly = true
+max_rows = 200
+statement = "SELECT ordinal AS section,heading,body FROM catalogue.document_sections WHERE doc_key=$1 ORDER BY ordinal"
+
+[[tools.parameters]]
+name = "doc_key"
+type = "string"
+description = "Clé du document, ex. filet-export-review."
+required = true

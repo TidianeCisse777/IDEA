@@ -17,6 +17,8 @@ OVERVIEW = (
     'Les métadonnées et vues existent même quand les données sont absentes : lire '
     'catalogue.dataset_versions et mesurer la couverture avant de conclure. '
     'Ne pas inventer données, unités, taxons, liens ou validation scientifique. Toute réponse sur les données vient d’une requête execute_sql sur ce warehouse : ne jamais répondre de mémoire ni avec des valeurs générales (climatologie, littérature) à la place des mesures; si une requête échoue ou qu’un outil est refusé, le dire et réessayer avec execute_sql plutôt que d’estimer. '
+    'Les documents écrits (protocoles, méthodes, notes) sont dans catalogue.documents : les chercher avec '
+    'search_documents pour une question de méthode, de protocole ou de provenance, et citer doc_key et section. '
     'Ne pas interpréter biologiquement les résultats. NULL signifie absent/inconnu; zéro et absence '
     'de ligne sont différents. Garder source, versions, politiques d’annotation, stades et '
     'dénominateurs explicites. Ne pas sommer les volumes répétés par taxon ou les '
@@ -120,6 +122,12 @@ def publish(conn):
             ('warehouse_dictionary', 'Colonnes réelles, types SQL, commentaires métier et définition SQL des vues.',
              'Une colonne de vue des schémas explore et catalogue; répète sa définition SQL par colonne.',
              "SELECT * FROM catalogue.warehouse_dictionary WHERE view_name='uvp_objects';"),
+            ('documents', 'Documents écrits (protocoles, notes de méthode, rapports, publications) : titre, type, auteur, date, lien, jeu de données concerné. Chercher avec search_documents, lire avec read_document; citer doc_key et section.',
+             'Un document par doc_key; texte d\'origine non interprété.',
+             'SELECT doc_key, kind, title, document_date, n_sections FROM catalogue.documents ORDER BY doc_key;'),
+            ('document_sections', 'Texte des documents écrits, une section par ligne dans l\'ordre d\'origine.',
+             'Une ligne par (doc_key, ordinal).',
+             "SELECT ordinal, heading, body FROM catalogue.document_sections WHERE doc_key='filet-export-review' ORDER BY ordinal;"),
             ('warehouse_context', 'Fiches métier lisibles via MCP.', 'Une fiche par topic.',
              'SELECT topic,purpose FROM catalogue.warehouse_context;'),
         ):

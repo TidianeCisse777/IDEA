@@ -121,7 +121,7 @@ class ClientConfigurationTests(unittest.TestCase):
         toml = (ROOT / "dbhub" / "warehouse.connect.toml").read_text(encoding="utf-8")
         self.assertIn('dsn = "${WAREHOUSE_DSN}"', toml)
         self.assertNotRegex(toml, r"password\s*=")
-        self.assertEqual(toml.count("readonly = true"), 2)  # execute_sql et warehouse_context
+        self.assertEqual(toml.count("readonly = true"), 4)  # execute_sql, warehouse_context, search_documents, read_document
         self.assertIn("catalogue.my_access", toml)
 
     def test_connection_failures_are_explained_from_real_dbhub_messages(self):

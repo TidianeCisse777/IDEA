@@ -255,7 +255,9 @@ SERVER_INSTRUCTIONS = (
     "Lire d'abord warehouse_context(topic=overview) : son champ column_list donne les colonnes réelles de toutes "
     "les vues; explorer avant de générer, n'écrire du SQL qu'avec ces noms, jamais un nom deviné. Pour un taxon ou un groupe (« les copépodes »), partir de "
     "explore.ecotaxa_sample_taxa et de la lignée EcoTaxa (taxon_lineage), pas d'une liste de mémoire. Si la question est floue (projet, taxon, profondeur, année, "
-    "objets validés ou non), dire le choix retenu ou demander une précision. Commencer la réponse par une courte section « Raisonnement » "
+    "objets validés ou non), dire le choix retenu ou demander une précision. "
+    "Pour une question de méthode, de protocole, d'unité ou de provenance, chercher aussi dans les documents écrits "
+    "(search_documents, puis read_document) et citer le document et la section. Commencer la réponse par une courte section « Raisonnement » "
     "(question comprise, choix et leurs raisons), et finir par les requêtes exécutées."
 )
 
@@ -294,6 +296,8 @@ TOOL_TITLES = {
     'warehouse_context': 'NeoLab Warehouse · Read data guide',
     'execute_sql': 'NeoLab Warehouse · Run SQL query',
     'search_objects': 'NeoLab Warehouse · Find tables and columns',
+    'search_documents': 'NeoLab Warehouse · Search documents',
+    'read_document': 'NeoLab Warehouse · Read document',
 }
 
 

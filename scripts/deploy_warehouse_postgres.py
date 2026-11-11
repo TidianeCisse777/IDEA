@@ -34,7 +34,9 @@ ALWAYS_FILES = ('warehouse_catalogue_schema_migration.sql', 'warehouse_ctd_zone_
                'warehouse_ecotaxa_project_title_migration.sql', 'warehouse_uvp_abundance_zone_migration.sql',
                'warehouse_marine_zone_migration.sql', 'warehouse_copepod_stage_migration.sql',
                'warehouse_ecotaxa_taxa_migration.sql', 'warehouse_explore_catalog_migration.sql',
-               'warehouse_fair_migration.sql', 'warehouse_access_control.sql')
+               'warehouse_fair_migration.sql', 'warehouse_access_control.sql',
+               # after access control: its views filter with warehouse.readable_versions()
+               'warehouse_documents_migration.sql')
 ROLES_FILE = 'warehouse_roles.sql'
 RELEASE_FILE = 'warehouse_release.sql'
 SERVICE_ROLES = ('warehouse_reader', 'warehouse_navigator')
@@ -142,6 +144,17 @@ def ensure_postgis(env):
     if result.returncode:
         print('PostGIS disponible mais non activé (superuser requis). Demander à l\'administrateur du serveur: '
               'CREATE EXTENSION postgis; dans la base %s. Le reste du déploiement est appliqué.' % env['PGDATABASE'])
+
+
+def load_documents(env):
+    """Documents du dépôt (docs/warehouse_documents.json) consultables par les agents; relançable."""
+    result = subprocess.run([sys.executable, str(ROOT / 'scripts' / 'add_warehouse_document.py'), 'sync'],
+                            env=env, text=True, capture_output=True)
+    if result.returncode:
+        print('Documents non chargés : ' + (result.stderr.strip().splitlines() or ['erreur inconnue'])[-1][:200])
+        return False
+    print('Documents : ' + '; '.join(result.stdout.strip().splitlines()))
+    return True
 
 
 def publish_context(env):
@@ -268,6 +281,7 @@ def main(argv=None):
         return check(env)
     deploy(env, args.dry_run)
     if not args.dry_run:
+        load_documents(env)
         publish_context(env)
     return check(env) if args.check and not args.dry_run else 0
 
