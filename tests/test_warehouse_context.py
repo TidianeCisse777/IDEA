@@ -91,6 +91,13 @@ class WarehouseContextTests(unittest.TestCase):
                             'validation', 'profondeur', 'unités'):
             self.assertIn(requirement, text)
 
+    def test_status_and_details_go_in_the_answer_not_on_the_figure(self):
+        # 11 November 2026: a status box and source notes overloaded the figures; they belong in the answer.
+        text = ' '.join(GRAPHICS.values())
+        self.assertIn('aucun cartouche de statut', text)
+        self.assertIn('vont dans la RÉPONSE', text)
+        self.assertNotIn('Afficher un cartouche', text)
+
     def test_maps_keep_coordinate_order_projection_and_network_limits_explicit(self):
         text = ' '.join(GRAPHICS.values())
         for requirement in ('Cartopy', 'Folium', 'PlateCarree', '[latitude, longitude]',
