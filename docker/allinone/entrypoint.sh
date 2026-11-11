@@ -11,6 +11,21 @@ if [ ! -f "$NEOLAB_STATE/secrets.env" ]; then
         "$(gen)" "$(gen)" "$(gen)" > "$NEOLAB_STATE/secrets.env")
     chown postgres:postgres "$NEOLAB_STATE/secrets.env"
 fi
+# A first start that stopped before the end (error, computer switched off) leaves a database without the
+# « ready » mark; PostgreSQL would then skip its initialisation forever. Start it again from scratch, at most
+# three times, then stay up with the reason in the logs (docker logs neolab-warehouse) instead of looping.
+if [ -s "$PGDATA/PG_VERSION" ] && [ ! -f "$NEOLAB_STATE/ready" ]; then
+    attempts=$(cat "$NEOLAB_STATE/attempts" 2>/dev/null || echo 0)
+    if [ "$attempts" -ge 3 ]; then
+        echo "[neolab] ÉCHEC répété de l'installation : supprimer le conteneur et le volume puis relancer l'installeur."
+        exec sleep infinity
+    fi
+    echo "[neolab] installation précédente interrompue : reprise depuis le début"
+    rm -rf "$PGDATA"
+fi
+if [ ! -s "$PGDATA/PG_VERSION" ]; then
+    echo $(( $(cat "$NEOLAB_STATE/attempts" 2>/dev/null || echo 0) + 1 )) > "$NEOLAB_STATE/attempts"
+fi
 set -a
 # shellcheck disable=SC1091
 . "$NEOLAB_STATE/secrets.env"
