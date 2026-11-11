@@ -20,7 +20,7 @@ have() { command -v "$1" >/dev/null 2>&1; }
 major() { printf '%s' "$1" | sed -E 's/^[^0-9]*([0-9]+).*/\1/'; }
 python_ok() { have python3 && python3 -c 'import sys, ensurepip; sys.exit(sys.version_info < (3, 10))' 2>/dev/null; }
 psql_ok() { have psql && [ "$(major "$(psql --version | awk '{print $3}')")" -ge 16 ]; }
-node_ok() { have node && [ "$(major "$(node --version)")" -ge 18 ]; }
+node_ok() { have node && [ "$(major "$(node --version)")" -ge 20 ]; }
 docker_ok() { have docker && docker info >/dev/null 2>&1; }
 is_wsl() { grep -qi microsoft /proc/version 2>/dev/null; }
 if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO=sudo; fi
@@ -30,7 +30,7 @@ tools_only() { [ "${NEOLAB_INSTALL_TOOLS_ONLY:-}" = 1 ] || return 0; python_ok &
 account=${1:-$(id -un)}
 account=$(printf '%s' "$account" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_' '_' | cut -c1-30)
 case "$account" in [a-z]*) ;; *) account="u_$account" ;; esac
-case "$account" in warehouse_*|pg_*|neolab) account="${account}_lecture" ;; esac
+case "$account" in warehouse_*|pg_*|neolab*|postgres*|app_owner*) account="lecteur_${account}" ;; esac
 [ "${#account}" -ge 3 ] || account="${account}_neolab"
 
 step "1/8 Outils (installation de ceux qui manquent)"
@@ -107,7 +107,7 @@ docker_ok || fail "Docker ne répond pas : lancer Docker Desktop (Windows, macOS
 docker compose version >/dev/null 2>&1 || fail "Docker Compose 2 introuvable : mettre Docker à jour."
 python_ok || fail "Python 3.10 ou plus (avec venv) introuvable : l'installer (LISEZMOI, partie 1)."
 psql_ok || fail "Client PostgreSQL 16 ou plus introuvable : l'installer (LISEZMOI, partie 1)."
-node_ok || fail "Node.js 18 ou plus introuvable : l'installer (LISEZMOI, partie 1)."
+node_ok || fail "Node.js 20 ou plus introuvable : l'installer (LISEZMOI, partie 1)."
 if have sha256sum; then shacheck() { sha256sum -c "$1"; }; else shacheck() { shasum -a 256 -c "$1"; }; fi
 echo "Docker $(docker version --format '{{.Server.Version}}' 2>/dev/null), $(python3 --version), psql $(psql --version | awk '{print $3}'), Node $(node --version) : OK"
 

@@ -29,9 +29,9 @@ fi
 echo "[neolab] 3/3 compte de lecture du serveur MCP"
 bundle=$(mktemp -d)
 WAREHOUSE_PUBLIC_HOST=127.0.0.1 WAREHOUSE_PUBLIC_PORT=5432 \
-    "$py" scripts/warehouse_user.py create neolab_lecture --all-access --out-dir "$bundle" >/dev/null
+    "$py" scripts/warehouse_user.py create lecture_mcp --all-access --out-dir "$bundle" >/dev/null
 NEOLAB_WAREHOUSE_CREDENTIALS="$NEOLAB_STATE/credentials.env" \
-    "$py" scripts/warehouse_connect.py init --from-file "$bundle/neolab_lecture.env" >/dev/null
+    "$py" scripts/warehouse_connect.py init --from-file "$bundle/lecture_mcp.env" >/dev/null
 rm -rf "$bundle"
 touch "$NEOLAB_STATE/ready"
 echo "[neolab] PRÊT"

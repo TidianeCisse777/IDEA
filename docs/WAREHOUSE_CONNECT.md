@@ -18,7 +18,7 @@
 
 ## Étapes 1 et 2 — une seule fois par poste, quel que soit l'agent
 
-Prérequis : Python 3.10+, Node.js 18+, et un accès réseau au serveur (tunnel SSH ou réseau du labo, voir
+Prérequis : Python 3.10+, Node.js 20+, et un accès réseau au serveur (tunnel SSH ou réseau du labo, voir
 [Réseau](#réseau)).
 
 ```bash
@@ -236,7 +236,7 @@ Vos requêtes sont aussi journalisées côté serveur pour l'audit du labo (comp
 | `périmètre: aucun droit accordé` | compte créé sans droit: demander un accès à l'administrateur |
 | vues UVP vides alors que le périmètre n'est pas vide | il manque le droit sur l'autre source (EcoTaxa **et** EcoPart); la ligne `jeux lisibles` de `check` le signale. Voir [composer des droits](WAREHOUSE_ACCESS_CONTROL.md#composer-des-droits-sur-plusieurs-sources) |
 | `contexte métier` en échec | le contexte n'a pas été publié: l'administrateur relance le service `warehouse-context` (Docker) ou le déploiement |
-| `Node.js 18+ est requis` | installer Node.js 18+ |
+| `Node.js 20+ est requis` | installer Node.js 20+ |
 | poste sans accès à npm | sur un poste connecté, `python scripts/warehouse_connect.py install-dbhub`, puis copier `data/tooling/dbhub` |
 
 ## Tester sans rien enregistrer (Claude Code)

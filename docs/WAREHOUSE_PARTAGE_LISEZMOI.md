@@ -172,7 +172,7 @@ ensuite telles quelles, dans le terminal Ubuntu.
    sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
    sudo apt install -y postgresql-client-16
    ```
-4. **Installer Node.js (version 18 ou plus)** :
+4. **Installer Node.js (version 20 ou plus)** :
    ```bash
    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
    sudo apt install -y nodejs
@@ -188,7 +188,7 @@ docker --version && docker compose version && python3 --version && psql --versio
 ```
 
 Chaque ligne doit afficher une version : Docker Compose 2 ou plus, Python 3.10 ou plus, psql 16 ou plus,
-Node 18 ou plus. Une erreur « command not found » indique l'outil à réinstaller.
+Node 20 ou plus. Une erreur « command not found » indique l'outil à réinstaller.
 
 ---
 

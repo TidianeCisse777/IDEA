@@ -5,13 +5,22 @@
 # Contexte de construction : le dossier de la copie partagée, qui contient IDEA/ (le code) et la sauvegarde
 # neolab_warehouse_*.dump. installer.sh et installer_windows.bat le construisent :
 #     docker build -t neolab-warehouse -f IDEA/docker/allinone/Dockerfile .
-# PostgreSQL 16 (as the warehouse) on Debian 12: Python 3.11 and Node 18 for the scripts and DbHub, PostGIS
+# PostgreSQL 16 (as the warehouse) on Debian 12: Python 3.11 for the scripts, PostGIS
 # from the PostgreSQL apt repository the image already uses. (postgis/postgis:16-3.4 is Debian 11: Node 12.)
+# Node 22 from the official image: DbHub needs Node 20+ (the global `crypto`; Debian 12's Node 18 answers
+# every query with « crypto is not defined »).
+FROM node:22-bookworm-slim AS node
+
 FROM postgres:16-bookworm
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends postgresql-16-postgis-3 postgresql-16-postgis-3-scripts python3 python3-venv nodejs npm ca-certificates \
+ && apt-get install -y --no-install-recommends postgresql-16-postgis-3 postgresql-16-postgis-3-scripts python3 python3-venv ca-certificates \
  && rm -rf /var/lib/apt/lists/*
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+ && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+ && node --version
 
 ENV PGDATA=/var/lib/postgresql/data/pgdata \
     POSTGRES_USER=neolab \

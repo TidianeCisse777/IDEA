@@ -156,7 +156,7 @@ def dbhub_command():
         return [node, str(LOCAL_DBHUB), *base]
     npx = shutil.which('npx') or shutil.which('npx.cmd')
     if not npx:
-        raise SystemExit('Node.js 18+ est requis (https://nodejs.org) pour lancer DbHub.')
+        raise SystemExit('Node.js 20+ est requis (https://nodejs.org) pour lancer DbHub.')
     return [npx, '-y', DBHUB_PACKAGE, *base]
 
 
@@ -170,7 +170,7 @@ def install_dbhub(_args):
     """Install the pinned DbHub next to the repo so later starts need no network."""
     npm = shutil.which('npm') or shutil.which('npm.cmd')
     if not npm:
-        raise SystemExit('Node.js 18+ (avec npm) est requis: https://nodejs.org')
+        raise SystemExit('Node.js 20+ (avec npm) est requis: https://nodejs.org')
     prefix = LOCAL_DBHUB.parents[4]  # data/tooling/dbhub
     prefix.mkdir(parents=True, exist_ok=True)
     result = subprocess.run([npm, 'install', '--no-audit', '--no-fund', '--prefix', str(prefix), DBHUB_PACKAGE])
