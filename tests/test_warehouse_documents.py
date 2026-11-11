@@ -62,7 +62,7 @@ class ContractTests(unittest.TestCase):
         for name in ('warehouse.toml', 'warehouse.connect.toml'):
             tools = {t['name']: t for t in tomllib.loads((ROOT / 'dbhub' / name).read_text(encoding='utf-8'))['tools']}
             self.assertIn('catalogue.search_documents($1', tools['search_documents']['statement'])
-            self.assertIn('catalogue.document_sections', tools['read_document']['statement'])
+            self.assertIn('catalogue.read_document($1', tools['read_document']['statement'])
 
 
 if __name__ == '__main__':

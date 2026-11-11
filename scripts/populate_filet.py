@@ -159,16 +159,19 @@ def connection(database_url: str | None = None):
     )
 
 
-def load(samples_path: Path, abundance_path: Path, dictionary_path: Path, database_url: str | None = None, zones_path: Path = DEFAULT_ZONES) -> dict:
-    for path in (samples_path, abundance_path, dictionary_path):
+def load(samples_path: Path, abundance_path: Path, dictionary_path: Path | None, database_url: str | None = None, zones_path: Path = DEFAULT_ZONES) -> dict:
+    # The column dictionary carries no value: it only enters the provenance (version hash, manifest). Without
+    # it, the version records the two data files alone.
+    sources = [path for path in (samples_path, abundance_path, dictionary_path) if path is not None]
+    for path in sources:
         if not path.is_file():
             raise FileNotFoundError(path)
-    hashes = {path.name: sha256(path) for path in (samples_path, abundance_path, dictionary_path)}
+    hashes = {path.name: sha256(path) for path in sources}
     version_hash = hashlib.sha256("".join(f"{name}:{value}\n" for name, value in sorted(hashes.items())).encode()).hexdigest()
     samples, analyses = sample_records(samples_path)
     zones = load_features(zones_path)
     rows = list(abundance_rows(abundance_path))
-    manifest = ";".join(str(path.resolve()) for path in (samples_path, abundance_path, dictionary_path))
+    manifest = ";".join(str(path.resolve()) for path in sources)
     with connection(database_url) as conn, conn.cursor() as cur:
         cur.execute("""INSERT INTO warehouse.dataset_version
             (source_instance,dataset_key,version_key,file_manifest_uri,sha256)
@@ -212,10 +215,11 @@ def main() -> None:
     parser.add_argument("--samples", type=Path, default=DEFAULT_SAMPLES)
     parser.add_argument("--abundance", type=Path, default=DEFAULT_ABUNDANCE)
     parser.add_argument("--dictionary", type=Path, default=DEFAULT_DICTIONARY)
+    parser.add_argument("--no-dictionary", action="store_true", help="dictionnaire des colonnes absent : version tracée par les deux fichiers de données")
     parser.add_argument("--database-url")
     parser.add_argument("--zones", type=Path, default=DEFAULT_ZONES)
     args = parser.parse_args()
-    print(load(args.samples, args.abundance, args.dictionary, args.database_url, args.zones))
+    print(load(args.samples, args.abundance, None if args.no_dictionary else args.dictionary, args.database_url, args.zones))
 
 
 if __name__ == "__main__":

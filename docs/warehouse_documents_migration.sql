@@ -10,6 +10,24 @@
 -- (documents du dépôt, rechargés à chaque déploiement). Le texte est conservé tel quel; aucune
 -- interprétation. Additive et relançable.
 
+-- Accent-insensitive search (« copepode » finds « copépode »): French and English configurations with
+-- unaccent before stemming. unaccent is a trusted extension (PostgreSQL 13+).
+CREATE EXTENSION IF NOT EXISTS unaccent;
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_ts_config c JOIN pg_namespace n ON n.oid = c.cfgnamespace
+                   WHERE n.nspname = 'warehouse' AND c.cfgname = 'french_unaccent') THEN
+        CREATE TEXT SEARCH CONFIGURATION warehouse.french_unaccent (COPY = pg_catalog.french);
+        ALTER TEXT SEARCH CONFIGURATION warehouse.french_unaccent
+            ALTER MAPPING FOR hword, hword_part, word WITH unaccent, french_stem;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_ts_config c JOIN pg_namespace n ON n.oid = c.cfgnamespace
+                   WHERE n.nspname = 'warehouse' AND c.cfgname = 'english_unaccent') THEN
+        CREATE TEXT SEARCH CONFIGURATION warehouse.english_unaccent (COPY = pg_catalog.english);
+        ALTER TEXT SEARCH CONFIGURATION warehouse.english_unaccent
+            ALTER MAPPING FOR hword, hword_part, word WITH unaccent, english_stem;
+    END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS warehouse.document (
     id bigserial PRIMARY KEY,
     doc_key text NOT NULL UNIQUE CHECK (doc_key ~ '^[a-z0-9][a-z0-9_-]*$'),
@@ -34,13 +52,24 @@ CREATE TABLE IF NOT EXISTS warehouse.document_section (
     ordinal integer NOT NULL CHECK (ordinal >= 1),
     heading text,
     body text NOT NULL,
-    search tsvector GENERATED ALWAYS AS (
-        setweight(to_tsvector('french', coalesce(heading, '')), 'A')
-        || setweight(to_tsvector('english', coalesce(heading, '')), 'A')
-        || setweight(to_tsvector('french', body), 'B')
-        || setweight(to_tsvector('english', body), 'B')) STORED,
     PRIMARY KEY (document_id, ordinal)
 );
+-- The index column, (re)built with the accent-insensitive configurations (first version: plain french/english).
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'warehouse'
+               AND table_name = 'document_section' AND column_name = 'search'
+               AND generation_expression NOT LIKE '%unaccent%') THEN
+        ALTER TABLE warehouse.document_section DROP COLUMN search;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'warehouse'
+                   AND table_name = 'document_section' AND column_name = 'search') THEN
+        ALTER TABLE warehouse.document_section ADD COLUMN search tsvector GENERATED ALWAYS AS (
+            setweight(to_tsvector('warehouse.french_unaccent'::regconfig, coalesce(heading, '')), 'A')
+            || setweight(to_tsvector('warehouse.english_unaccent'::regconfig, coalesce(heading, '')), 'A')
+            || setweight(to_tsvector('warehouse.french_unaccent'::regconfig, body), 'B')
+            || setweight(to_tsvector('warehouse.english_unaccent'::regconfig, body), 'B')) STORED;
+    END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS document_section_search_idx ON warehouse.document_section USING gin (search);
 COMMENT ON TABLE warehouse.document_section IS
     'Section d''un document (ordre d''origine), indexée en texte intégral français et anglais.';
@@ -85,10 +114,11 @@ LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path = pg_catalog, warehouse, catalogue
 AS $$
     WITH q AS (
-        SELECT websearch_to_tsquery('french', p_query) AS fr, websearch_to_tsquery('english', p_query) AS en
+        SELECT websearch_to_tsquery('warehouse.french_unaccent', p_query) AS fr,
+               websearch_to_tsquery('warehouse.english_unaccent', p_query) AS en
     )
     SELECT d.doc_key, d.title, s.ordinal, s.heading,
-           ts_headline('french', s.body, q.fr || q.en,
+           ts_headline('warehouse.french_unaccent', s.body, q.fr || q.en,
                        'MaxFragments=2, MaxWords=45, MinWords=15, StartSel=«, StopSel=»') AS excerpt,
            ts_rank(s.search, q.fr || q.en) AS rank
     FROM warehouse.document_section s
@@ -109,3 +139,21 @@ ALTER VIEW catalogue.document_sections OWNER TO warehouse_data_owner;
 ALTER FUNCTION catalogue.search_documents(text, integer) OWNER TO warehouse_data_owner;
 COMMENT ON FUNCTION catalogue.search_documents(text, integer) IS
     'Recherche plein texte dans les documents lisibles : doc_key, section, extrait (excerpt, termes entre « »), score.';
+
+-- Paged reading (like the knowledge-base servers that cap what one call returns): six sections from
+-- p_from_section, with the document's total so the agent knows whether to continue.
+CREATE OR REPLACE FUNCTION catalogue.read_document(p_doc_key text, p_from_section integer DEFAULT 1)
+RETURNS TABLE (doc_key text, title text, section integer, total_sections bigint, heading text, body text)
+LANGUAGE sql STABLE
+SET search_path = pg_catalog, catalogue
+AS $$
+    SELECT s.doc_key, s.title, s.ordinal, count(*) OVER (), s.heading, s.body
+    FROM catalogue.document_sections s
+    WHERE s.doc_key = p_doc_key
+    ORDER BY s.ordinal
+    OFFSET greatest(coalesce(p_from_section, 1), 1) - 1
+    LIMIT 6
+$$;
+ALTER FUNCTION catalogue.read_document(text, integer) OWNER TO warehouse_data_owner;
+COMMENT ON FUNCTION catalogue.read_document(text, integer) IS
+    'Six sections d''un document à partir de p_from_section (défaut 1), avec le nombre total de sections.';

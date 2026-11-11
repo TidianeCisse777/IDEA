@@ -44,19 +44,25 @@ statement = "SELECT doc_key,title,ordinal AS section,heading,excerpt,round(rank:
 [[tools.parameters]]
 name = "query"
 type = "string"
-description = "Mots à chercher (français ou anglais), ex. « volume filtré débitmètre » ou « mesh size »; guillemets pour une expression exacte."
+description = "Mots à chercher (français ou anglais, avec ou sans accents), ex. « volume filtré débitmètre » ou « mesh size »; guillemets pour une expression exacte."
 required = true
 
 [[tools]]
 name = "read_document"
 source = "neolab"
-description = "Lire le texte d'un document du warehouse, section par section dans l'ordre d'origine (doc_key donné par search_documents ou catalogue.documents). Citer le doc_key et le numéro de section utilisés."
+description = "Lire un document du warehouse, six sections à la fois dans l'ordre d'origine (doc_key donné par search_documents ou catalogue.documents). total_sections indique s'il faut continuer avec from_section. Citer le doc_key et le numéro de section utilisés."
 readonly = true
-max_rows = 200
-statement = "SELECT ordinal AS section,heading,body FROM catalogue.document_sections WHERE doc_key=$1 ORDER BY ordinal"
+max_rows = 6
+statement = "SELECT section,total_sections,heading,body FROM catalogue.read_document($1, $2::integer)"
 
 [[tools.parameters]]
 name = "doc_key"
 type = "string"
 description = "Clé du document, ex. filet-export-review."
 required = true
+
+[[tools.parameters]]
+name = "from_section"
+type = "integer"
+description = "Première section à lire (défaut 1); continuer avec la suivante tant que section < total_sections."
+required = false
