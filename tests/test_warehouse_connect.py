@@ -449,6 +449,30 @@ class WorkspaceTests(unittest.TestCase):
             self.assertNotRegex(text, r'(?i)PASSWORD\s*=|postgres(ql)?://')
 
 
+class ToolTitleTests(unittest.TestCase):
+    """The applications show « NeoLab Warehouse · … » for each call, not DbHub's « Execute SQL (postgres) »."""
+
+    def setUp(self):
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        import warehouse_connect
+        self.module = warehouse_connect
+
+    def test_tools_get_neolab_titles_and_keep_their_names(self):
+        tools = [{'name': n, 'annotations': {'title': n + ' (postgres)', 'readOnlyHint': True}}
+                 for n in ('execute_sql', 'search_objects', 'warehouse_context')]
+        line = json.dumps({'jsonrpc': '2.0', 'id': 2, 'result': {'tools': tools}}).encode() + b'\n'
+        out = json.loads(self.module.with_titles(line))['result']['tools']
+        self.assertEqual([t['name'] for t in out], ['execute_sql', 'search_objects', 'warehouse_context'])
+        for tool in out:
+            self.assertTrue(tool['title'].startswith('NeoLab Warehouse · '))
+            self.assertEqual(tool['annotations']['title'], tool['title'])
+            self.assertTrue(tool['annotations']['readOnlyHint'])
+
+    def test_other_lines_pass_unchanged(self):
+        line = b'{"jsonrpc": "2.0", "id": 3, "result": {"content": []}}\n'
+        self.assertIs(self.module.with_titles(line), line)
+
+
 class ErrorHintTests(unittest.TestCase):
     """A failed SQL call comes back with what to do next (seen in agent traces: cancelled taxon
     searches over the 15 M objects, guessed column names)."""

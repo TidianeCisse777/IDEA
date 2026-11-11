@@ -288,6 +288,33 @@ ERROR_HINTS = (
 )
 
 
+# Titles the applications show for each tool call (DbHub's own read « Execute SQL (postgres) »).
+TOOL_TITLES = {
+    'warehouse_context': 'NeoLab Warehouse · Read data guide',
+    'execute_sql': 'NeoLab Warehouse · Run SQL query',
+    'search_objects': 'NeoLab Warehouse · Find tables and columns',
+}
+
+
+def with_titles(line):
+    """Give the tools of a tools/list answer clear titles; any other line unchanged."""
+    if b'"tools"' not in line:
+        return line
+    try:
+        message = json.loads(line)
+        tools = message['result']['tools']
+        changed = False
+        for tool in tools:
+            title = TOOL_TITLES.get(tool.get('name'))
+            if title:
+                tool['title'] = title
+                tool.setdefault('annotations', {})['title'] = title
+                changed = True
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return line
+    return (json.dumps(message, ensure_ascii=False) + '\n').encode('utf-8') if changed else line
+
+
 def with_hint(line):
     """Add a hint to a failed SQL call's answer (MCP result with isError); any other line unchanged."""
     if b'isError' not in line:
@@ -387,7 +414,7 @@ def relay(command, values, trace_file=None):
             if updated is not line:
                 initialize_id = None  # done: only the answer to initialize carries the instructions
             line = updated
-        line = with_hint(line)
+        line = with_titles(with_hint(line))
         sys.stdout.buffer.write(line)
         sys.stdout.buffer.flush()
         if trace_file is None:
