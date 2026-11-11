@@ -24,6 +24,12 @@
   plus, 232 déploiements filet, 167 profils UVP, 133 stations. `explore.filet_deployments` (engin, couches,
   mailles). Meilleurs couples copépodes inscrits dans `filet-uvp-comparaison`; `claude -p` les retrouve
   depuis le document (232 couples, critères repris). Variante Calanus à 50 km/72 h : dépasse 30 s.
+- QA avant démo (agents réels, `claude -p`, compte de lecture) : (1) consigne précise « stations 133 et 134,
+  filet C5+M+F contre UVP validés ESD ≥ 1,5 mm, même station, 5 h » appliquée à la lettre; l'agent a trouvé un
+  bug (ESD absent d'Amundsen 2023 → 0 faux), corrigé (ESD tiré de l'aire, objets sans taille comptés, NULL au
+  lieu de 0). (2) « carte des couples même station, 5 h » : fiche graphs lue, un point par déploiement,
+  232/167/133 dans le titre, cartouche Exploratoire, PNG, SVG, CSV, script et provenance produits. Requêtes
+  larges sur toutes les stations > 30 s : `filet_stations` (2 à 7 s). Tests warehouse : 144 réussis.
 - Limites : compte à périmètre restreint non testé sur les documents; partie Windows du chargement FILET non
   encore lancée.
 
