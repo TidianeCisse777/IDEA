@@ -4,6 +4,41 @@
 
 **Dernière mise à jour :** 11 novembre 2026
 
+### 11 novembre 2026 — QA des données avant démo (compte de lecture, base chargée)
+
+**Juste (preuves SQL, compte `lecture_mcp`)**
+- Valeurs de référence retrouvées : am_leg3 69 574 validés; FILET 6 102 échantillons, 1 502 analyses, 4 941
+  lignes appariées et 106 non; couples même station et 5 h : 232 déploiements, 167 profils UVP, 133 stations;
+  UVP–CTD : 496 profils UVP, 453 profils CTD.
+- Liens : 685 profils UVP sur 686 ont un sample EcoTaxa (manque `lc_2022_19_04`); 904 samples EcoTaxa reliés
+  à 456 profils CTD, tous `accepted`; 12 151 035 objets sur 12 151 370 rattachés à une tranche UVP.
+- Aucune tranche UVP à volume nul ou absent; aucune valeur sentinelle CTD; aucun objet de taxon inconnu;
+  stades FILET d'un taxon tous connus ou tous NA (jamais partiels); écarts de temps filet–UVP centrés vers
+  −1 h, sans décalage de fuseau visible (cohérent, non prouvé).
+
+**Corrigé**
+- Double compte (commit 93a95ce et suivant) : 199 profils GreenEdge 2016 liés à deux copies EcoTaxa identiques
+  (149 et 20880/20890); `filet_uvp_compare` doublait l'abondance UVP (G707 : 634 → 317 objets). Un seul
+  projet par profil; fiches des quatre vues UVP averties; chiffres de la note de méthode corrigés.
+- Inconnu ≠ zéro : `esd_um` absent pour 11,4 M d'objets (UVP6 récents) alors que l'aire existe; ESD tiré de
+  l'aire dans `uvp_object_sizes` et `ecotaxa_objects` (égal à l'ESD source là où les deux existent).
+- Vues vides non annoncées (`filet_ctd`, `filet_uvp_abundance`, `taxon_mapping`) : toute vue à 0 ligne est
+  maintenant signalée dans sa fiche et dans l'overview, à chaque déploiement.
+- `uvp_object_sizes` expose `ecotaxa_sample_id` et `ecotaxa_project_id`.
+
+**Reste faux ou douteux (par gravité)**
+1. Source FILET : échantillon 22497 (station 308, 2010), volume débitmètre −4181,4 m³, d'où 111 abondances et
+   78 biomasses négatives au débitmètre (`SELECT * FROM explore.filet_data WHERE abundance_flowmeter_ind_m3 < 0`).
+   Données brutes gardées, fiche avertie : à corriger par le labo.
+2. `explore.uvp_objects`, `uvp_object_sizes`, `uvp_samples`, `uvp_taxon_abundance` contiennent toujours les deux
+   copies GreenEdge : un agent qui ignore la fiche compte double.
+3. Rapports UVP/FILET médians de la note de méthode retirés (mesurés avec le double compte) : à remesurer.
+4. Aucun lien FILET–CTD ni correspondance taxonomique FILET–UVP chargés; 2 analyses FILET ont COPEPODID connu
+   pour certains taxons seulement (somme partielle possible); positions UVP absentes d'EcoPart pour 182
+   profils GreenEdge (prises dans EcoTaxa par `filet_uvp_pairs`, NULL dans `uvp_samples`).
+5. Non refait après ces corrections : questions à de vrais agents (point 9) et batterie; `filet_uvp_compare`
+   sur toutes les stations prend 10 à 20 s (limite 30 s), 1 à 5 s avec `filet_stations`.
+
 ### 11 novembre 2026 — Base de connaissances, FILET chargé, comparaison FILET–UVP (phase 2)
 
 - Documents écrits consultables par les agents (modèle des serveurs MCP de connaissances : chercher puis lire

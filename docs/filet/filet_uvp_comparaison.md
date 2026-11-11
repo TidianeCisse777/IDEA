@@ -41,9 +41,9 @@ validée à 100 %, abondance filet renseignée. Abondances en ind./m3.
 
 | Station (déploiement) | Date | Engin, couche | km / h | Filet (vol. profondeur / débitmètre) | UVP (objets) |
 |---|---|---|---|---|---|
-| G707 (1272) | 2016-07-08 | 4x1m2 - LOKI, 0–700 m | 0,1 / 1,1 | 126,8 / 250,3 | 37,0 (634) |
-| G507 (1253) | 2016-06-30 | 4x1m2 - LOKI, 0–286 m | 0,1 / 0,8 | 347,5 / 555,0 | 131,1 (490) |
-| G413 (1245) | 2016-06-27 | 4x1m2 - LOKI, 0–270 m | 0,7 / 0,7 | 531,0 / 503,5 | 91,5 (354) |
+| G707 (1272) | 2016-07-08 | 4x1m2 - LOKI, 0–700 m | 0,1 / 1,1 | 126,8 / 250,3 | 18,5 (317) |
+| G507 (1253) | 2016-06-30 | 4x1m2 - LOKI, 0–286 m | 0,1 / 0,8 | 347,5 / 555,0 | 65,5 (245) |
+| G413 (1245) | 2016-06-27 | 4x1m2 - LOKI, 0–270 m | 0,7 / 0,7 | 531,0 / 503,5 | 45,8 (177) |
 | 133 (2253) | 2023-09-18 | 2x1m2, 0–170 m | 1,4 / 1,8 | 420,9 / 502,2 | 63,2 (122) |
 | 134 (2250) | 2023-09-17 | 2x1m2, 0–240 m | 0,2 / 1,7 | 149,3 / 177,2 | 34,0 (92) |
 
@@ -52,6 +52,14 @@ Aussi propres : G204, G201, G418, G512 (GreenEdge 2016). Profil vertical : RA62 
 0,1 km, 2,1 h; peu d'objets. À éviter : TCA-BB2 (21 % des copépodes UVP validés), stations 2024 au filet de
 500 µm (aucun copépode UVP validé), traits 0–700 m où l'UVP ne voit que 37 à 72 % de la couche (G318, G324,
 G312, G409…).
+
+## Copies EcoTaxa : un seul projet par profil UVP
+
+199 profils UVP GreenEdge 2016 sont liés à deux samples EcoTaxa qui sont des copies identiques des mêmes
+images (projet 149 et projet 20880 ou 20890 : mêmes comptes par profil, taxon et statut, 1 500 880 objets
+chacun). `filet_uvp_compare` ne compte que le plus petit `ecotaxa_project_id` du profil
+(`uvp_ecotaxa_project_id`, 149 pour GreenEdge 2016). Avant cette correction (QA du 11 novembre 2026),
+l'abondance UVP de GreenEdge était doublée. Dans les vues UVP, filtrer de même sur un seul projet.
 
 ## Abondances sur la même couche
 
@@ -102,14 +110,8 @@ Paires (rang 1), échantillons FILET appariés, distance et écart médians, par
 Comparaison des copépodes (UVP Copepoda validés, FILET COPEPODID, meilleure paire) : seules les analyses
 FILET avec un profil UVP proche comptent, d'où peu de paires.
 
-| Réglage | Paires | Couverture médiane | UVP/FILET médian |
-|---|---|---|---|
-| 5 km, 6 h | 33 | 0,99 | 0,197 |
-| 30 km, 24 h | 33 | 0,99 | 0,197 |
-| 50 km, 72 h | 34 | 0,99 | 0,191 |
-| 100 km, 168 h | 34 | 0,99 | 0,191 |
-| 50 km, 72 h, tous statuts UVP | 34 | 0,99 | 0,191 |
-| 50 km, 72 h, stades C4, C5, M, F | 34 | 0,99 | 0,276 |
+Les rapports UVP/FILET médians mesurés avant le 11 novembre au soir comptaient deux fois les objets UVP de
+GreenEdge 2016 (voir « Copies EcoTaxa ») : ils ont été retirés et sont à remesurer.
 
 Durée : le compte de lecture a 30 s par requête. Sur toutes les stations, les réglages larges (50 km et
 72 h, tous les stades détaillés avec un seuil de carbone) dépassent cette limite (11 novembre 2026). Pour

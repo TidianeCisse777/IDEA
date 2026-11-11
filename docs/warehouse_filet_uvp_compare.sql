@@ -191,12 +191,12 @@ BEGIN
         WHERE u.uvp_profile_id IN (SELECT DISTINCT uvp_profile_id FROM layer_bins)
         GROUP BY u.uvp_profile_id
     ), sized AS (
-        SELECT lb.filet_sample_id, lb.analysis_id, lb.uvp_profile_id,
+        -- Every copy is read (same plan as before the copies were handled: a filter on the project inside the
+        -- view made two stations take 17 s instead of 2); the chosen project is kept when counting.
+        SELECT lb.filet_sample_id, lb.analysis_id, lb.uvp_profile_id, o.ecotaxa_project_id AS project_id,
                CASE WHEN p_size_measure = 'esd' THEN o.esd_um ELSE o.major_um END AS size_um
         FROM layer_bins lb
-        JOIN source src ON src.uvp_profile_id = lb.uvp_profile_id
         JOIN explore.uvp_object_sizes o ON o.uvp_bin_id = lb.uvp_bin_id AND o.uvp_profile_id = lb.uvp_profile_id
-                                       AND o.ecotaxa_project_id = src.project_id
         WHERE o.taxon_id IN (SELECT taxon_id FROM taxa)
           AND o.uvp_profile_id IN (SELECT DISTINCT uvp_profile_id FROM layer_bins)
           AND (NOT p_validated_only OR o.annotation_status = 'validated')
@@ -208,6 +208,7 @@ BEGIN
                                        AND (p_max_size_um IS NULL OR z.size_um < p_max_size_um))) AS n,
                count(*) FILTER (WHERE (p_min_size_um IS NOT NULL OR p_max_size_um IS NOT NULL) AND z.size_um IS NULL) AS no_size
         FROM sized z
+        JOIN source src ON src.uvp_profile_id = z.uvp_profile_id AND src.project_id = z.project_id
         GROUP BY 1, 2, 3
     ), uvp AS (
         SELECT lb.filet_sample_id, lb.analysis_id, lb.uvp_profile_id, count(*)::integer AS n_bins,

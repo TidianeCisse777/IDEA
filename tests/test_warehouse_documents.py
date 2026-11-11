@@ -117,7 +117,7 @@ class DataQaTests(unittest.TestCase):
         # 199 GreenEdge 2016 profiles are linked to two identical EcoTaxa copies: UVP abundance was doubled.
         sql = (ROOT / 'docs' / 'warehouse_filet_uvp_compare.sql').read_text(encoding='utf-8')
         self.assertIn('min(u.ecotaxa_project_id) AS project_id', sql)
-        self.assertIn('o.ecotaxa_project_id = src.project_id', sql)
+        self.assertIn('src.project_id = z.project_id', sql)
         self.assertIn('uvp_ecotaxa_project_id integer', sql)
 
     def test_uvp_sheets_warn_about_copies_and_object_sizes_expose_the_project(self):
