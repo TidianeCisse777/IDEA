@@ -96,6 +96,8 @@ class WarehouseContextTests(unittest.TestCase):
         text = ' '.join(GRAPHICS.values())
         self.assertIn('aucun cartouche de statut', text)
         self.assertIn('vont dans la RÉPONSE', text)
+        self.assertIn('« Données et méthode »', text)
+        self.assertIn('sans surcharger la réponse', text)
         self.assertNotIn('Afficher un cartouche', text)
 
     def test_maps_keep_coordinate_order_projection_and_network_limits_explicit(self):

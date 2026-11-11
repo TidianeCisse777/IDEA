@@ -58,8 +58,10 @@ GRAPHICS = view(
     'Privilégier les fonds locaux/caches; confirmer tout téléchargement lourd.',
     'La figure reste sobre : titre court, axes avec unités, légende; aucun cartouche de statut, aucune note de '
     'source, de paramètres, de comptes ou de limites dans l’image (ils surchargent le graphique). Ces informations '
-    'vont dans la RÉPONSE de l’agent, à côté de la figure : statut Exploratoire par défaut (pas une probabilité de '
-    'confiance), source et requête, paramètres, comptes, exclusions et limites. Statuts : confirmed exige une '
+    'vont dans la RÉPONSE de l’agent, à côté de la figure, toujours, dans une section claire « Données et méthode » : '
+    'quelques puces courtes, sans surcharger la réponse : données et vues utilisées, critères et paramètres, comptes '
+    '(ex. déploiements, profils, objets), statut Exploratoire par défaut (pas une probabilité de confiance), limites '
+    'et exclusions; la requête SQL complète reste dans la section des requêtes exécutées. Statuts : confirmed exige une '
     'validation scientifique explicitement documentée (un match accepted ou un test technique réussi ne suffit pas); '
     'exploratory par défaut; uncertain signale les limites connues, sans inventer de valeurs ou d’intervalles. Si une '
     'même figure mêle des séries de statuts différents, les distinguer par le trait (confirmed #007B88 plein, '
