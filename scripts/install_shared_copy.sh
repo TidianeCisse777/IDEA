@@ -35,6 +35,10 @@ case "$account" in warehouse_*|pg_*|neolab) account="${account}_lecture" ;; esac
 
 step "1/8 Outils (installation de ceux qui manquent)"
 os=$(uname -s)
+# Docker Desktop installed but its `docker` command not on PATH (CLI tools not linked, or ~/.docker/bin).
+for d in "$HOME/.docker/bin" /Applications/Docker.app/Contents/Resources/bin /usr/local/bin; do
+    have docker || { [ -x "$d/docker" ] && PATH="$d:$PATH"; }
+done
 if [ "$os" = Darwin ]; then
     if ! have brew; then
         for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do [ -x "$b" ] && eval "$("$b" shellenv)" && break; done
@@ -49,7 +53,7 @@ if [ "$os" = Darwin ]; then
     node_ok || brew install node
     if ! psql_ok; then brew install libpq && brew link --force libpq; fi
     tools_only
-    if ! have docker; then brew install --cask docker; fi
+    if ! have docker && [ ! -d /Applications/Docker.app ]; then brew install --cask docker; fi
     if ! docker_ok; then
         echo "Démarrage de Docker Desktop (au premier lancement : accepter ses conditions dans sa fenêtre)…"
         open -a Docker || true

@@ -45,7 +45,19 @@ if (-not $linuxUser) { Fail "Ubuntu ne répond pas : l'ouvrir une fois depuis le
 Write-Host "$ubuntu, utilisateur Linux $linuxUser : OK"
 
 Step "2/4 Docker Desktop"
-$dockerApp = Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe'
+# Docker Desktop is not always under Program Files (per-user install, other drive): look in the usual places,
+# then next to the docker command, then in the registry.
+$candidates = @((Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe'),
+                (Join-Path $env:LOCALAPPDATA 'Docker\Docker Desktop.exe'),
+                (Join-Path $env:LOCALAPPDATA 'Programs\Docker\Docker\Docker Desktop.exe'))
+$cli = Get-Command docker.exe -ErrorAction SilentlyContinue
+if ($cli) { $candidates += (Join-Path (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $cli.Source))) 'Docker Desktop.exe') }
+$reg = Get-ItemProperty 'HKLM:\SOFTWARE\Docker Inc.\Docker\1.0', 'HKCU:\SOFTWARE\Docker Inc.\Docker\1.0' -ErrorAction SilentlyContinue |
+       Where-Object { $_.AppPath } | Select-Object -First 1
+if ($reg) { $candidates += (Join-Path $reg.AppPath 'Docker Desktop.exe') }
+$found = $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+$dockerApp = if ($found) { $found } else { $candidates[0] }
+if ($found) { Write-Host "Docker Desktop trouvé : $found" }
 if (-not (Test-Path $dockerApp)) {
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
         Fail "Docker Desktop manquant et winget indisponible : l'installer depuis https://www.docker.com/products/docker-desktop/ puis relancer."
