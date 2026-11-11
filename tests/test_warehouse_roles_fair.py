@@ -686,3 +686,18 @@ class LiveDockerInitSimulationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GroupRolesBeforeMigrationsTests(unittest.TestCase):
+    """A dump restored on a new server names the group roles before warehouse_access_control.sql runs
+    (seen with the all-in-one image): deploy creates them first, with the very statements of that file."""
+
+    def test_deploy_creates_the_access_file_group_roles(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('deploy', ROOT / 'scripts' / 'deploy_warehouse_postgres.py')
+        deploy = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(deploy)
+        access = (ROOT / 'docs' / 'warehouse_access_control.sql').read_text(encoding='utf-8')
+        for role in deploy.GROUP_ROLES:
+            statement = next(line.strip() for line in deploy.GROUP_ROLES_SQL.splitlines() if f'CREATE ROLE {role} ' in line)
+            self.assertIn(statement, access)

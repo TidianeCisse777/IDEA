@@ -41,6 +41,19 @@ SERVICE_ROLES = ('warehouse_reader', 'warehouse_navigator')
 GROUP_ROLES = ('warehouse_data_owner', 'warehouse_all_access', 'warehouse_explore_reader')
 
 
+GROUP_ROLES_SQL = """DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'warehouse_data_owner') THEN
+        CREATE ROLE warehouse_data_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'warehouse_all_access') THEN
+        CREATE ROLE warehouse_all_access NOLOGIN NOSUPERUSER;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'warehouse_explore_reader') THEN
+        CREATE ROLE warehouse_explore_reader NOLOGIN NOSUPERUSER;
+    END IF;
+END $$;"""
+
+
 def release_version():
     """The release number lives in docs/warehouse_release.sql only."""
     match = re.search(r"\\set release '([^']+)'", (DOCS / RELEASE_FILE).read_text(encoding='utf-8'))
@@ -90,6 +103,10 @@ def deploy(env, dry_run):
         # gracefully (see ensure_postgis); that migration also has its own
         # fallback for this case.
         ensure_postgis(env)
+        # Roles belong to the server, not to a dump: a dump restored on a new server (all-in-one image,
+        # managed hosting) has views and an event trigger that name the group roles before
+        # warehouse_access_control.sql runs. Same statement as that file, harmless when they exist.
+        psql(env, '-c', GROUP_ROLES_SQL)
     steps = []
     if fresh:
         steps += [(name, True) for name in FRESH_FILES]
