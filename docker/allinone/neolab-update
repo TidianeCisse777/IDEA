@@ -1,0 +1,32 @@
+#!/bin/bash
+# Applique dans le conteneur un code déjà copié dans /opt/neolab/IDEA (mettre_a_jour_windows.bat) :
+#
+#     docker exec neolab-warehouse bash /opt/neolab/IDEA/docker/allinone/neolab-update <version>
+#
+# Commandes du conteneur, migrations, vues et fiches du serveur MCP (déploiement relançable sans risque :
+# environ 1 à 2 minutes), dossier de travail, vérification du serveur. Les données et comptes ne changent pas.
+set -euo pipefail
+version=${1:?version attendue}
+[ -f "$NEOLAB_STATE/ready" ] || { echo "[neolab] ÉCHEC : la base n'est pas encore installée"; exit 1; }
+cd /opt/neolab/IDEA
+py=/opt/neolab/venv/bin/python
+install -m 755 docker/allinone/neolab-mcp /usr/local/bin/neolab-mcp
+install -m 755 docker/allinone/neolab-check /usr/local/bin/neolab-check
+install -m 755 docker/allinone/entrypoint.sh /usr/local/bin/neolab-entrypoint
+echo "[neolab] mise à jour de la base (migrations, vues, fiches MCP)"
+set -a; . "$NEOLAB_STATE/secrets.env"; set +a
+report=$(WAREHOUSE_POSTGRES_HOST=/var/run/postgresql WAREHOUSE_POSTGRES_PORT=5432 \
+         WAREHOUSE_POSTGRES_DB="$POSTGRES_DB" WAREHOUSE_POSTGRES_USER="$POSTGRES_USER" \
+         WAREHOUSE_POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
+         "$py" scripts/deploy_warehouse_postgres.py --check 2>&1 || true)
+if ! printf '%s\n' "$report" | grep -q "^PRÊT"; then
+    printf '%s\n' "$report" | tail -30
+    echo "[neolab] ÉCHEC : le warehouse n'est pas prêt après la mise à jour"
+    exit 1
+fi
+rm -rf /opt/neolab/workspace
+"$py" scripts/warehouse_connect.py workspace /opt/neolab/workspace >/dev/null
+check=$(neolab-check 2>&1 || true)
+printf '%s\n' "$check" | grep -q PASS || { printf '%s\n' "$check" | tail -12; echo "[neolab] ÉCHEC : serveur MCP"; exit 1; }
+printf '%s\n' "$version" > /opt/neolab/version
+echo "[neolab] À JOUR : $version"

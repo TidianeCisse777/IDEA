@@ -18,6 +18,11 @@
 - Preuve : après ce script, nouvelle conversation Codex Desktop, « combien d'objets validés dans am_leg3 » :
   69 574 (projet 14859, requête SQL et choix du projet affichés). Claude Desktop, VS Code et l'option
   `-CodexWsl` : non testés. Les zips déjà envoyés contiennent l'ancien installeur : à refaire avant partage.
+- Mise à jour sans réinstaller : `scripts/update_warehouse_windows.*` (`mettre_a_jour_windows.bat`) prend le
+  dernier commit de la branche sur GitHub (jeton lecture seule gardé chiffré par DPAPI), le copie dans le
+  conteneur et lance `docker/allinone/neolab-update` (commandes du conteneur, déploiement relançable, dossier de
+  travail, `neolab-check`); `-Auto` la lance à chaque ouverture de session. Partie conteneur vérifiée ici
+  (PRÊT, PASS, 5 s sur une base déjà migrée); partie Windows non encore lancée.
 - `scripts/publish_prebuilt_image.ps1` (image avec la base déjà installée, registre privé ghcr.io) : mécanisme
   vérifié sur une petite base (nouveau volume rempli, initialisation sautée); pas encore lancé sur la vraie
   base. Les mots de passe internes du conteneur sont dans l'image : elle doit rester privée.
