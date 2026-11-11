@@ -84,3 +84,13 @@ class FiletUvpCompareTests(unittest.TestCase):
     def test_deployed_after_the_views_it_reads(self):
         import deploy_warehouse_postgres as deploy
         self.assertEqual(deploy.ALWAYS_FILES[-1], 'warehouse_filet_uvp_compare.sql')
+
+    def test_missing_size_is_unknown_not_zero(self):
+        # Amundsen 2023 gives no ESD: the size filter must not turn those objects into « 0 too small ».
+        self.assertIn("coalesce(o.esd_um, 2 * sqrt(o.area_um2 / pi()))", self.SQL)
+        self.assertIn('uvp_n_objects_no_size', self.SQL)
+        self.assertIn('CASE WHEN coalesce(o.no_size, 0) = 0 THEN', self.SQL)
+
+    def test_station_filter_and_single_signatures(self):
+        self.assertIn('p_filet_stations text[] DEFAULT NULL', self.SQL)
+        self.assertIn('DROP FUNCTION IF EXISTS explore.filet_uvp_pairs(double precision, double precision, boolean, boolean);', self.SQL)

@@ -73,6 +73,10 @@ min_filet_ug_c_per_ind, filet_stations)`.
 - `min_filet_ug_c_per_ind` : ne garder côté filet que les lignes taxon × stade détaillé dont le carbone par
   individu (biomasse / abondance, valeurs du labo) atteint ce seuil, pour comparer les gros stades à ce que voit
   l'UVP (copépodes UVP validés : ESD ≥ ~1 mm, médiane 2,1 mm). Refusé avec un stade agrégé.
+- Taille UVP : ESD source, ou 2·√(aire/π) quand le projet ne donne pas l'ESD (Amundsen 2023); identique à
+  l'ESD source partout où les deux existent (rapport 1,0000 sur 200 000 objets). Un objet sans la mesure
+  demandée n'est jamais compté « trop petit » : il est compté dans `uvp_n_objects_no_size`, et l'abondance UVP
+  est alors NULL (inconnue), pas 0. Bug trouvé par un agent le 11 novembre 2026 (0 faux aux stations 133–134).
 - `uvp_layer_coverage` = épaisseur des tranches retenues / épaisseur du trait (1 = couche entièrement vue par
   l'UVP). Une couverture faible signale un profil UVP moins profond que le filet.
 - `ratio_uvp_filet_depth` = abondance UVP / abondance FILET au volume profondeur, simple quotient.

@@ -33,6 +33,11 @@ DO $$ BEGIN  -- a current signature with an older column list (return type chang
                AND pronargs = 5 AND NOT 'filet_deployment_id' = ANY(proargnames)) THEN
         DROP FUNCTION explore.filet_uvp_pairs(double precision, double precision, boolean, boolean, text[]);
     END IF;
+    IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'filet_uvp_compare' AND pronamespace = 'explore'::regnamespace
+               AND pronargs = 14 AND NOT 'uvp_n_objects_no_size' = ANY(proargnames)) THEN
+        DROP FUNCTION explore.filet_uvp_compare(double precision, double precision, boolean, boolean, text, text,
+            text[], double precision, double precision, text, boolean, boolean, double precision, text[]);
+    END IF;
 END $$;
 
 CREATE OR REPLACE FUNCTION explore.station_norm(p_station text)
@@ -120,6 +125,7 @@ RETURNS TABLE (filet_sample_id text, filet_analysis_id text, filet_deployment_id
                layer_min_m numeric, layer_max_m numeric, net_mesh_size_um numeric,
                filet_n_taxa integer, filet_abundance_depth_ind_m3 numeric, filet_abundance_flowmeter_ind_m3 numeric,
                uvp_n_bins integer, uvp_layer_coverage numeric, uvp_volume_m3 numeric, uvp_n_objects bigint,
+               uvp_n_objects_no_size bigint,
                uvp_abundance_ind_m3 numeric, ratio_uvp_filet_depth numeric)
 LANGUAGE plpgsql STABLE
 AS $$
@@ -176,15 +182,25 @@ BEGIN
     ), taxa AS MATERIALIZED (
         SELECT t.taxon_id::text AS taxon_id FROM explore.ecotaxa_taxa t
         WHERE t.object_class = 'organism' AND p_uvp_taxon = ANY(t.taxon_lineage)
-    ), objects AS (
-        SELECT lb.filet_sample_id, lb.analysis_id, lb.uvp_profile_id, count(*) AS n
+    ), sized AS (
+        -- ESD from the area when the project gives no ESD (Amundsen 2023): ESD = 2·sqrt(area/π), identical to
+        -- the source ESD wherever both exist (ratio 1.0000 on 200 000 objects, 11 November 2026).
+        SELECT lb.filet_sample_id, lb.analysis_id, lb.uvp_profile_id,
+               CASE WHEN p_size_measure = 'esd' THEN coalesce(o.esd_um, 2 * sqrt(o.area_um2 / pi()))
+                    ELSE o.major_um END AS size_um
         FROM layer_bins lb
         JOIN explore.uvp_object_sizes o ON o.uvp_bin_id = lb.uvp_bin_id AND o.uvp_profile_id = lb.uvp_profile_id
         WHERE o.taxon_id IN (SELECT taxon_id FROM taxa)
           AND o.uvp_profile_id IN (SELECT DISTINCT uvp_profile_id FROM layer_bins)
           AND (NOT p_validated_only OR o.annotation_status = 'validated')
-          AND (p_min_size_um IS NULL OR (CASE WHEN p_size_measure = 'esd' THEN o.esd_um ELSE o.major_um END) >= p_min_size_um)
-          AND (p_max_size_um IS NULL OR (CASE WHEN p_size_measure = 'esd' THEN o.esd_um ELSE o.major_um END) < p_max_size_um)
+    ), objects AS (
+        -- An object without the size measure is never counted as « too small »: counted apart (no_size).
+        SELECT z.filet_sample_id, z.analysis_id, z.uvp_profile_id,
+               count(*) FILTER (WHERE (p_min_size_um IS NULL AND p_max_size_um IS NULL)
+                                   OR (z.size_um IS NOT NULL AND (p_min_size_um IS NULL OR z.size_um >= p_min_size_um)
+                                       AND (p_max_size_um IS NULL OR z.size_um < p_max_size_um))) AS n,
+               count(*) FILTER (WHERE (p_min_size_um IS NOT NULL OR p_max_size_um IS NOT NULL) AND z.size_um IS NULL) AS no_size
+        FROM sized z
         GROUP BY 1, 2, 3
     ), uvp AS (
         SELECT lb.filet_sample_id, lb.analysis_id, lb.uvp_profile_id, count(*)::integer AS n_bins,
@@ -195,9 +211,11 @@ BEGIN
            l.uvp_sample_name, l.distance_km, l.time_gap_hours, l.same_station, l.rank_for_sample,
            l.dmin, l.dmax, l.mesh, l.n_taxa, round(l.ab_depth, 4), round(l.ab_flow, 4),
            coalesce(u.n_bins, 0), round((u.thickness / nullif(l.dmax - l.dmin, 0))::numeric, 3),
-           round(u.volume_m3::numeric, 3), coalesce(o.n, 0),
-           round((coalesce(o.n, 0) / nullif(u.volume_m3, 0))::numeric, 4),
-           round(((coalesce(o.n, 0) / nullif(u.volume_m3, 0)) / nullif(l.ab_depth, 0))::numeric, 4)
+           round(u.volume_m3::numeric, 3), coalesce(o.n, 0), coalesce(o.no_size, 0),
+           -- No abundance when objects of the chosen taxa lack the size measure: unknown, not zero.
+           CASE WHEN coalesce(o.no_size, 0) = 0 THEN round((coalesce(o.n, 0) / nullif(u.volume_m3, 0))::numeric, 4) END,
+           CASE WHEN coalesce(o.no_size, 0) = 0 THEN
+                round(((coalesce(o.n, 0) / nullif(u.volume_m3, 0)) / nullif(l.ab_depth, 0))::numeric, 4) END
     FROM layer l
     LEFT JOIN uvp u USING (filet_sample_id, analysis_id, uvp_profile_id)
     LEFT JOIN objects o USING (filet_sample_id, analysis_id, uvp_profile_id)
