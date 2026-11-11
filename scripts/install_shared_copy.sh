@@ -91,6 +91,18 @@ elif have apt-get; then
         docker_ok || fail "Docker ne répond pas : « sudo systemctl start docker », et vérifier que vous êtes dans le groupe docker (« groups »)."
     fi
 fi
+# Docker answers but refuses this user (WSL integration on, user not in the docker group; seen on a fresh PC).
+if ! docker_ok && have docker && docker info 2>&1 | grep -qi "permission denied"; then
+    if ! id -nG | tr ' ' '\n' | grep -qx docker; then
+        echo "ajout de $(id -un) au groupe docker (mot de passe Linux demandé)"
+        $SUDO groupadd -f docker
+        $SUDO usermod -aG docker "$(id -un)"
+    fi
+    if [ -z "${NEOLAB_SG:-}" ] && have sg; then
+        export NEOLAB_SG=1
+        exec sg docker -c "bash $(printf '%q' "$HERE/$(basename "$0")") $(printf '%q ' "$@")"
+    fi
+fi
 docker_ok || fail "Docker ne répond pas : lancer Docker Desktop (Windows, macOS) ou « sudo systemctl start docker » (Linux)."
 docker compose version >/dev/null 2>&1 || fail "Docker Compose 2 introuvable : mettre Docker à jour."
 python_ok || fail "Python 3.10 ou plus (avec venv) introuvable : l'installer (LISEZMOI, partie 1)."

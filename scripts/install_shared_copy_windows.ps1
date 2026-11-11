@@ -103,6 +103,18 @@ function EnableWslIntegration {
     [System.IO.File]::WriteAllText($path, ($settings | ConvertTo-Json -Depth 32), (New-Object System.Text.UTF8Encoding $false))
     return $true
 }
+function FixDockerGroup {
+    # Integration on but « permission denied » on /var/run/docker.sock: add the Linux user to the docker group.
+    $answer = (& cmd.exe /c "wsl.exe -d $ubuntu -- docker info 2>&1") -join "`n"
+    if ($answer -notmatch 'permission denied') { return }
+    Write-Host "Docker refuse l'utilisateur $linuxUser : ajout au groupe docker dans $ubuntu…"
+    & cmd.exe /c "wsl.exe -d $ubuntu -u root -- sh -c ""groupadd -f docker && usermod -aG docker $linuxUser"" >nul 2>&1"
+    if (-not (DockerInUbuntu)) {
+        & cmd.exe /c "wsl.exe --terminate $ubuntu >nul 2>&1"   # new session = new groups
+        Start-Sleep -Seconds 3
+    }
+}
+FixDockerGroup
 if (-not (DockerInUbuntu)) {
     if (-not (Get-Process 'Docker Desktop' -ErrorAction SilentlyContinue)) {
         Write-Host "Démarrage de Docker Desktop (au premier lancement : accepter ses conditions dans sa fenêtre)…"
@@ -115,6 +127,7 @@ if (-not (DockerInUbuntu)) {
             Start-Sleep -Seconds 5
             Start-Process $dockerApp
         }
+        FixDockerGroup
         if (-not (WaitDocker 300)) {
             Fail "Docker ne répond pas dans Ubuntu : dans Docker Desktop, Settings → Resources → WSL integration → activer $ubuntu → Apply & restart, puis relancer installer_windows.bat."
         }
