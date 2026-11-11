@@ -6,7 +6,7 @@ Les valeurs sont posées côte à côte : aucune conversion entre filet et UVP, 
 
 ## Paires FILET–UVP
 
-`explore.filet_uvp_pairs(max_km, max_hours, require_same_station, station_if_no_position)`.
+`explore.filet_uvp_pairs(max_km, max_hours, require_same_station, station_if_no_position, filet_stations)`.
 
 - Distance entre la position du trait de filet et celle du profil UVP (haversine, km); écart entre le début
   du déploiement FILET et l'heure du profil UVP (h, UTC).
@@ -15,6 +15,8 @@ Les valeurs sont posées côte à côte : aucune conversion entre filet et UVP, 
 - Position UVP : celle d'EcoPart, sinon la moyenne des samples EcoTaxa du profil (`uvp_position_source`);
   les 182 profils GreenEdge 2016 sans position EcoPart l'ont ainsi.
 - `station_if_no_position` : un profil UVP sans aucune position est accepté si la station est la même.
+- `filet_stations` (tableau, ex. `ARRAY['133','134']`) : seulement ces stations filet. Pour une question sur
+  quelques stations, toujours le donner : réponse en quelques secondes, quels que soient les autres réglages.
 - Rang 1 = le plus proche (distance/max_km + écart/max_hours). `candidates_for_sample` dit s'il y en avait d'autres.
 
 ## Compter les couples : par déploiement, pas par ligne
@@ -54,7 +56,8 @@ G312, G409…).
 ## Abondances sur la même couche
 
 `explore.filet_uvp_compare(max_km, max_hours, require_same_station, station_if_no_position, uvp_taxon,
-filet_taxon_pattern, filet_stages, min_size_um, max_size_um, size_measure, validated_only, best_only)`.
+filet_taxon_pattern, filet_stages, min_size_um, max_size_um, size_measure, validated_only, best_only,
+min_filet_ug_c_per_ind, filet_stations)`.
 
 - FILET : somme, par analyse, des lignes dont le taxon correspond à `filet_taxon_pattern` (ILIKE, ex.
   `Calanus%`) et le stade à `filet_stages`; abondances au volume profondeur et au volume débitmètre gardées
@@ -67,6 +70,9 @@ filet_taxon_pattern, filet_stages, min_size_um, max_size_um, size_measure, valid
   Objets retenus : classe « organism », `uvp_taxon` dans la lignée EcoTaxa (ex. Copepoda, Calanus), statut
   validé si `validated_only`, taille ESD ou grand axe (`size_measure` esd ou major, µm) dans
   [min_size_um, max_size_um[.
+- `min_filet_ug_c_per_ind` : ne garder côté filet que les lignes taxon × stade détaillé dont le carbone par
+  individu (biomasse / abondance, valeurs du labo) atteint ce seuil, pour comparer les gros stades à ce que voit
+  l'UVP (copépodes UVP validés : ESD ≥ ~1 mm, médiane 2,1 mm). Refusé avec un stade agrégé.
 - `uvp_layer_coverage` = épaisseur des tranches retenues / épaisseur du trait (1 = couche entièrement vue par
   l'UVP). Une couverture faible signale un profil UVP moins profond que le filet.
 - `ratio_uvp_filet_depth` = abondance UVP / abondance FILET au volume profondeur, simple quotient.
@@ -101,8 +107,10 @@ FILET avec un profil UVP proche comptent, d'où peu de paires.
 | 50 km, 72 h, tous statuts UVP | 34 | 0,99 | 0,191 |
 | 50 km, 72 h, stades C4, C5, M, F | 34 | 0,99 | 0,276 |
 
-Limite : avec 50 km et 72 h, la variante *Calanus* / `Calanus%` dépasse les 30 s accordées à un compte de
-lecture (11 novembre 2026); préférer 30 km et 24 h.
+Durée : le compte de lecture a 30 s par requête. Sur toutes les stations, les réglages larges (50 km et
+72 h, tous les stades détaillés avec un seuil de carbone) dépassent cette limite (11 novembre 2026). Pour
+quelques stations, passer `filet_stations` : 2 à 7 s mesurées. Si une requête dépasse 30 s, la refaire par
+stations plutôt que de changer les critères demandés.
 
 Ces rapports décrivent les données; leur explication (taille minimale vue par l'UVP, maille du filet,
 annotation, écart de temps) relève du chercheur.

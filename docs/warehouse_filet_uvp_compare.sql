@@ -18,24 +18,22 @@
 -- Aucune conversion entre les deux méthodes : les valeurs sont posées côte à côte, le rapport est un
 -- simple quotient. Les deux fonctions lisent les vues explore (droits du compte appelant).
 -- Additive et relançable (anciennes signatures retirées).
+-- Earlier signatures (each change of parameters or columns made a new one): dropped so that a short call
+-- by an agent is never ambiguous. Current: pairs with 5 parameters, compare with 14.
 DROP FUNCTION IF EXISTS explore.filet_uvp_pairs(double precision, double precision, boolean);
-DO $$ BEGIN  -- earlier versions (return type changed: UVP position, deployment)
+DROP FUNCTION IF EXISTS explore.filet_uvp_pairs(double precision, double precision, boolean, boolean);
+DROP FUNCTION IF EXISTS explore.filet_uvp_compare(double precision, double precision, boolean, text, text, text[],
+    double precision, double precision, text, boolean, boolean);
+DROP FUNCTION IF EXISTS explore.filet_uvp_compare(double precision, double precision, boolean, boolean, text, text,
+    text[], double precision, double precision, text, boolean, boolean);
+DROP FUNCTION IF EXISTS explore.filet_uvp_compare(double precision, double precision, boolean, boolean, text, text,
+    text[], double precision, double precision, text, boolean, boolean, double precision);
+DO $$ BEGIN  -- a current signature with an older column list (return type changed): recreate it below
     IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'filet_uvp_pairs' AND pronamespace = 'explore'::regnamespace
-               AND NOT 'filet_deployment_id' = ANY(proargnames)) THEN
-        DROP FUNCTION explore.filet_uvp_pairs(double precision, double precision, boolean, boolean);
-    END IF;
-    IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'filet_uvp_compare' AND pronamespace = 'explore'::regnamespace
-               AND NOT 'filet_deployment_id' = ANY(proargnames)) THEN
-        DROP FUNCTION explore.filet_uvp_compare(double precision, double precision, boolean, boolean, text, text, text[],
-                                               double precision, double precision, text, boolean, boolean);
-    END IF;
-    IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'filet_uvp_compare' AND pronamespace = 'explore'::regnamespace
-               AND NOT 'p_min_filet_ug_c_per_ind' = ANY(proargnames)) THEN
-        DROP FUNCTION explore.filet_uvp_compare(double precision, double precision, boolean, boolean, text, text, text[],
-                                               double precision, double precision, text, boolean, boolean);
+               AND pronargs = 5 AND NOT 'filet_deployment_id' = ANY(proargnames)) THEN
+        DROP FUNCTION explore.filet_uvp_pairs(double precision, double precision, boolean, boolean, text[]);
     END IF;
 END $$;
-DROP FUNCTION IF EXISTS explore.filet_uvp_compare(double precision, double precision, boolean, text, text, text[], double precision, double precision, text, boolean, boolean);
 
 CREATE OR REPLACE FUNCTION explore.station_norm(p_station text)
 RETURNS text LANGUAGE sql IMMUTABLE
@@ -50,7 +48,8 @@ CREATE OR REPLACE FUNCTION explore.filet_uvp_pairs(
     p_max_km double precision DEFAULT 30,
     p_max_hours double precision DEFAULT 24,
     p_require_same_station boolean DEFAULT false,
-    p_station_if_no_position boolean DEFAULT false)
+    p_station_if_no_position boolean DEFAULT false,
+    p_filet_stations text[] DEFAULT NULL)
 RETURNS TABLE (filet_sample_ref bigint, filet_sample_id text, filet_deployment_id text, filet_station text,
                filet_sampled_at timestamp,
                filet_latitude double precision, filet_longitude double precision,
@@ -85,6 +84,7 @@ AS $$
         FROM explore.filet_samples f
         JOIN uvp u ON abs(extract(epoch FROM (u.sampled_at - f.deployment_datetime_start)) / 3600.0) <= p_max_hours
         WHERE f.deployment_datetime_start IS NOT NULL
+          AND (p_filet_stations IS NULL OR f.station_name = ANY(p_filet_stations))
     )
     SELECT filet_sample_ref, sample_id, deployment_id, station_name, f_at, f_lat, f_lon, uvp_profile_id, sample_name, station_key,
            u_at, u_lat, u_lon, u_src, round(km::numeric, 2)::double precision, round(hours::numeric, 2)::double precision, same,
@@ -96,7 +96,7 @@ AS $$
       AND (NOT p_require_same_station OR same)
     WINDOW w AS (PARTITION BY filet_sample_ref)
 $$;
-COMMENT ON FUNCTION explore.filet_uvp_pairs(double precision, double precision, boolean, boolean) IS
+COMMENT ON FUNCTION explore.filet_uvp_pairs(double precision, double precision, boolean, boolean, text[]) IS
     'Paires FILET–UVP candidates : distance (km), écart (h), station identique; max_km NULL = sans critère spatial; station_if_no_position : accepter par la station un profil sans position; rang 1 = le plus proche.';
 
 CREATE OR REPLACE FUNCTION explore.filet_uvp_compare(
@@ -112,7 +112,8 @@ CREATE OR REPLACE FUNCTION explore.filet_uvp_compare(
     p_size_measure text DEFAULT 'esd',
     p_validated_only boolean DEFAULT true,
     p_best_only boolean DEFAULT true,
-    p_min_filet_ug_c_per_ind double precision DEFAULT NULL)
+    p_min_filet_ug_c_per_ind double precision DEFAULT NULL,
+    p_filet_stations text[] DEFAULT NULL)
 RETURNS TABLE (filet_sample_id text, filet_analysis_id text, filet_deployment_id text, filet_station text,
                filet_sampled_at timestamp, uvp_profile_id bigint, uvp_sample_name text, distance_km double precision,
                time_gap_hours double precision, same_station boolean, rank_for_sample integer,
@@ -146,10 +147,11 @@ BEGIN
         RAISE EXCEPTION 'p_size_measure : esd (diamètre sphérique équivalent) ou major (grand axe)';
     END IF;
     RETURN QUERY
-    WITH pairs AS (
-        SELECT * FROM explore.filet_uvp_pairs(p_max_km, p_max_hours, p_require_same_station, p_station_if_no_position) p
+    WITH pairs AS MATERIALIZED (
+        SELECT * FROM explore.filet_uvp_pairs(p_max_km, p_max_hours, p_require_same_station, p_station_if_no_position,
+                                             p_filet_stations) p
         WHERE NOT p_best_only OR p.rank_for_sample = 1
-    ), filet AS (
+    ), filet AS MATERIALIZED (
         SELECT d.sample_id, d.analysis_id, min(d.min_sample_depth) AS dmin, min(d.max_sample_depth) AS dmax,
                min(d.net_mesh_size) AS mesh, count(DISTINCT d.taxon_id)::integer AS n_taxa,
                sum(d.abundance_depth_ind_m3) AS ab_depth, sum(d.abundance_flowmeter_ind_m3) AS ab_flow
@@ -159,19 +161,19 @@ BEGIN
                OR d.biomass_depth_ug_c_m3 / nullif(d.abundance_depth_ind_m3, 0) >= p_min_filet_ug_c_per_ind)
           AND d.sample_id IN (SELECT p.filet_sample_id FROM pairs p)
         GROUP BY d.sample_id, d.analysis_id
-    ), bins AS (
+    ), bins AS MATERIALIZED (
         SELECT DISTINCT s.uvp_profile_id, s.uvp_bin_id, s.depth_min_m, s.depth_max_m, s.sampled_volume_l
         FROM explore.uvp_particle_sizes s
         WHERE s.uvp_profile_id IN (SELECT p.uvp_profile_id FROM pairs p)
     ), layer AS (
         SELECT p.*, f.analysis_id, f.dmin, f.dmax, f.mesh, f.n_taxa, f.ab_depth, f.ab_flow
         FROM pairs p JOIN filet f ON f.sample_id = p.filet_sample_id
-    ), layer_bins AS (
+    ), layer_bins AS MATERIALIZED (
         SELECT l.filet_sample_id, l.analysis_id, l.uvp_profile_id, b.uvp_bin_id, b.depth_min_m, b.depth_max_m,
                b.sampled_volume_l
         FROM layer l JOIN bins b ON b.uvp_profile_id = l.uvp_profile_id
          AND b.depth_min_m >= l.dmin AND b.depth_max_m <= l.dmax
-    ), taxa AS (
+    ), taxa AS MATERIALIZED (
         SELECT t.taxon_id::text AS taxon_id FROM explore.ecotaxa_taxa t
         WHERE t.object_class = 'organism' AND p_uvp_taxon = ANY(t.taxon_lineage)
     ), objects AS (
@@ -179,6 +181,7 @@ BEGIN
         FROM layer_bins lb
         JOIN explore.uvp_object_sizes o ON o.uvp_bin_id = lb.uvp_bin_id AND o.uvp_profile_id = lb.uvp_profile_id
         WHERE o.taxon_id IN (SELECT taxon_id FROM taxa)
+          AND o.uvp_profile_id IN (SELECT DISTINCT uvp_profile_id FROM layer_bins)
           AND (NOT p_validated_only OR o.annotation_status = 'validated')
           AND (p_min_size_um IS NULL OR (CASE WHEN p_size_measure = 'esd' THEN o.esd_um ELSE o.major_um END) >= p_min_size_um)
           AND (p_max_size_um IS NULL OR (CASE WHEN p_size_measure = 'esd' THEN o.esd_um ELSE o.major_um END) < p_max_size_um)
@@ -201,5 +204,5 @@ BEGIN
     ORDER BY l.filet_sampled_at, l.filet_sample_id, l.analysis_id, l.rank_for_sample;
 END
 $$;
-COMMENT ON FUNCTION explore.filet_uvp_compare(double precision, double precision, boolean, boolean, text, text, text[], double precision, double precision, text, boolean, boolean, double precision) IS
+COMMENT ON FUNCTION explore.filet_uvp_compare(double precision, double precision, boolean, boolean, text, text, text[], double precision, double precision, text, boolean, boolean, double precision, text[]) IS
     'Abondances FILET et UVP sur la même couche (tranches UVP entièrement dans le trait de filet), taxons, stades, taille UVP (esd ou major, µm) et statut choisis; volumes des tranches vides compris.';

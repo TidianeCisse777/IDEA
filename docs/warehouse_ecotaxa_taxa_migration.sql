@@ -105,3 +105,8 @@ END
 $$;
 
 SELECT warehouse.refresh_ecotaxa_sample_taxon();
+
+-- Objects of some taxa within given samples (comparisons FILET–UVP, questions by taxon): without this index
+-- every object of the samples is read (12,6 s for Calanus in 187 UVP profiles, 11 November 2026).
+-- About one to a few minutes to build once on 15 million objects.
+CREATE INDEX IF NOT EXISTS ecotaxa_object_sample_category_idx ON warehouse.ecotaxa_object (sample_id, category_id);
