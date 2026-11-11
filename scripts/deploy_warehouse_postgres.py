@@ -37,7 +37,8 @@ ALWAYS_FILES = ('warehouse_catalogue_schema_migration.sql', 'warehouse_ctd_zone_
                'warehouse_fair_migration.sql', 'warehouse_access_control.sql',
                # after access control: its views filter with warehouse.readable_versions()
                'warehouse_documents_migration.sql', 'warehouse_filet_context_migration.sql',
-               'warehouse_filet_deployments_view.sql', 'warehouse_uvp_ctd_links.sql',
+               'warehouse_filet_deployments_view.sql', 'warehouse_ctd_proximity_migration.sql',
+               'warehouse_uvp_ctd_links.sql',
                'warehouse_filet_uvp_compare.sql')
 ROLES_FILE = 'warehouse_roles.sql'
 RELEASE_FILE = 'warehouse_release.sql'

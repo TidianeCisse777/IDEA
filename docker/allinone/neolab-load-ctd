@@ -1,0 +1,15 @@
+#!/bin/bash
+# Relie les profils UVP et les déploiements FILET sans CTD aux profils CTD d'Amundsen Science les plus proches
+# (≤ 10 km et ≤ 12 h; accepted si ≤ 5 km et ≤ 6 h) et charge les profils CTD nécessaires depuis l'ERDDAP public :
+#
+#     docker exec neolab-warehouse bash /opt/neolab/IDEA/docker/allinone/neolab-load-ctd [--dry-run]
+#
+# Il faut Internet (erddap.amundsenscience.com). 30 à 90 minutes la première fois (environ 1 000 profils CTD).
+# Relançable : les liens par proximité sont recalculés, les profils déjà chargés ne sont pas retéléchargés.
+set -euo pipefail
+set -a; . "$NEOLAB_STATE/secrets.env"; set +a
+export WAREHOUSE_POSTGRES_HOST=/var/run/postgresql WAREHOUSE_POSTGRES_PORT=5432 WAREHOUSE_POSTGRES_DB="$POSTGRES_DB" \
+       WAREHOUSE_POSTGRES_USER="$POSTGRES_USER" WAREHOUSE_POSTGRES_PASSWORD="$POSTGRES_PASSWORD"
+cd /opt/neolab/IDEA/scripts
+/opt/neolab/venv/bin/python populate_ctd_proximity.py "$@"
+echo "[neolab] CTD RELIÉES"

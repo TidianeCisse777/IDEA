@@ -7,7 +7,7 @@ Serveur MCP qui donne à un assistant IA (Claude, Codex, OpenCode, VS Code / Cop
 |---|---|
 | EcoTaxa | 23 projets (UVP, Zooscan, LOKI), 15 M d'objets : taxon et lignée, statut validé/prédit, taille, image |
 | EcoPart (UVP) | 686 profils : tranches de profondeur, volumes échantillonnés, particules, abondances par taxon |
-| CTD Amundsen | 456 profils : température, salinité, densité, oxygène, nitrate, fluorescence (pas de pH) |
+| CTD Amundsen | profils de rosette et CTD montées sur les filets Hydrobios et Bioness (Amundsen Science) : température, salinité, densité, oxygène, nitrate, fluorescence; reliés aux profils UVP et aux déploiements FILET |
 | FILET | 6 102 échantillons de filet, abondances et biomasses de copépodes par stade |
 | Référentiels | zones maritimes, stades de copépodes, taxonomie EcoTaxa, documents (protocoles, méthodes) |
 
@@ -60,6 +60,7 @@ scripts/      relais MCP, déploiement, comptes, fiches, base de connaissances, 
   add_warehouse_document.py     base de connaissances (documents .md, .txt, .pdf)
   warehouse_user.py             comptes personnels et périmètres (contrat, zone, années)
   populate_*.py, load_*.py      chargeurs EcoTaxa, EcoPart, CTD, FILET, zones
+  populate_ctd_proximity.py     liens CTD par proximité (Amundsen Science ERDDAP) pour UVP et FILET
   install_*, connect_*, update_*  installation, branchement des assistants, mise à jour
 sql/          migrations PostgreSQL, appliquées dans l'ordre de deploy_warehouse_postgres.py
 dbhub/        configuration DbHub (outils SQL, fiches, documents)

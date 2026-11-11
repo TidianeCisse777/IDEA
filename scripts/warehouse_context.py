@@ -351,9 +351,28 @@ VIEWS['taxon_mapping']['caveats'] = (
 VIEWS['filet_uvp_abundance']['caveats'] = (
     'Vide tant que explore.taxon_mapping est vide (aucune correspondance taxonomique validée) : utiliser '
     'explore.filet_uvp_compare. ' + VIEWS['filet_uvp_abundance']['caveats'])
-VIEWS['filet_ctd']['caveats'] = (
-    'Aucun lien FILET–CTD n’est construit (aucun chargeur ne remplit cette table, 11 novembre 2026) : une vue vide '
-    'ici ne dit rien des données CTD existantes. ' + VIEWS['filet_ctd']['caveats'])
+CTD_LINKS = (
+    'LIENS CTD : link_method dit comment le profil CTD a été relié. filename_transitive (uvp_ctd seulement) : fichier '
+    'CTD cité par EcoTaxa pour ce profil. proximity : profil CTD Amundsen Science (ERDDAP) le plus proche, au score '
+    'distance/10 km + écart/6 h, gardé à ≤ 10 km et ≤ 12 h; match_status accepted si ≤ 5 km et ≤ 6 h, sinon candidate '
+    '(à dire ou à exclure). ctd_source : rosette (CTD du navire), hydrobios ou bioness (CTD montée sur le filet : '
+    'pression, température, salinité et NET, numéro du filet ouvert, qui situe chaque couche). Un déploiement FILET peut '
+    'avoir un lien rosette et un lien filet : filtrer par ctd_source. Chargé par scripts/populate_ctd_proximity.py '
+    '(document ctd-liens-proximite). Sans lien : aucune CTD Amundsen à ≤ 10 km et ≤ 12 h (ex. lac Champlain, camps de '
+    'glace GreenEdge, 2012, 2025), pas une absence de mesure prouvée. ')
+VIEWS['filet_ctd']['caveats'] = CTD_LINKS + (
+    'filet_sample_id est le sample_id natif; le même profil CTD est répété pour chaque échantillon (couche, maille) du '
+    'déploiement. Lire unit et qc; pas d’alignement vertical implicite : comparer la couche du filet aux mesures CTD '
+    'de la même profondeur.')
+VIEWS['uvp_ctd']['caveats'] = CTD_LINKS + VIEWS['uvp_ctd']['caveats']
+CTD_LINK_COLUMNS = {
+    'link_method': 'Comment le profil CTD a été relié : filename_transitive (fichier CTD cité par EcoTaxa) ou proximity (profil CTD Amundsen le plus proche en distance et en temps).',
+    'ctd_source': 'Origine du profil CTD : rosette (CTD du navire), hydrobios ou bioness (CTD montée sur le filet); NULL pour les liens par fichier.',
+    'distance_km': 'Distance entre la position de la cible (profil UVP ou déploiement FILET) et celle du profil CTD, en km (haversine); NULL pour les liens par fichier.',
+    'time_gap_hours': 'Écart absolu entre l’heure de la cible et le début du profil CTD, en heures (UTC); NULL pour les liens par fichier.',
+    'match_status': 'accepted : lien par fichier, ou proximité ≤ 5 km et ≤ 6 h; candidate : proximité ≤ 10 km et ≤ 12 h, à signaler ou exclure.',
+    'filet_deployment_id': 'Déploiement FILET de l’échantillon (filet_deployments.deployment_id).',
+}
 
 
 COLUMNS = {
@@ -578,6 +597,8 @@ def column_description(view_name, column):
                 'n_predicted': f'Objets prédits automatiquement, non validés, {scope}.',
                 'n_dubious': f'Objets marqués douteux {scope}.', 'n_unclassified': f'Objets jamais classés {scope}.',
                 'n_samples': 'Nombre de samples EcoTaxa où la catégorie a au moins un objet lisible par le compte.'}[column]
+    if view_name in ('uvp_ctd', 'filet_ctd') and column in CTD_LINK_COLUMNS:
+        return CTD_LINK_COLUMNS[column]
     if column in COLUMNS:
         return COLUMNS[column]
     if column.startswith(('latitude', 'longitude')):

@@ -131,7 +131,7 @@ class DataQaTests(unittest.TestCase):
         import warehouse_context as context
         publish = (ROOT / 'scripts' / 'publish_warehouse_context.py').read_text(encoding='utf-8')
         self.assertIn('VUE VIDE dans ce déploiement', publish)
-        for name in ('taxon_mapping', 'filet_uvp_abundance', 'filet_ctd'):
+        for name in ('taxon_mapping', 'filet_uvp_abundance'):
             self.assertRegex(context.VIEWS[name]['caveats'], r'(?i)vide|aucun lien', name)
         self.assertIn('22497', context.VIEWS['filet_data']['caveats'])
 
@@ -148,3 +148,40 @@ class DataQaTests(unittest.TestCase):
             return text[start:text.index(';', start)]
         self.assertEqual(definition('warehouse_ecotaxa_object_size_migration.sql', 'uvp_objects'),
                          definition('warehouse_ecopart_migration.sql', 'uvp_objects'))
+
+
+class CtdProximityTests(unittest.TestCase):
+    """Links between UVP profiles or FILET deployments and Amundsen CTD profiles by distance and time."""
+
+    def setUp(self):
+        import populate_ctd_proximity as module
+        self.module = module
+        from datetime import datetime, timezone
+        self.t0 = datetime(2016, 6, 20, 12, tzinfo=timezone.utc)
+
+    def cast(self, family, km_north, hours, name):
+        from datetime import timedelta
+        return {'dataset': 'x', 'family': family, 'filename': name, 'time': self.t0 + timedelta(hours=hours),
+                'lat': 70 + km_north / 111.2, 'lon': -60.0, 'station': None, 'cruise': None}
+
+    def target(self, kind='filet', gear='hydrobios'):
+        return {'kind': kind, 'id': '1', 'gear': gear, 'time': self.t0, 'lat': 70.0, 'lon': -60.0}
+
+    def test_nearest_cast_per_source_with_status(self):
+        casts = [self.cast('rosette', 1, 1, 'near'), self.cast('rosette', 8, 2, 'far'),
+                 self.cast('hydrobios', 7, 8, 'net')]
+        links = {l['cast']['filename']: l for l in self.module.match([self.target()], casts)}
+        self.assertEqual(set(links), {'near', 'net'})
+        self.assertEqual(links['near']['status'], 'accepted')
+        self.assertEqual(links['net']['status'], 'candidate')      # 7 km, 8 h : beyond 5 km / 6 h
+
+    def test_nothing_beyond_ten_km_or_twelve_hours_and_net_ctd_only_for_its_gear(self):
+        casts = [self.cast('rosette', 11, 0, 'a'), self.cast('rosette', 0, 13, 'b'), self.cast('hydrobios', 0, 0, 'n')]
+        self.assertEqual(self.module.match([self.target(kind='uvp', gear=None)], casts), [])
+        self.assertEqual([l['cast']['filename'] for l in self.module.match([self.target(gear='2x1m2')], casts)], [])
+
+    def test_link_rebuild_never_touches_filename_links(self):
+        sql = (ROOT / 'sql' / 'warehouse_uvp_ctd_links.sql').read_text(encoding='utf-8')
+        self.assertIn("u.link_method = 'filename_transitive'", sql)
+        code = (ROOT / 'scripts' / 'populate_ctd_proximity.py').read_text(encoding='utf-8')
+        self.assertIn("DELETE FROM warehouse.uvp_ctd WHERE link_method = 'proximity'", code)
