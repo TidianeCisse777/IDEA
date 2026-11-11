@@ -28,5 +28,5 @@ cd /opt/neolab/IDEA/scripts
 "$py" populate_filet.py --samples "$dir/neolabs_sample.csv" --abundance "$dir/neolabs_abundance.csv" --no-dictionary
 "$py" populate_filet_uvp_matches.py
 "$py" add_warehouse_document.py sync
-cat "$dir/neolabs_sample.csv" "$dir/neolabs_abundance.csv" | sha256sum | cut -c1-64 > "$NEOLAB_STATE/filet_loaded"
+cat "$dir/neolabs_sample.csv" "$dir/neolabs_abundance.csv" /opt/neolab/IDEA/scripts/populate_filet.py | sha256sum | cut -c1-64 > "$NEOLAB_STATE/filet_loaded"
 echo "[neolab] FILET CHARGÉ"

@@ -138,7 +138,7 @@ class AccessControlContractTests(unittest.TestCase):
     def test_roles_file_requires_the_access_file_first(self):
         self.assertIn("apply sql/warehouse_access_control.sql before", ROLES)
         names = re.findall(r"/docker-entrypoint-initdb\.d/(\d+_\w+)", COMPOSE)
-        self.assertLess(names.index("016_warehouse_access"), names.index("021_warehouse_roles"))
+        self.assertLess(names.index("016_warehouse_access"), names.index("022_warehouse_roles"))
 
 
 class ReleaseContractTests(unittest.TestCase):

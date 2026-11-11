@@ -49,10 +49,11 @@ services:
       - ./sql/warehouse_roles.sql:/opt/warehouse/warehouse_roles.sql:ro
       - ./sql/warehouse_release.sql:/opt/warehouse/warehouse_release.sql:ro
       - ./sql/warehouse_documents_migration.sql:/docker-entrypoint-initdb.d/017_warehouse_documents.sql:ro
-      - ./sql/warehouse_filet_deployments_view.sql:/docker-entrypoint-initdb.d/018_warehouse_filet_deployments.sql:ro
-      - ./sql/warehouse_uvp_ctd_links.sql:/docker-entrypoint-initdb.d/019_warehouse_uvp_ctd_links.sql:ro
-      - ./sql/warehouse_filet_uvp_compare.sql:/docker-entrypoint-initdb.d/020_warehouse_filet_uvp_compare.sql:ro
-      - ./docker/warehouse_init_roles.sh:/docker-entrypoint-initdb.d/021_warehouse_roles.sh:ro
+      - ./sql/warehouse_filet_context_migration.sql:/docker-entrypoint-initdb.d/018_warehouse_filet_context.sql:ro
+      - ./sql/warehouse_filet_deployments_view.sql:/docker-entrypoint-initdb.d/019_warehouse_filet_deployments.sql:ro
+      - ./sql/warehouse_uvp_ctd_links.sql:/docker-entrypoint-initdb.d/020_warehouse_uvp_ctd_links.sql:ro
+      - ./sql/warehouse_filet_uvp_compare.sql:/docker-entrypoint-initdb.d/021_warehouse_filet_uvp_compare.sql:ro
+      - ./docker/warehouse_init_roles.sh:/docker-entrypoint-initdb.d/022_warehouse_roles.sh:ro
     # Ready only after the init scripts: the entrypoint's temporary server
     # listens on the Unix socket alone, so a TCP probe waits for the real start.
     healthcheck:

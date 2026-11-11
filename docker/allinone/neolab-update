@@ -27,7 +27,8 @@ fi
 # FILET export kept in the repository (shared_data): loaded when it is new or changed (about one minute).
 filet=/opt/neolab/IDEA/shared_data
 if [ -f "$filet/neolabs_sample.csv" ] && [ -f "$filet/neolabs_abundance.csv" ]; then
-    wanted=$(cat "$filet/neolabs_sample.csv" "$filet/neolabs_abundance.csv" | sha256sum | cut -c1-64)
+    # the loader is part of the fingerprint: a loader that reads more of the export reloads it
+    wanted=$(cat "$filet/neolabs_sample.csv" "$filet/neolabs_abundance.csv" scripts/populate_filet.py | sha256sum | cut -c1-64)
     if [ "$(cat "$NEOLAB_STATE/filet_loaded" 2>/dev/null)" != "$wanted" ]; then
         echo "[neolab] chargement du FILET"
         bash /opt/neolab/IDEA/docker/allinone/neolab-load-filet "$filet" | grep '^\[neolab\]'

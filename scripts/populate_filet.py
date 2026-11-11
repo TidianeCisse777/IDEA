@@ -40,6 +40,10 @@ SAMPLE_COLUMNS = {
     "subsampling_quantity", "subsampling_unit", "analysis_id", "analysis_type",
     "analysis_contract", "analysis_datetime", "analysis_protocol_id",
 }
+# Context columns of the export, read when present (older exports lack them): bottom depth and net mouth
+# aperture, and the lab's free-text comments (non-quantitative samples, pooled or lost nets, tow method).
+OPTIONAL_SAMPLE_COLUMNS = ("bottom_depth", "net_mouth_aperture", "deployment_comments", "NET_COMMENTS",
+                           "sample_comments")
 
 
 def sha256(path: Path) -> str:
@@ -122,6 +126,7 @@ def sample_records(path: Path) -> tuple[dict[str, dict], list[dict]]:
             if not sample_id or not deployment_id:
                 raise ValueError("sample_id ou deployment_id FILET absent")
             metadata = {key: clean(raw[key]) for key in SAMPLE_COLUMNS - {"analysis_id", "analysis_type", "analysis_contract", "analysis_datetime", "analysis_protocol_id"}}
+            metadata.update({key.lower(): clean(raw.get(key)) for key in OPTIONAL_SAMPLE_COLUMNS})
             previous = samples.setdefault(sample_id, metadata)
             if previous != metadata:
                 raise ValueError(f"Métadonnées contradictoires pour sample_id={sample_id}")
@@ -133,6 +138,7 @@ def sample_records(path: Path) -> tuple[dict[str, dict], list[dict]]:
                     "analysis_contract": clean(raw["analysis_contract"]),
                     "analysis_datetime": timestamp(raw["analysis_datetime"]),
                     "analysis_protocol_id": clean(raw["analysis_protocol_id"]),
+                    "analysis_comments": clean(raw.get("analysis_comments")),
                 })
     if len({(a["sample_id"], a["analysis_id"]) for a in analyses}) != len(analyses):
         raise ValueError("Clé (sample_id, analysis_id) dupliquée")
@@ -191,18 +197,18 @@ def load(samples_path: Path, abundance_path: Path, dictionary_path: Path | None,
         sample_values = []
         for data in samples.values():
             zone_key, zone_name, zone_source, zone_status = zone_for(number(data["longitude"]), number(data["latitude"]), zones)
-            sample_values.append((version_id, data["sample_id"], data["deployment_id"], number(data["sampling_year"]), data["sampling_platform"], data["station_name"], timestamp(data["deployment_datetime_start"]), timestamp(data["deployment_datetime_end"]), data["cast_number"], number(data["latitude"]), number(data["longitude"]), zone_key, zone_name, zone_source, ZONE_VERSION, zone_status, data["gear"], data["tow_type"], number(data["min_sample_depth"]), number(data["max_sample_depth"]), number(data["net_mesh_size"]), number(data["depth_calc_net_filtered_vol"]), number(data["flowmeter_calc_vol"]), number(data["number_of_nets"]), data["sample_nets"], data["net_sampling_ids"], number(data["subsampling_quantity"]), data["subsampling_unit"]))
+            sample_values.append((version_id, data["sample_id"], data["deployment_id"], number(data["sampling_year"]), data["sampling_platform"], data["station_name"], timestamp(data["deployment_datetime_start"]), timestamp(data["deployment_datetime_end"]), data["cast_number"], number(data["latitude"]), number(data["longitude"]), zone_key, zone_name, zone_source, ZONE_VERSION, zone_status, data["gear"], data["tow_type"], number(data["min_sample_depth"]), number(data["max_sample_depth"]), number(data["net_mesh_size"]), number(data["depth_calc_net_filtered_vol"]), number(data["flowmeter_calc_vol"]), number(data["number_of_nets"]), data["sample_nets"], data["net_sampling_ids"], number(data["subsampling_quantity"]), data["subsampling_unit"], number(data["bottom_depth"]), number(data["net_mouth_aperture"]), data["deployment_comments"], data["net_comments"], data["sample_comments"]))
         cur.executemany("""INSERT INTO warehouse.filet_sample
-          (dataset_version_id,sample_id,deployment_id,sampling_year,sampling_platform,station_name,deployment_datetime_start,deployment_datetime_end,cast_number,latitude,longitude,marine_zone_key,marine_zone_name,marine_zone_source,marine_zone_version,marine_zone_assignment_status,gear,tow_type,min_sample_depth,max_sample_depth,net_mesh_size,depth_calc_net_filtered_vol,flowmeter_calc_vol,number_of_nets,sample_nets,net_sampling_ids,subsampling_quantity,subsampling_unit)
-          VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""", sample_values)
+          (dataset_version_id,sample_id,deployment_id,sampling_year,sampling_platform,station_name,deployment_datetime_start,deployment_datetime_end,cast_number,latitude,longitude,marine_zone_key,marine_zone_name,marine_zone_source,marine_zone_version,marine_zone_assignment_status,gear,tow_type,min_sample_depth,max_sample_depth,net_mesh_size,depth_calc_net_filtered_vol,flowmeter_calc_vol,number_of_nets,sample_nets,net_sampling_ids,subsampling_quantity,subsampling_unit,bottom_depth,net_mouth_aperture,deployment_comments,net_comments,sample_comments)
+          VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""", sample_values)
         cur.execute("SELECT id,sample_id FROM warehouse.filet_sample WHERE dataset_version_id=%s", (version_id,))
         sample_ids = {sample_id: sample_ref for sample_ref, sample_id in cur.fetchall()}
         cur.execute("SELECT id,net_sampling_ids FROM warehouse.filet_sample WHERE dataset_version_id=%s", (version_id,))
         net_values = [(sample_ref, net) for sample_ref, raw_nets in cur.fetchall() for net in split_nets(raw_nets)]
         cur.executemany("INSERT INTO warehouse.filet_sample_net (sample_ref,net_sampling_id) VALUES (%s,%s)", net_values)
         cur.executemany("""INSERT INTO warehouse.filet_analysis
-          (dataset_version_id,sample_ref,sample_id,analysis_id,analysis_type,analysis_contract,analysis_datetime,analysis_protocol_id)
-          VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""", [(version_id, sample_ids[a["sample_id"]], a["sample_id"], a["analysis_id"], a["analysis_type"], a["analysis_contract"], a["analysis_datetime"], a["analysis_protocol_id"]) for a in analyses])
+          (dataset_version_id,sample_ref,sample_id,analysis_id,analysis_type,analysis_contract,analysis_datetime,analysis_protocol_id,analysis_comments)
+          VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""", [(version_id, sample_ids[a["sample_id"]], a["sample_id"], a["analysis_id"], a["analysis_type"], a["analysis_contract"], a["analysis_datetime"], a["analysis_protocol_id"], a["analysis_comments"]) for a in analyses])
         known = {(a["sample_id"], a["analysis_id"]) for a in analyses}
         cur.executemany("""INSERT INTO warehouse.filet_abundance
           (dataset_version_id,source_row_number,sample_id,analysis_id,taxon_id,stage,sample_abundance,abundance_depth_ind_m3,abundance_flowmeter_ind_m3,biomass_depth_ug_c_m3,biomass_flowmeter_ug_c_m3,metadata_dataset_version_id)

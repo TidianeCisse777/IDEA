@@ -34,7 +34,7 @@ DO $$ BEGIN  -- a current signature with an older column list (return type chang
         DROP FUNCTION explore.filet_uvp_pairs(double precision, double precision, boolean, boolean, text[]);
     END IF;
     IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'filet_uvp_compare' AND pronamespace = 'explore'::regnamespace
-               AND pronargs = 14 AND NOT 'uvp_ecotaxa_project_id' = ANY(proargnames)) THEN
+               AND pronargs = 14 AND NOT 'filet_gear' = ANY(proargnames)) THEN
         DROP FUNCTION explore.filet_uvp_compare(double precision, double precision, boolean, boolean, text, text,
             text[], double precision, double precision, text, boolean, boolean, double precision, text[]);
     END IF;
@@ -122,7 +122,7 @@ CREATE OR REPLACE FUNCTION explore.filet_uvp_compare(
 RETURNS TABLE (filet_sample_id text, filet_analysis_id text, filet_deployment_id text, filet_station text,
                filet_sampled_at timestamp, uvp_profile_id bigint, uvp_sample_name text, distance_km double precision,
                time_gap_hours double precision, same_station boolean, rank_for_sample integer,
-               layer_min_m numeric, layer_max_m numeric, net_mesh_size_um numeric,
+               layer_min_m numeric, layer_max_m numeric, net_mesh_size_um numeric, filet_gear text, filet_tow_type text,
                filet_n_taxa integer, filet_abundance_depth_ind_m3 numeric, filet_abundance_flowmeter_ind_m3 numeric,
                uvp_n_bins integer, uvp_layer_coverage numeric, uvp_volume_m3 numeric, uvp_n_objects bigint,
                uvp_n_objects_no_size bigint, uvp_ecotaxa_project_id integer,
@@ -159,7 +159,8 @@ BEGIN
         WHERE NOT p_best_only OR p.rank_for_sample = 1
     ), filet AS MATERIALIZED (
         SELECT d.sample_id, d.analysis_id, min(d.min_sample_depth) AS dmin, min(d.max_sample_depth) AS dmax,
-               min(d.net_mesh_size) AS mesh, count(DISTINCT d.taxon_id)::integer AS n_taxa,
+               min(d.net_mesh_size) AS mesh, min(d.gear) AS gear, min(d.tow_type) AS tow_type,
+               count(DISTINCT d.taxon_id)::integer AS n_taxa,
                sum(d.abundance_depth_ind_m3) AS ab_depth, sum(d.abundance_flowmeter_ind_m3) AS ab_flow
         FROM explore.filet_data d
         WHERE d.metadata_matched AND d.taxon_id ILIKE p_filet_taxon_pattern AND d.stage = ANY(p_filet_stages)
@@ -172,7 +173,7 @@ BEGIN
         FROM explore.uvp_particle_sizes s
         WHERE s.uvp_profile_id IN (SELECT p.uvp_profile_id FROM pairs p)
     ), layer AS (
-        SELECT p.*, f.analysis_id, f.dmin, f.dmax, f.mesh, f.n_taxa, f.ab_depth, f.ab_flow
+        SELECT p.*, f.analysis_id, f.dmin, f.dmax, f.mesh, f.gear, f.tow_type, f.n_taxa, f.ab_depth, f.ab_flow
         FROM pairs p JOIN filet f ON f.sample_id = p.filet_sample_id
     ), layer_bins AS MATERIALIZED (
         SELECT l.filet_sample_id, l.analysis_id, l.uvp_profile_id, b.uvp_bin_id, b.depth_min_m, b.depth_max_m,
@@ -217,7 +218,7 @@ BEGIN
     )
     SELECT l.filet_sample_id, l.analysis_id, l.filet_deployment_id, l.filet_station, l.filet_sampled_at, l.uvp_profile_id,
            l.uvp_sample_name, l.distance_km, l.time_gap_hours, l.same_station, l.rank_for_sample,
-           l.dmin, l.dmax, l.mesh, l.n_taxa, round(l.ab_depth, 4), round(l.ab_flow, 4),
+           l.dmin, l.dmax, l.mesh, l.gear, l.tow_type, l.n_taxa, round(l.ab_depth, 4), round(l.ab_flow, 4),
            coalesce(u.n_bins, 0), round((u.thickness / nullif(l.dmax - l.dmin, 0))::numeric, 3),
            round(u.volume_m3::numeric, 3), coalesce(o.n, 0), coalesce(o.no_size, 0),
            (SELECT src.project_id::integer FROM source src WHERE src.uvp_profile_id = l.uvp_profile_id),

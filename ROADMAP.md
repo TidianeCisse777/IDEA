@@ -4,6 +4,18 @@
 
 **Dernière mise à jour :** 11 novembre 2026
 
+### 12 novembre 2026 — FILET : engin sur chaque ligne, contexte et commentaires du labo
+
+- Le classeur FILET ne donne que les libellés courts des engins (Hydrobios, 2x1m2, 4x1m2, 4x1m2 - LOKI, Bioness,
+  Ringnet 1m, Ringnet 50cm; « hydrobios » une fois en minuscules), sans nom complet ni définition de V-Tow et O-Tow.
+- Ajouté (`sql/warehouse_filet_context_migration.sql`, `populate_filet.py`) : `gear` et `tow_type` sur chaque ligne
+  de `explore.filet_data` et `filet_totals`; profondeur du fond (5 934 échantillons), ouverture du filet (6 102),
+  commentaires du labo (2 553 déploiements, 868 filets, 731 échantillons, 913 analyses); engin et trait dans le
+  résultat de `filet_uvp_compare`. Fiches : sens de V-Tow et O-Tow donné d'après les commentaires (vertical 159 fois
+  contre 1; oblique 21 fois contre 2), sans le présenter comme une définition du labo.
+- Le FILET se recharge quand le chargeur change (empreinte CSV + chargeur). Vérifié dans le conteneur : rechargé
+  une fois, puis plus; compte de lecture; audit d'accès vide; 170 tests.
+
 ### 12 novembre 2026 — Branche `mcp-neolab` : le warehouse et son serveur MCP seuls
 
 - Branche partie de `work/warehouse-fair` (historique gardé), réduite au code utilisé par le warehouse et le

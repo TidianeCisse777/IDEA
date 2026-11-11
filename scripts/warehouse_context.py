@@ -328,6 +328,15 @@ VIEWS['uvp_taxon_abundance']['caveats'] = (
 VIEWS['uvp_samples']['caveats'] = (
     'latitude/longitude viennent d’EcoPart et sont NULL pour 182 profils GreenEdge 2016 : prendre alors celles de '
     'explore.ecotaxa_samples (ecotaxa_sample_id), sinon une carte les omet sans le dire. ' + VIEWS['uvp_samples']['caveats'])
+TOW_AND_COMMENTS = (
+    'ENGIN ET TRAIT : gear (Hydrobios, 2x1m2, 4x1m2, 4x1m2 - LOKI, Bioness, Ringnet…) et tow_type sont les libellés '
+    'du labo, sans nom complet dans l’export (« hydrobios » en minuscules = Hydrobios, un déploiement). tow_type : les '
+    'commentaires du labo associent V-Tow à un trait vertical (« vertical » 159 fois, « oblique » 1 fois) et O-Tow à un '
+    'trait oblique (« oblique » 21 fois, « vertical » 2 fois) : le dire ainsi, ce n’est pas une définition du labo. '
+    'COMMENTAIRES (sample_comments, analysis_comments, et dans filet_samples deployment_comments, net_comments) : les '
+    'lire avant de comparer, ils signalent des échantillons non quantitatifs, des filets regroupés ou échappés. ')
+for _name in ('filet_data', 'filet_totals', 'filet_samples', 'filet_deployments'):
+    VIEWS[_name]['caveats'] = TOW_AND_COMMENTS + VIEWS[_name]['caveats']
 VIEWS['filet_data']['caveats'] = (
     'ANOMALIE SOURCE : l’échantillon 22497 (station 308, 2010) a un volume débitmètre négatif (-4181,4 m3) dans '
     'l’export du labo; ses abondances et biomasses au débitmètre sont négatives (111 lignes) : les exclure '
@@ -477,6 +486,12 @@ COLUMNS = {
     'depth_calc_net_filtered_vol': 'Volume FILET fourni calculé par profondeur; unité à confirmer dans la documentation source avant conversion.',
     'flowmeter_calc_vol': 'Volume FILET fourni calculé par flowmeter; unité à confirmer dans la source.',
     'net_mesh_size': 'Maille du filet en micromètres (µm), selon le dictionnaire du labo (document filet-samples-metadata).',
+    'bottom_depth': 'Profondeur du fond (m) au déploiement, selon le dictionnaire du labo (filet-samples-metadata); NULL si non fournie.',
+    'net_mouth_aperture': 'Surface d’ouverture du filet (m²), selon le dictionnaire du labo (filet-samples-metadata).',
+    'deployment_comments': 'Commentaire libre du labo sur le déploiement (météo, incidents, méthode), copié tel quel.',
+    'net_comments': 'Commentaire libre du labo sur le filet et son trait, copié tel quel.',
+    'sample_comments': 'Commentaire libre du labo sur l’échantillon (ex. « non quantitatif », filet échappé), copié tel quel : à lire avant de comparer.',
+    'analysis_comments': 'Commentaire libre du labo sur l’analyse (ex. filets regroupés), copié tel quel; NULL sans analyse.',
     'n_samples': 'Nombre d’échantillons FILET du déploiement (un par filet et couche, ou filets regroupés).',
     'n_layers': 'Nombre de couches de profondeur distinctes (min_sample_depth–max_sample_depth) du déploiement.',
     'n_meshes': 'Nombre de mailles distinctes du déploiement.',
