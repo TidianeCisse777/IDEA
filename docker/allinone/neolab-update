@@ -24,6 +24,15 @@ if ! printf '%s\n' "$report" | grep -q "^PRÊT"; then
     echo "[neolab] ÉCHEC : le warehouse n'est pas prêt après la mise à jour"
     exit 1
 fi
+# FILET export kept in the repository: loaded when it is new or changed (about one minute).
+filet=/opt/neolab/IDEA/shared_data/filet
+if [ -f "$filet/neolabs_sample.csv" ] && [ -f "$filet/neolabs_abundance.csv" ]; then
+    wanted=$(cat "$filet/neolabs_sample.csv" "$filet/neolabs_abundance.csv" | sha256sum | cut -c1-64)
+    if [ "$(cat "$NEOLAB_STATE/filet_loaded" 2>/dev/null)" != "$wanted" ]; then
+        echo "[neolab] chargement du FILET"
+        bash /opt/neolab/IDEA/docker/allinone/neolab-load-filet "$filet" | grep '^\[neolab\]'
+    fi
+fi
 rm -rf /opt/neolab/workspace
 "$py" scripts/warehouse_connect.py workspace /opt/neolab/workspace >/dev/null
 check=$(neolab-check 2>&1 || true)
