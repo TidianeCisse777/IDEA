@@ -2,7 +2,25 @@
 
 **Période proposée :** du 14 septembre au 30 novembre 2026
 
-**Dernière mise à jour :** 10 novembre 2026
+**Dernière mise à jour :** 11 novembre 2026
+
+### 11 novembre 2026 — Image tout-en-un installée sur un PC Windows neuf; Codex Desktop branché (phase 2)
+
+- Installation par `installer_windows.bat` (image construite depuis les zips) sur le PC Windows du
+  responsable : réussie, mais longue (restauration de la base plus de 30 min avec 3,7 Go de mémoire alloués à
+  Docker; 17,8 Go écrits). Un clic dans la fenêtre PowerShell met le script en pause (mode sélection).
+- Codex en ligne de commande : serveur vu. Codex Desktop : « MCP startup failed: program not found » : lancée
+  depuis le menu Démarrer, l'application ne trouvait pas `docker` (Docker Desktop installé dans
+  `AppData\Local\Programs`, hors du PATH des applications). Correction : chemin complet de docker dans
+  toutes les configurations (`register-apps --docker-command`, installeurs Windows et Mac) et nouveau
+  `brancher_assistants_windows.bat` (`scripts/connect_assistants_windows.*`) qui rebranche Claude Code, Codex
+  (`startup_timeout_sec = 60`), VS Code et Claude Desktop sans réinstaller.
+- Preuve : après ce script, nouvelle conversation Codex Desktop, « combien d'objets validés dans am_leg3 » :
+  69 574 (projet 14859, requête SQL et choix du projet affichés). Claude Desktop, VS Code et l'option
+  `-CodexWsl` : non testés. Les zips déjà envoyés contiennent l'ancien installeur : à refaire avant partage.
+- `scripts/publish_prebuilt_image.ps1` (image avec la base déjà installée, registre privé ghcr.io) : mécanisme
+  vérifié sur une petite base (nouveau volume rempli, initialisation sautée); pas encore lancé sur la vraie
+  base. Les mots de passe internes du conteneur sont dans l'image : elle doit rester privée.
 
 ### 10 novembre 2026 — État CTD / EcoPart mesuré; pH absent corrigé dans les textes (phase 2)
 
