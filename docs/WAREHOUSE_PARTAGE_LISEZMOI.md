@@ -59,6 +59,10 @@ sont aussi branchés s'ils étaient installés : les redémarrer.
 Exemple : « Quels projets EcoTaxa sont dans le warehouse, et quelle part de leurs objets est validée ? »
 L'assistant répond à partir de la base, explique ses choix et liste les requêtes qu'il a exécutées.
 
+Si une application ne voit pas le serveur (« program not found ») ou a été installée après coup : sous
+Windows, double-cliquer **`brancher_assistants_windows.bat`** (il rebranche tout sans réinstaller), sous Mac et
+Linux relancer l'installeur ; puis quitter complètement l'application et la rouvrir.
+
 ## Les fois suivantes
 
 Lancer **Docker Desktop** : la base redémarre toute seule. Puis l'assistant, comme ci-dessus.

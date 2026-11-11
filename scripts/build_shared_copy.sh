@@ -23,10 +23,13 @@ cp "$root/scripts/install_shared_copy.sh" "$dir/installer.sh"
 cp "$root/scripts/install_shared_copy_mac.command" "$dir/installer_mac.command"
 cp "$root/scripts/install_shared_copy_windows.bat" "$dir/installer_windows.bat"
 cp "$root/scripts/install_shared_copy_windows.ps1" "$dir/installer_windows.ps1"
+cp "$root/scripts/connect_assistants_windows.bat" "$dir/brancher_assistants_windows.bat"
+cp "$root/scripts/connect_assistants_windows.ps1" "$dir/brancher_assistants_windows.ps1"
 chmod +x "$dir/installer.sh" "$dir/installer_mac.command"
 (cd "$root" && git ls-files -co --exclude-standard | grep -v '^data/' | tar czf "$dir/IDEA-code.tar.gz" --transform 's,^,IDEA/,' -T -)
 rm -f "$out/${tag}_1sur2.zip" "$out/${tag}_2sur2.zip"
-(cd "$work" && zip -q -0 "$out/${tag}_1sur2.zip" "$tag/" "$tag/LISEZMOI.md" "$tag/installer.sh" "$tag/installer_mac.command" "$tag/installer_windows.bat" "$tag/installer_windows.ps1" "$tag/IDEA-code.tar.gz" \
+(cd "$work" && zip -q -0 "$out/${tag}_1sur2.zip" "$tag/" "$tag/LISEZMOI.md" "$tag/installer.sh" "$tag/installer_mac.command" "$tag/installer_windows.bat" "$tag/installer_windows.ps1" \
+     "$tag/brancher_assistants_windows.bat" "$tag/brancher_assistants_windows.ps1" "$tag/IDEA-code.tar.gz" \
      "$tag/$base.dump.sha256" "$tag/$base.dump.part0"
  zip -q -0 "$out/${tag}_2sur2.zip" "$tag/" "$tag/$base.dump.part1")
 rm -rf "$work"
