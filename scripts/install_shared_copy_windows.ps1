@@ -157,7 +157,10 @@ if (-not $hasClaude -and -not $hasCodex) {
         $hasClaude = [bool](Get-Command claude -ErrorAction SilentlyContinue)
     }
 }
-$server = "docker exec -i $container neolab-mcp"
+# Full path: applications started from the Start menu (Codex, Claude Desktop) may not find a bare "docker".
+$dockerExe = (Get-Command docker.exe -ErrorAction SilentlyContinue).Source
+if (-not $dockerExe) { $dockerExe = 'docker' }
+$server = "`"$dockerExe`" exec -i $container neolab-mcp"
 if ($hasClaude) {
     Quiet "claude mcp remove neolab-warehouse -s user" | Out-Null
     if (Quiet "claude mcp add --scope user neolab-warehouse -- $server") { Write-Host "Claude Code : serveur neolab-warehouse enregistré" }
@@ -169,7 +172,7 @@ if ($hasCodex) {
 }
 # Codex (config.toml), VS Code (Copilot) and Claude Desktop, if installed: written from a throwaway container
 # with the Windows profile mounted, by the same tested code as on Mac and Linux.
-& cmd.exe /c "docker run --rm -e HOME=/tmp -v `"$($env:USERPROFILE):/h`" --entrypoint /opt/neolab/venv/bin/python $image /opt/neolab/IDEA/scripts/warehouse_connect.py register-apps --home /h --platform windows --docker-container $container 2>&1"
+& cmd.exe /c "docker run --rm -e HOME=/tmp -v `"$($env:USERPROFILE):/h`" --entrypoint /opt/neolab/venv/bin/python $image /opt/neolab/IDEA/scripts/warehouse_connect.py register-apps --home /h --platform windows --docker-container $container --docker-command `"$dockerExe`" 2>&1"
 
 Write-Host "`nINSTALLATION TERMINÉE." -ForegroundColor Green
 if ($hasClaude -or $hasCodex) {

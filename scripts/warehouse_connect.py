@@ -542,11 +542,12 @@ def registration(client):
     return json.dumps({'mcpServers': {SERVER_NAME: {'command': python, 'args': [script, 'run']}}}, indent=2)
 
 
-def _server_command(windows_distro=None, docker_container=None):
+def _server_command(windows_distro=None, docker_container=None, docker_command='docker'):
     """The command an application runs to start the relay: through `docker exec` for the all-in-one image,
-    through wsl.exe for a Windows application reaching Ubuntu, else this Python and script."""
+    through wsl.exe for a Windows application reaching Ubuntu, else this Python and script. Desktop
+    applications do not get the terminal's PATH: the installers pass docker's full path."""
     if docker_container:
-        return ['docker', 'exec', '-i', docker_container, 'neolab-mcp']
+        return [docker_command or 'docker', 'exec', '-i', docker_container, 'neolab-mcp']
     command = [sys.executable, str(Path(__file__).resolve()), 'run']
     return (['wsl.exe', '-d', windows_distro, '--'] + command) if windows_distro else command
 
@@ -630,7 +631,8 @@ def register_apps(args):
         if not args.wsl_distro and not docker_container:
             raise SystemExit('--wsl-distro (ou --docker-container) est requis avec --windows-home')
         home, platform = args.windows_home, 'windows'
-    command = _server_command(None if docker_container else args.wsl_distro, docker_container)
+    command = _server_command(None if docker_container else args.wsl_distro, docker_container,
+                              getattr(args, 'docker_command', None))
     targets = app_targets(home or Path.home(), windows=(platform == 'windows'),
                           darwin=(platform == 'darwin') if platform else None)
     if not targets:
@@ -820,6 +822,7 @@ def main(argv=None):
     p.add_argument('--home', help='dossier personnel où chercher les applications (défaut : le vôtre)')
     p.add_argument('--platform', choices=('linux', 'darwin', 'windows'), help='système de ce dossier personnel')
     p.add_argument('--docker-container', help="lancer le serveur par « docker exec -i <conteneur> neolab-mcp » (image tout-en-un)")
+    p.add_argument('--docker-command', help="chemin complet de docker sur l'ordinateur (les applications de bureau n'ont pas le PATH du terminal)")
     p.set_defaults(handler=register_apps)
     p = sub.add_parser('workspace', help='créer un dossier de travail NeoLab (instructions lues par Claude Code, Codex, Gemini, Copilot)')
     p.add_argument('folder', help='dossier à créer ou compléter, ex. ~/neolab-travail')

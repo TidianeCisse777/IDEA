@@ -134,16 +134,18 @@ if ! have claude && ! have codex && [ -t 0 ]; then
         *) curl -fsSL https://claude.ai/install.sh | bash && PATH="$HOME/.local/bin:$PATH" ;;
     esac
 fi
+# Full path: desktop applications (Codex, Claude Desktop) do not get the terminal's PATH (macOS: no /usr/local/bin).
+docker_exe=$(command -v docker)
 assistants=""
 if have claude; then
     claude mcp remove neolab-warehouse -s user >/dev/null 2>&1 || true
-    claude mcp add --scope user neolab-warehouse -- docker exec -i "$CONTAINER" neolab-mcp >/dev/null
+    claude mcp add --scope user neolab-warehouse -- "$docker_exe" exec -i "$CONTAINER" neolab-mcp >/dev/null
     assistants="$assistants claude"
     echo "Claude Code : serveur neolab-warehouse enregistré"
 fi
 if have codex; then
     codex mcp remove neolab-warehouse >/dev/null 2>&1 || true
-    codex mcp add neolab-warehouse -- docker exec -i "$CONTAINER" neolab-mcp >/dev/null 2>&1 || true
+    codex mcp add neolab-warehouse -- "$docker_exe" exec -i "$CONTAINER" neolab-mcp >/dev/null 2>&1 || true
     assistants="$assistants codex"
 fi
 platform=linux; [ "$os" = Darwin ] && platform=darwin
@@ -151,7 +153,7 @@ user_opt=""; [ "$os" = Darwin ] || user_opt="--user $(id -u):$(id -g)"
 # shellcheck disable=SC2086
 docker run --rm $user_opt -e HOME=/tmp -v "$HOME:/h" --entrypoint /opt/neolab/venv/bin/python "$IMAGE" \
     /opt/neolab/IDEA/scripts/warehouse_connect.py register-apps --home /h --platform "$platform" \
-    --docker-container "$CONTAINER" | sed "s#(/h/#($HOME/#"
+    --docker-container "$CONTAINER" --docker-command "$docker_exe" | sed "s#(/h/#($HOME/#"
 
 printf '\nINSTALLATION TERMINÉE.\n\n'
 if [ -n "$assistants" ]; then

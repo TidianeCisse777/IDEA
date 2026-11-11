@@ -497,7 +497,8 @@ class RegisterAppsTests(unittest.TestCase):
     def run_register(self, **kwargs):
         args = mock.Mock(windows_home=kwargs.get('windows_home'), wsl_distro=kwargs.get('wsl_distro'),
                          home=kwargs.get('home'), platform=kwargs.get('platform'),
-                         docker_container=kwargs.get('docker_container'))
+                         docker_container=kwargs.get('docker_container'),
+                         docker_command=kwargs.get('docker_command'))
         with mock.patch.object(self.module.Path, 'home', return_value=self.home), \
                 mock.patch.object(self.module.sys, 'platform', 'linux'):
             self.module.register_apps(args)
@@ -553,3 +554,14 @@ class RegisterAppsDockerTests(RegisterAppsTests):
         entry = json.loads((user / 'mcp.json').read_text())['servers']['neolab-warehouse']
         self.assertEqual([entry['command']] + entry['args'], ['docker', 'exec', '-i', 'neolab-warehouse', 'neolab-mcp'])
         self.assertIn('command = "docker"', (self.home / '.codex' / 'config.toml').read_text())
+
+    def test_desktop_applications_get_dockers_full_path(self):
+        # Codex Desktop started from the Start menu reported « program not found » with a bare « docker ».
+        (self.home / '.codex').mkdir()
+        exe = r'C:\Users\u\AppData\Local\Programs\DockerDesktop\resources\bin\docker.exe'
+        self.run_register(home=str(self.home), platform='windows', docker_container='neolab-warehouse',
+                          docker_command=exe)
+        import tomllib
+        server = tomllib.loads((self.home / '.codex' / 'config.toml').read_text())['mcp_servers']['neolab-warehouse']
+        self.assertEqual(server['command'], exe)
+        self.assertEqual(server['args'], ['exec', '-i', 'neolab-warehouse', 'neolab-mcp'])
