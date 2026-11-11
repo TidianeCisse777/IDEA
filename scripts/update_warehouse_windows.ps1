@@ -82,6 +82,25 @@ function Get-GitHub($url, $token, $outFile, $accept) {
     if ($outFile) { Invoke-WebRequest -UseBasicParsing -Uri $url -Headers $headers -OutFile $outFile -ErrorAction Stop; return $null }
     return (Invoke-WebRequest -UseBasicParsing -Uri $url -Headers $headers -ErrorAction Stop).Content
 }
+function Save-GitHubArchive($url, $token, $outFile) {
+    # GitHub answers with a redirect to codeload.github.com carrying its own temporary access: follow it by
+    # hand, without our token (Windows PowerShell 5.1 forwarded it and got a 404).
+    $request = [System.Net.HttpWebRequest]::Create($url)
+    $request.AllowAutoRedirect = $false
+    $request.UserAgent = 'neolab-update'
+    if ($token) { $request.Headers['Authorization'] = "Bearer $token" }
+    $response = $request.GetResponse()
+    $location = $response.Headers['Location']
+    if (-not $location) {   # served directly
+        $file = [System.IO.File]::Create($outFile)
+        try { $response.GetResponseStream().CopyTo($file) } finally { $file.Close(); $response.Close() }
+        return
+    }
+    $response.Close()
+    $client = New-Object System.Net.WebClient
+    $client.Headers['User-Agent'] = 'neolab-update'
+    $client.DownloadFile($location, $outFile)
+}
 $api = "https://api.github.com/repos/$Repo"
 $token = Read-Token
 $latest = $null
@@ -115,7 +134,7 @@ $work = Join-Path $env:TEMP ("neolab-maj-" + $latest.Substring(0, 12))
 Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $work | Out-Null
 $archive = Join-Path $work 'code.tar.gz'
-try { Get-GitHub "$api/tarball/$latest" $token $archive 'application/vnd.github+json' }
+try { Save-GitHubArchive "$api/tarball/$latest" $token $archive }
 catch { Fail "téléchargement du code impossible ($($_.Exception.Message))." }
 & tar.exe -xzf $archive -C $work
 $source = Get-ChildItem $work -Directory | Select-Object -First 1
