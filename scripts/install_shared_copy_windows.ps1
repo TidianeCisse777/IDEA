@@ -75,9 +75,13 @@ function DockerInUbuntu {
     return ($LASTEXITCODE -eq 0)
 }
 function WaitDocker($seconds) {
+    # A silent wait looked like a hang on a fresh PC: say what is awaited, every 15 s.
     $waited = 0
     while (-not (DockerInUbuntu)) {
         if ($waited -ge $seconds) { return $false }
+        if ($waited % 15 -eq 0) {
+            Write-Host ("  attente de Docker dans {0} : {1} s sur {2} (vérifier dans Ubuntu : docker info)" -f $ubuntu, $waited, $seconds)
+        }
         Start-Sleep -Seconds 5; $waited += 5
     }
     return $true
