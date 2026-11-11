@@ -45,7 +45,7 @@ identifiées à partir de la réponse, ou par différence dans la liste des tâc
 et vérification stricte du filtre projet ; aucune sélection aveugle de la
 « dernière tâche » du compte.
 
-La migration additive `docs/warehouse_ecopart_migration.sql` s'applique avant
+La migration additive `sql/warehouse_ecopart_migration.sql` s'applique avant
 le chargement. Chaque projet est chargé dans une transaction PostgreSQL ; un
 échec annule ses lignes. `warehouse.ecopart_project_import` marque la version
 complète. Relancer réutilise cette version sans dupliquer bins ni liens.

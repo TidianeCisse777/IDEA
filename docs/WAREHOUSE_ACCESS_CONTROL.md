@@ -77,7 +77,7 @@ au compte dans sa colonne `note`.
 
 ## Zone des profils CTD
 
-Les profils CTD portent leur propre zone (`docs/warehouse_ctd_zone_migration.sql`), attribuée depuis leurs
+Les profils CTD portent leur propre zone (`sql/warehouse_ctd_zone_migration.sql`), attribuée depuis leurs
 coordonnées avec le même registre et la même convention que FILET et EcoTaxa :
 
 ```bash

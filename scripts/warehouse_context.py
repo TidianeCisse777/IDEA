@@ -84,7 +84,7 @@ GRAPHICS = view(
 # Views registered in VIEWS that may legitimately be absent from a deployment:
 # marine_zone_boundaries needs PostGIS, which a non-superuser managed-hosting
 # owner cannot always create (see deploy_warehouse_postgres.py's
-# ensure_postgis and docs/warehouse_marine_zone_migration.sql). publish()
+# ensure_postgis and sql/warehouse_marine_zone_migration.sql). publish()
 # treats every other VIEWS entry as mandatory; this is the one exception.
 OPTIONAL_VIEWS = {'marine_zone_boundaries', 'zone_membership'}
 

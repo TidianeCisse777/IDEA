@@ -366,4 +366,3 @@ Le certificat d'autorité est un fichier public : l'administrateur le distribue,
   pour ces deux scripts, et un serveur distant réel (certificat d'une vraie autorité).
 - **Trousseau du système** : `init --keyring` vérifié avec le module `keyring` (dorsal de test) : aucun mot de passe
   dans le fichier et recette `check` réussie. Non testé sur les trousseaux graphiques de macOS et de Windows.
-- Le lanceur Windows historique (`scripts/start_dbhub.ps1`, rôle `warehouse_reader`) reste inchangé.

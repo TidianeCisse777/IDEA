@@ -51,7 +51,7 @@ class ContractTests(unittest.TestCase):
             self.assertIn(entry['kind'], docs.KINDS)
 
     def test_migration_has_row_security_and_runs_after_access_control(self):
-        sql = (ROOT / 'docs' / 'warehouse_documents_migration.sql').read_text(encoding='utf-8')
+        sql = (ROOT / 'sql' / 'warehouse_documents_migration.sql').read_text(encoding='utf-8')
         for table in ('document', 'document_section'):
             self.assertIn(f'ALTER TABLE warehouse.{table} FORCE ROW LEVEL SECURITY', sql)
         import deploy_warehouse_postgres as deploy
@@ -70,7 +70,7 @@ if __name__ == '__main__':
 
 
 class FiletUvpCompareTests(unittest.TestCase):
-    SQL = (ROOT / 'docs' / 'warehouse_filet_uvp_compare.sql').read_text(encoding='utf-8')
+    SQL = (ROOT / 'sql' / 'warehouse_filet_uvp_compare.sql').read_text(encoding='utf-8')
 
     def test_aggregate_stage_with_its_parts_is_refused(self):
         self.assertIn("'COPEPODID' = ANY(p_filet_stages) AND p_filet_stages && copepodid", self.SQL)
@@ -89,7 +89,7 @@ class FiletUvpCompareTests(unittest.TestCase):
         # Amundsen 2023 gives no ESD: the size filter must not turn those objects into « 0 too small ».
         for name in ('warehouse_ecotaxa_object_size_migration.sql', 'warehouse_explore_catalog_migration.sql'):
             self.assertIn('coalesce(o.esd_px, 2 * sqrt(o.area_px / pi()))',
-                          (ROOT / 'docs' / name).read_text(encoding='utf-8'), name)
+                          (ROOT / 'sql' / name).read_text(encoding='utf-8'), name)
         self.assertIn('uvp_n_objects_no_size', self.SQL)
         self.assertIn('CASE WHEN coalesce(o.no_size, 0) = 0 THEN', self.SQL)
 
@@ -99,7 +99,7 @@ class FiletUvpCompareTests(unittest.TestCase):
 
 
 class UvpCtdLinkTests(unittest.TestCase):
-    SQL = (ROOT / 'docs' / 'warehouse_uvp_ctd_links.sql').read_text(encoding='utf-8')
+    SQL = (ROOT / 'sql' / 'warehouse_uvp_ctd_links.sql').read_text(encoding='utf-8')
 
     def test_links_follow_only_accepted_ecotaxa_ctd_links(self):
         # explore.uvp_ctd was empty: CTD loaded after EcoPart; the links are now rebuilt at every deploy.
@@ -115,7 +115,7 @@ class DataQaTests(unittest.TestCase):
 
     def test_comparison_counts_one_ecotaxa_copy_per_uvp_profile(self):
         # 199 GreenEdge 2016 profiles are linked to two identical EcoTaxa copies: UVP abundance was doubled.
-        sql = (ROOT / 'docs' / 'warehouse_filet_uvp_compare.sql').read_text(encoding='utf-8')
+        sql = (ROOT / 'sql' / 'warehouse_filet_uvp_compare.sql').read_text(encoding='utf-8')
         self.assertIn('min(u.ecotaxa_project_id) AS project_id', sql)
         self.assertIn('src.project_id = z.project_id', sql)
         self.assertIn('uvp_ecotaxa_project_id integer', sql)
@@ -124,7 +124,7 @@ class DataQaTests(unittest.TestCase):
         import warehouse_context as context
         for name in ('uvp_objects', 'uvp_object_sizes', 'uvp_taxon_abundance', 'uvp_samples'):
             self.assertIn('COPIES ECOTAXA', context.VIEWS[name]['caveats'], name)
-        view = (ROOT / 'docs' / 'warehouse_ecotaxa_object_size_migration.sql').read_text(encoding='utf-8')
+        view = (ROOT / 'sql' / 'warehouse_ecotaxa_object_size_migration.sql').read_text(encoding='utf-8')
         self.assertIn('e.project_id AS ecotaxa_project_id', view)
 
     def test_empty_views_and_source_anomalies_are_stated(self):
@@ -137,7 +137,7 @@ class DataQaTests(unittest.TestCase):
 
     def test_uvp_views_keep_one_ecotaxa_copy_per_profile(self):
         # The copies are filtered in the views themselves: an agent cannot count GreenEdge 2016 twice.
-        docs_dir = ROOT / 'docs'
+        docs_dir = ROOT / 'sql'
         for name in ('warehouse_ecotaxa_object_size_migration.sql', 'warehouse_ecotaxa_project_title_migration.sql',
                      'warehouse_uvp_abundance_zone_migration.sql', 'warehouse_ecopart_migration.sql'):
             self.assertIn('e2.project_id <', (docs_dir / name).read_text(encoding='utf-8'), name)

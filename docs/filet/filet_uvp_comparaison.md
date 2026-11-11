@@ -1,7 +1,7 @@
 # Comparer FILET et UVP : paires et abondances
 
 Méthode des fonctions `explore.filet_uvp_pairs` et `explore.filet_uvp_compare`
-(`docs/warehouse_filet_uvp_compare.sql`), et tests du 11 novembre 2026 sur l'export FILET du 26 mai 2026.
+(`sql/warehouse_filet_uvp_compare.sql`), et tests du 11 novembre 2026 sur l'export FILET du 26 mai 2026.
 Les valeurs sont posées côte à côte : aucune conversion entre filet et UVP, aucune interprétation.
 
 ## Paires FILET–UVP

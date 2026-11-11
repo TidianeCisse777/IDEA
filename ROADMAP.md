@@ -4,6 +4,17 @@
 
 **Dernière mise à jour :** 11 novembre 2026
 
+### 12 novembre 2026 — Branche `mcp-neolab` : le warehouse et son serveur MCP seuls
+
+- Branche partie de `work/warehouse-fair` (historique gardé), réduite au code utilisé par le warehouse et le
+  serveur MCP : relais, déploiement, fiches, base de connaissances, chargeurs, image tout-en-un, installeurs,
+  tests. Retirés : socle Hawaii (LangGraph, Open WebUI, sandbox, LiteLLM, Langfuse, nginx, compose de
+  l'application), navigateur web du warehouse, docs et tests associés (376 → 129 fichiers).
+- Migrations SQL déplacées de `docs/` vers `sql/`; service compose `warehouse-context` sur une petite image
+  `docker/context` (le navigateur fournissait la sienne). README et AGENTS.md réécrits pour ce périmètre.
+- Mise à jour Windows : branche par défaut `mcp-neolab`.
+- Preuves : 170 tests réussis (28 sautés sans PostgreSQL); déploiement rejoué dans le conteneur, voir ci-dessous.
+
 ### 11 novembre 2026 — QA des données avant démo (compte de lecture, base chargée)
 
 **Juste (preuves SQL, compte `lecture_mcp`)**
@@ -522,7 +533,7 @@
 ### 31 octobre 2026 — Connaissance des stades de copépodes (FILET et UVP) pour les agents
 
 - Nouvelle référence `warehouse.copepod_stage` / `explore.copepod_stages` (migration
-  `docs/warehouse_copepod_stage_migration.sql`) : les 18 codes de stade FILET avec libellé, phase (nauplius,
+  `sql/warehouse_copepod_stage_migration.sql`) : les 18 codes de stade FILET avec libellé, phase (nauplius,
   copépodite, adulte, agrégat), rang de développement, sexe, statut d'agrégat, présence d'une biomasse dans
   l'export, et ce que l'UVP permet (aucun champ de stade; seulement via les catégories EcoTaxa et
   `taxon_mapping`).
@@ -586,7 +597,7 @@
 - Fermé deux écarts trouvés en testant abondance multi-taxon/multi-zone avec un agent réel la veille.
 - **Zone manquante sur `explore.uvp_taxon_abundance`** : la vue joint déjà `uvp_profile` (qui porte
   `marine_zone_key`) mais ne le sélectionnait pas — un agent sans `explore.uvp_samples` peuplé (profil sans
-  sample EcoTaxa lié) devait deviner la zone autrement. Corrigé (`docs/warehouse_uvp_abundance_zone_migration.sql`) :
+  sample EcoTaxa lié) devait deviner la zone autrement. Corrigé (`sql/warehouse_uvp_abundance_zone_migration.sql`) :
   `marine_zone_key/name/assignment_status` et `ecotaxa_project_id` ajoutés en fin de colonnes.
 - **Contours de zone absents du SQL** : `marine_zone_key` n'était qu'une étiquette texte partout dans le
   warehouse; la géométrie réelle (`shared_data/geo/zones_registry.geojson`, 65 zones, IHO Marine Regions)
@@ -620,7 +631,7 @@
   exacts (3168/1584/836 µm). Mais il a trouvé un vrai trou : `warehouse.ecotaxa_project.title` (le nom du
   projet, ex. « Campagne Amundsen 2023 ») n'était exposé par aucune vue `explore.*` — seul l'identifiant
   numérique l'était. L'agent l'a signalé plutôt que d'inventer un nom.
-- Corrigé (migration `docs/warehouse_ecotaxa_project_title_migration.sql`) : `ecotaxa_project_title` ajouté en
+- Corrigé (migration `sql/warehouse_ecotaxa_project_title_migration.sql`) : `ecotaxa_project_title` ajouté en
   fin de colonnes de `explore.uvp_samples` et `explore.uvp_projects` (`CREATE OR REPLACE VIEW` refuse de
   renommer une colonne existante en insérant au milieu — corrigé après un premier essai en échec à
   l'initialisation Docker). Référence seule (NULL si le projet n'a pas été chargé), ne remplace pas
@@ -634,7 +645,7 @@
   n'était accessible à aucun compte scopé (ceux-ci n'ont `USAGE` que sur le schéma `explore`, jamais sur
   `warehouse` directement), donc un agent ne pouvait pas relier un taxon FILET à `explore.uvp_object_sizes`
   sans deviner par nom de taxon en texte libre.
-- Ajouts (migration `docs/warehouse_taxon_mapping_view.sql`) : vue `explore.taxon_mapping` (statut `accepted`
+- Ajouts (migration `sql/warehouse_taxon_mapping_view.sql`) : vue `explore.taxon_mapping` (statut `accepted`
   uniquement — `ambiguous`/`rejected` restent cachés, documenté comme tel, pas confondus avec une absence de
   correspondance), et colonne `taxon_key` sur `explore.uvp_object_sizes` (même formule que
   `uvp_taxon_abundance.taxon_key`), permettant la jointure `uvp_object_sizes.taxon_key = taxon_mapping.uvp_taxon_id`.
@@ -664,7 +675,7 @@
   interrogeable en lot avec les objets.
 - Ajouts : colonnes `area_px/esd_px/major_px/minor_px` sur `warehouse.ecotaxa_object`, table
   `warehouse.ecotaxa_acquisition` (calibration par acquisition, sécurité par ligne héritée comme
-  `ecotaxa_object`), vue `explore.uvp_object_sizes` (migration `docs/warehouse_ecotaxa_object_size_migration.sql`) :
+  `ecotaxa_object`), vue `explore.uvp_object_sizes` (migration `sql/warehouse_ecotaxa_object_size_migration.sql`) :
   un objet identifié par ligne avec sa taille réelle en µm quand elle est calculable — referme l'écart trouvé la
   veille (taxon et taille ne se croisaient dans aucune vue). `scripts/populate_ecotaxa_objects.py` interroge
   désormais `obj_free_cols` par projet avant de demander les champs de taille, et charge la calibration par
@@ -690,7 +701,7 @@
 - Lacune trouvée par le même test : les tailles de particules UVP (`warehouse.uvp_particle`, produit EcoPart LPM,
   chargé par `populate_ecopart.py`) n'étaient exposées par aucune vue `explore.*` — donc invisibles à tout agent.
   L'agent a correctement signalé l'absence plutôt que d'inventer un chiffre.
-- Ajout : `explore.uvp_particle_sizes` (migration additive `docs/warehouse_uvp_particle_sizes_view.sql`), héritant
+- Ajout : `explore.uvp_particle_sizes` (migration additive `sql/warehouse_uvp_particle_sizes_view.sql`), héritant
   automatiquement du filtre d'accès déjà posé sur `warehouse.uvp_particle` (vérifié : un compte scopé au contrat C1
   ne voit que son profil, pas celui d'un autre contrat). Documentée dans `scripts/warehouse_context.py` et
   `docs/WAREHOUSE_MCP_DICTIONARY.md`.
@@ -729,7 +740,7 @@
 - [Note de version](docs/WAREHOUSE_RELEASE_V1.md) : contenu, procédure, vérification, décisions et risques acceptés.
 - Version enregistrée dans la base à chaque déploiement (`warehouse.release_history`, `explore.warehouse_release`) avec
   le SHA-256 de chaque migration, par le script comme par l'initialisation Docker. Numéro défini une seule fois
-  (`docs/warehouse_release.sql`).
+  (`sql/warehouse_release.sql`).
 - `deploy_warehouse_postgres.py --verify` : rapport de préparation sans modification (version, rôles, réglages,
   propriétaire en lecture-écriture, base fermée à PUBLIC, filtre sans contournement, sécurité forcée, contexte MCP,
   vues de découverte; notes sur l'adoption des vues et les contrats FILET). Verdict `PRÊT` / `NON PRÊT`.
@@ -784,7 +795,7 @@
   repéré pendant cette recette a été corrigé.
 - **Multi-sources** : `warehouse_user.py --source ecotaxa,ecopart`, avertissement quand une seule source UVP est
   accordée, ligne `jeux lisibles` dans `warehouse_connect.py check`.
-- **CTD** : zone propre aux profils (`docs/warehouse_ctd_zone_migration.sql`), attribuée par
+- **CTD** : zone propre aux profils (`sql/warehouse_ctd_zone_migration.sql`), attribuée par
   `assign_filet_zones.py --table ctd_profile` avec le registre existant (vérifié : Baie de Baffin `assigned`,
   point du Pacifique `outside`, profil sans coordonnées `unresolved`).
 - **Zones et dates inconnues** : option explicite par droit `include_unknown_scope` (`--include-unknown`), refus
@@ -797,7 +808,7 @@
 
 ### 28 octobre 2026 — Rôles, accès par périmètre, FAIR, connexion DbHub et documentation (phases 2 et 4)
 
-- Rôles clarifiés ([WAREHOUSE_ROLES.md](docs/WAREHOUSE_ROLES.md)) : `docs/warehouse_roles.sql` est la
+- Rôles clarifiés ([WAREHOUSE_ROLES.md](docs/WAREHOUSE_ROLES.md)) : `sql/warehouse_roles.sql` est la
   source unique. Écarts corrigés : Docker ne créait aucun rôle de lecture, le navigateur utilisait le rôle
   propriétaire, les vues créées après provisionnement étaient illisibles, la migration EcoPart manquait au compose.
 - Préparation FAIR ([exigences](docs/WAREHOUSE_FAIR_REQUIREMENTS.md)) : migration additive, identifiant
@@ -961,7 +972,7 @@
 - Aucune migration scientifique ou publication n'a été exécutée : noms,
   licence, dépôt, rôles et conservation doivent être validés avant publication;
   le contrat SQL additif de catalogue est préparé et appliqué localement dans
-  `docs/warehouse_metadata_migration.sql`.
+  `sql/warehouse_metadata_migration.sql`.
 - Les métadonnées sources ont été vérifiées : EcoTaxa conserve 70 noms de
   champs JSON sur 6 118 samples ayant au moins une clé; EcoPart conserve
   59 801 lignes source de bins, 585 lignes `metadata` et 3 535 lignes
@@ -1184,7 +1195,7 @@ complet avec appel d’outil depuis Open WebUI.
 
 ### 21 septembre 2026 Enrichissement spatial FILET
 
-- `warehouse.filet_sample` porte désormais les mêmes métadonnées de zone maritime versionnées que les profils : clé, nom, source, version et statut d’affectation ; migration idempotente dans `docs/warehouse_filet_zone_migration.sql`.
+- `warehouse.filet_sample` porte désormais les mêmes métadonnées de zone maritime versionnées que les profils : clé, nom, source, version et statut d’affectation ; migration idempotente dans `sql/warehouse_filet_zone_migration.sql`.
 - Les **6 102** échantillons FILET géolocalisés ont été classés avec `shared_data/geo/zones_registry.geojson` (`registry-v1`) : **5 239 assigned**, **863 ambiguous**. Les cas ambigus restent explicites, sans choix arbitraire entre zones qui se chevauchent.
 - Le chargeur FILET réapplique cette affectation lors de chaque recharge, et `explore.filet_samples` expose les colonnes.
 - Le navigateur filtre maintenant FILET directement sur `filet_sample.marine_zone_name` ; contrôle : la Baie de Baffin retourne **1 467** échantillons FILET à la fois dans la synthèse et sur la carte.
@@ -1208,7 +1219,7 @@ complet avec appel d’outil depuis Open WebUI.
   confiés à des outils déterministes ; exploration par l'agent de relations
   préparées. Appariement FILET/UVP ↔ CTD spatial et temporel, extraction
   verticale séparée.
-- [Brouillon SQL pour revue](docs/warehouse_schema_proposal.sql) ajouté :
+- [Brouillon SQL pour revue](sql/warehouse_schema_proposal.sql) ajouté :
   données versionnées, unités FILET/UVP/CTD, observations, politiques,
   exécutions, correspondances, résultats et historique d'exploration.
 - Limites : DDL non exécuté, outils non implémentés, droits et publication
@@ -1394,7 +1405,7 @@ complet avec appel d’outil depuis Open WebUI.
 - Le warehouse contient 585 profils EcoPart, 59 801 bins et 10 479 780 objets EcoTaxa reliés à un bin. Les 228 objets sans bin restent explicitement non appariés ; la vue d'objets en expose donc 10 480 008. La couche d'abondance conserve les zéros des bins sans objet dans les dénominateurs.
 - Validation réelle : 11 archives comparées aux bins PostgreSQL sans écart ; six audits de jointure, profondeur, cardinalité, formule et provenance CTD retournent 0 anomalie. Les tests ciblés, dont la base PostgreSQL temporaire, réussissent.
 - Les sources, limites et commandes de reprise sont documentées dans `docs/WAREHOUSE_ECOPART.md` et `docs/WAREHOUSE_ECOTAXA_QA.md`.
-- Après un incident d'espace disque et le redémarrage de Docker le 21 septembre, PostgreSQL accepte de nouveau les requêtes. La migration additive `docs/warehouse_ecopart_migration.sql` a recréé les vues `explore.*` absentes de l'instance restaurée ; une jointure de contrôle donne 36 profils EcoPart/36 samples EcoTaxa pour 417↔5149 et 86 profils/samples pour chacune des politiques 86↔149 et 86↔20880. Pour `de110_001`, `ecotaxa:name:like<Copepoda` donne 308 objets sur 6 121,17 L, soit 50,32 ind/m³ ; aucun lien objet–bin orphelin n'est trouvé.
+- Après un incident d'espace disque et le redémarrage de Docker le 21 septembre, PostgreSQL accepte de nouveau les requêtes. La migration additive `sql/warehouse_ecopart_migration.sql` a recréé les vues `explore.*` absentes de l'instance restaurée ; une jointure de contrôle donne 36 profils EcoPart/36 samples EcoTaxa pour 417↔5149 et 86 profils/samples pour chacune des politiques 86↔149 et 86↔20880. Pour `de110_001`, `ecotaxa:name:like<Copepoda` donne 308 objets sur 6 121,17 L, soit 50,32 ind/m³ ; aucun lien objet–bin orphelin n'est trouvé.
 - **Réparation Docker, 21 septembre :** après les erreurs d'E/S du disque virtuel Docker, le stockage a été recréé puis le dump `data/warehouse_backups/neolab_warehouse_ecopart_20260921.dump` restauré sans erreur. Le contrôle SQL post-restauration retrouve 585 profils EcoPart, 59 801 bins et 10 479 780 objets appariés. Les liens 417↔5149 et 86↔149/20880 donnent respectivement 36/36 et 86/86 profils/samples ; le cas `de110_001`–Copepoda donne 308 objets, 6 121,17 L et 50,32 ind/m³. Les contrôles d'intégrité retournent 0 lien objet–bin orphelin et 0 lien non accepté.
 - **Simulation SQL de parcours, 21 septembre :** la requête « profils de la Baie de Baffin en 2024 » retourne 123 profils EcoPart, tous géolocalisés. Pour la carte, le taxon explicite `ecotaxa:name:Copepoda<Multicrustacea` retourne une série d'abondance pour chacun des 123 profils, sans double politique d'annotation ; l'abondance cartographiée est `SUM(objets) / SUM(volume_L) × 1000`, au grain profil. Les autres clés contenant « Copepoda » sont des catégories distinctes et ne sont pas fusionnées implicitement.
 - **Validation au grain bin, 21 septembre :** ces 123 profils ont 13 800 bins, tous avec intervalle de profondeur et volume échantillonné valides, sans doublon de profondeur dans un profil. Pour `am_leg3_RA02_1`, la série Copépodes restitue notamment 132 objets sur 64 L entre 20 et 25 m (2 062,50 ind/m³) et des zéros explicites lorsque le bin n'a aucun objet du taxon.

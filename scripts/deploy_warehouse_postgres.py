@@ -24,7 +24,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-DOCS = ROOT / 'docs'
+DOCS = ROOT / 'sql'  # migrations SQL
 # Order matters: roles come after every object they grant on; the release
 # record comes last so it describes a complete deployment.
 FRESH_FILES = ('warehouse_schema_proposal.sql', 'warehouse_metadata_migration.sql',
@@ -58,7 +58,7 @@ END $$;"""
 
 
 def release_version():
-    """The release number lives in docs/warehouse_release.sql only."""
+    """The release number lives in sql/warehouse_release.sql only."""
     match = re.search(r"\\set release '([^']+)'", (DOCS / RELEASE_FILE).read_text(encoding='utf-8'))
     return match.group(1)
 

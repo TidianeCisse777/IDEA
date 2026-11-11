@@ -805,7 +805,7 @@ def ingest(
     client: Client, conn: psycopg.Connection, directory: Path, discovery: dict
 ) -> None:
     """Download/load each resolved project; retain per-project failures for retry."""
-    conn.execute((ROOT / "docs/warehouse_ecopart_migration.sql").read_text())
+    conn.execute((ROOT / "sql/warehouse_ecopart_migration.sql").read_text())
     conn.commit()
     projects = {}
     for pid, info in discovery.items():
@@ -853,7 +853,7 @@ def main() -> None:
     args.directory.mkdir(parents=True, exist_ok=True)
     if args.recompute_abundance:
         with connection() as conn:
-            conn.execute((ROOT / "docs/warehouse_ecopart_migration.sql").read_text())
+            conn.execute((ROOT / "sql/warehouse_ecopart_migration.sql").read_text())
             conn.commit()
             recompute_abundance(conn)
         return

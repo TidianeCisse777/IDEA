@@ -10,8 +10,8 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DDL = ROOT / "docs" / "warehouse_schema_proposal.sql"
-METADATA_DDL = ROOT / "docs" / "warehouse_metadata_migration.sql"
+DDL = ROOT / "sql" / "warehouse_schema_proposal.sql"
+METADATA_DDL = ROOT / "sql" / "warehouse_metadata_migration.sql"
 USE_CASES = ROOT / "docs" / "UVP_USE_CASES_SQL.md"
 FRICTIONS = ROOT / "docs" / "UVP_FRICTIONS_OPEN.md"
 POPULATION_PLAN = ROOT / "docs" / "WAREHOUSE_POPULATION_PLAN.md"
@@ -171,7 +171,7 @@ class WarehouseSchemaContractTests(unittest.TestCase):
 
 
 def view_definition(path, name):
-    text = (ROOT / "docs" / path).read_text(encoding="utf-8")
+    text = (ROOT / "sql" / path).read_text(encoding="utf-8")
     match = re.search(rf"CREATE OR REPLACE VIEW {re.escape(name)} AS(.*?);", text, re.S)
     return " ".join(match.group(1).split()) if match else None
 

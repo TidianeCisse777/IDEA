@@ -175,7 +175,7 @@ La migration SQL doit attendre l'accord sur les noms, la licence, les rôles,
 le dépôt et la conservation.
 
 Le contrat proposé est maintenant écrit dans
-`docs/warehouse_metadata_migration.sql`. Il est additif et ne modifie aucune
+`sql/warehouse_metadata_migration.sql`. Il est additif et ne modifie aucune
 valeur scientifique existante. Il doit être appliqué à chaque nouvelle base
 avec le DDL initial; l'instance locale existante doit recevoir la migration
 explicitement et être contrôlée par les tests. Il est maintenant appliqué à
@@ -203,7 +203,7 @@ ont été créées à partir des versions déjà présentes. Les fiches sont en 
 
 ## Preuves techniques
 
-- `docs/warehouse_schema_proposal.sql` et migrations additives;
+- `sql/warehouse_schema_proposal.sql` et migrations additives;
 - `docs/WAREHOUSE_ECOTAXA_QA.md`, `docs/WAREHOUSE_ECOPART.md` et
   `docs/FILET_EXPORT_REVIEW.md`;
 - requêtes en lecture seule de l'instance locale `neolab_warehouse` le

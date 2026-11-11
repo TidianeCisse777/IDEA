@@ -122,8 +122,8 @@ def warehouse_db():
     parameters["password"] = os.getenv("WAREHOUSE_POSTGRES_PASSWORD")
     conn = psycopg.connect(**parameters, row_factory=dict_row)
     try:
-        conn.execute((ROOT / "docs/warehouse_schema_proposal.sql").read_text())
-        conn.execute((ROOT / "docs/warehouse_ecopart_migration.sql").read_text())
+        conn.execute((ROOT / "sql/warehouse_schema_proposal.sql").read_text())
+        conn.execute((ROOT / "sql/warehouse_ecopart_migration.sql").read_text())
         conn.execute("""INSERT INTO warehouse.dataset_version
             (source_instance,dataset_key,version_key,file_manifest_uri,sha256)
             VALUES ('ecotaxa','1','test','fixture','test');

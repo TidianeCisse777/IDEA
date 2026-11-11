@@ -10,8 +10,7 @@ Vue d'ensemble : [WAREHOUSE_README.md](WAREHOUSE_README.md).
 | Couche | Rôles | Où c'est défini |
 |---|---|---|
 | Application (Open WebUI) | `pending`, `user`, `admin` | `DEFAULT_USER_ROLE` (défaut `pending`) et `ENABLE_SIGNUP` dans `docker-compose.yml`; l'inscription est ouverte par défaut (`true`), à passer à `false` avant d'exposer le service |
-| Base PostgreSQL du warehouse | voir ci-dessous | `docs/warehouse_roles.sql`, `docs/warehouse_access_control.sql` |
-| Services annexes (autres bases) | `idea_langgraph`, `langfuse`, `litellm` | `langgraph/db/`, `langfuse/`, `litellm/` |
+| Base PostgreSQL du warehouse | voir ci-dessous | `sql/warehouse_roles.sql`, `sql/warehouse_access_control.sql` |
 
 **DbHub n'est pas un rôle.** C'est la passerelle MCP : elle se connecte à PostgreSQL avec le compte de la
 personne (ou `warehouse_reader` pour l'installation locale) et n'a pas d'autres droits que ce compte.

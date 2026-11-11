@@ -270,7 +270,7 @@ class LoaderChainTests(unittest.TestCase):
         self.assertEqual(result["mapped_objects"], 3)
         # The real loader (ingest) replays the EcoPart migration after all others: it must apply cleanly.
         with psycopg.connect(self.dsn) as conn:
-            conn.execute((ROOT / "docs/warehouse_ecopart_migration.sql").read_text())
+            conn.execute((ROOT / "sql/warehouse_ecopart_migration.sql").read_text())
             conn.commit()
         # 4. Amundsen CTD (ERDDAP simulated), then 5. CTD zones from coordinates.
         ctd = load_module("populate_amundsen_ctd")

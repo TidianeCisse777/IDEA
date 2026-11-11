@@ -9,7 +9,7 @@
 # Dépôt privé : un jeton GitHub en lecture seule (fine-grained, « Contents: Read-only » sur ce dépôt) est
 # demandé une fois, puis gardé chiffré pour cet utilisateur Windows (DPAPI) dans %LOCALAPPDATA%\neolab.
 param([switch]$Auto, [switch]$NoAuto, [switch]$Quiet,
-      [string]$Repo = 'TidianeCisse777/IDEA', [string]$Branch = 'work/warehouse-fair')
+      [string]$Repo = 'TidianeCisse777/IDEA', [string]$Branch = 'mcp-neolab')
 $ErrorActionPreference = 'Continue'
 $container = 'neolab-warehouse'
 $state = Join-Path $env:LOCALAPPDATA 'neolab'

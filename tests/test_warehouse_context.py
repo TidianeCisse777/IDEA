@@ -131,12 +131,12 @@ class CopepodStageReferenceTests(unittest.TestCase):
         import ast
         import re
         root = Path(__file__).resolve().parents[1]
-        sql = (root / 'docs/warehouse_copepod_stage_migration.sql').read_text(encoding='utf-8')
+        sql = (root / 'sql/warehouse_copepod_stage_migration.sql').read_text(encoding='utf-8')
         values = sql.split('VALUES', 1)[1].split('ON CONFLICT', 1)[0]
         values = re.sub(r'\bNULL\b', 'None', re.sub(r'\btrue\b', 'True', re.sub(r'\bfalse\b', 'False', values)))
         # (code, label, phase, order, sex, is_aggregate, aggregate_of, has_biomass, status, note)
         self.rows = {row[0]: row for row in ast.literal_eval('[' + values + ']')}
-        schema = (root / 'docs/warehouse_schema_proposal.sql').read_text(encoding='utf-8')
+        schema = (root / 'sql/warehouse_schema_proposal.sql').read_text(encoding='utf-8')
         check = re.search(r"stage text NOT NULL CHECK \(stage IN \((.*?)\)\)", schema, re.S).group(1)
         generated = re.search(r"is_aggregate boolean GENERATED ALWAYS AS\s*\(stage IN \((.*?)\)\)", schema, re.S).group(1)
         self.schema_stages = set(re.findall(r"'([A-Z0-9_]+)'", check))

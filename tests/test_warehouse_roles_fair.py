@@ -17,9 +17,10 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
-ROLES = (DOCS / "warehouse_roles.sql").read_text(encoding="utf-8")
-FAIR = (DOCS / "warehouse_fair_migration.sql").read_text(encoding="utf-8")
-ACCESS = (DOCS / "warehouse_access_control.sql").read_text(encoding="utf-8")
+SQL = ROOT / "sql"
+ROLES = (SQL / "warehouse_roles.sql").read_text(encoding="utf-8")
+FAIR = (SQL / "warehouse_fair_migration.sql").read_text(encoding="utf-8")
+ACCESS = (SQL / "warehouse_access_control.sql").read_text(encoding="utf-8")
 DEPLOY = ROOT / "scripts" / "deploy_warehouse_postgres.py"
 COMPOSE = (ROOT / "docker-compose.warehouse.yml").read_text(encoding="utf-8")
 
@@ -41,15 +42,10 @@ class RolesContractTests(unittest.TestCase):
         self.assertIn("\\getenv reader_password WAREHOUSE_READER_PASSWORD", ROLES)
         self.assertNotRegex(ROLES, r"PASSWORD\s+'[^']+'")
 
-    def test_compose_does_not_hand_the_owner_role_to_the_navigator(self):
-        navigator = COMPOSE.split("warehouse-navigator:")[1].split("volumes:")[0]
-        self.assertIn("warehouse_navigator", navigator)
-        self.assertNotIn("WAREHOUSE_POSTGRES_USER:-neolab", navigator)
-
     def test_compose_publishes_ports_on_the_local_machine_only_by_default(self):
         import yaml
         services = yaml.safe_load(COMPOSE)["services"]
-        for name in ("neolab-warehouse-db", "warehouse-navigator"):
+        for name in ("neolab-warehouse-db",):
             for port in services[name]["ports"]:
                 self.assertTrue(port.startswith("${WAREHOUSE_BIND_ADDRESS:-127.0.0.1}:"), (name, port))
 
@@ -117,7 +113,7 @@ class AccessControlContractTests(unittest.TestCase):
         self.assertNotRegex(view, r"(?i)count\(")
 
     def test_compose_publishes_the_mcp_context_once_the_database_is_ready(self):
-        service = COMPOSE.split("warehouse-context:")[1].split("warehouse-navigator:")[0]
+        service = COMPOSE.split("warehouse-context:")[1].split("\nvolumes:")[0]
         self.assertIn("publish_warehouse_context.py", service)
         self.assertIn("condition: service_healthy", service)
         self.assertIn("pg_isready -h 127.0.0.1", COMPOSE)
@@ -140,7 +136,7 @@ class AccessControlContractTests(unittest.TestCase):
         self.assertNotRegex(ACCESS, r"(?i)DELETE\s+FROM\s+warehouse\.access_grant")
 
     def test_roles_file_requires_the_access_file_first(self):
-        self.assertIn("apply docs/warehouse_access_control.sql before", ROLES)
+        self.assertIn("apply sql/warehouse_access_control.sql before", ROLES)
         names = re.findall(r"/docker-entrypoint-initdb\.d/(\d+_\w+)", COMPOSE)
         self.assertLess(names.index("016_warehouse_access"), names.index("021_warehouse_roles"))
 
@@ -165,7 +161,7 @@ class ReleaseContractTests(unittest.TestCase):
         names = [entry["file"] for entry in manifest]
         self.assertEqual(names[-2:], ["warehouse_roles.sql", "warehouse_release.sql"])
         for entry in manifest:
-            self.assertEqual(entry["sha256"], hashlib.sha256((DOCS / entry["file"]).read_bytes()).hexdigest())
+            self.assertEqual(entry["sha256"], hashlib.sha256((SQL / entry["file"]).read_bytes()).hexdigest())
 
     def test_docker_init_records_the_release_after_roles(self):
         self.assertIn("warehouse_release.sql:/opt/warehouse/warehouse_release.sql", COMPOSE)
@@ -697,7 +693,7 @@ class GroupRolesBeforeMigrationsTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('deploy', ROOT / 'scripts' / 'deploy_warehouse_postgres.py')
         deploy = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(deploy)
-        access = (ROOT / 'docs' / 'warehouse_access_control.sql').read_text(encoding='utf-8')
+        access = (ROOT / 'sql' / 'warehouse_access_control.sql').read_text(encoding='utf-8')
         for role in deploy.GROUP_ROLES:
             statement = next(line.strip() for line in deploy.GROUP_ROLES_SQL.splitlines() if f'CREATE ROLE {role} ' in line)
             self.assertIn(statement, access)
