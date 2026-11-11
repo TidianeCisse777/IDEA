@@ -289,6 +289,7 @@ VIEWS = {
         'Comparaison des abondances via les liens FILET–UVP et le mapping taxonomique accepté.',
         'Correspondance × ligne FILET/stade × mapping taxonomique × bin UVP; pas une paire unique.',
         'match_id vers filet_uvp_matches.id; uvp_profile_id vers uvp_samples.uvp_profile_id. Les taxons passent par warehouse.taxon_mapping accepted.',
+        'Pour une comparaison sur la même couche d’eau, préférer explore.filet_uvp_compare(max_km, max_hours, same_station, station_if_no_position, uvp_taxon, filet_taxon_pattern, filet_stages, min_size_um, max_size_um, esd|major, validated_only, best_only) et explore.filet_uvp_pairs(max_km, max_hours, same_station, station_if_no_position) : paires par distance et temps, abondance UVP intégrée sur le trait de filet (tranches vides comprises), stades agrégés refusés avec leurs parties; méthode et tests dans le document filet-uvp-comparaison (search_documents). '
         'La vue ne filtre PAS m.match_status : exiger accepted si nécessaire. La jointure FILET par identifiants natifs et UVP par profil/taxon n’isole pas toutes les versions ou annotation_policy : risque de multiplication. Le dénominateur FILET est répété par bin UVP; ne pas le sommer. Cette vue n’est pas un comparatif scientifique validé; qualifier versions, profondeur, stades et mapping avant calcul.',
         "SELECT * FROM explore.filet_uvp_abundance WHERE match_status='accepted' LIMIT 20;"),
 }

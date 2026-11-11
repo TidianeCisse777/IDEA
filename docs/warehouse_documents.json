@@ -36,6 +36,15 @@
       "date": "2026-05-26",
       "dataset_key": "neolab-filet",
       "summary": "Description du jeu « zooplankton abundances » (copépodes, autres zooplancton, œufs; fractions >1 mm et <1 mm; ind./m3) et définition de ses 30 colonnes. Source : Classeur FILET « project_IDEA_taxonomy_samples+analyses-data & metadata », 26 mai 2026 (texte copié tel quel)."
+    },
+    {
+      "key": "filet-uvp-comparaison",
+      "path": "docs/filet/filet_uvp_comparaison.md",
+      "title": "Comparer FILET et UVP : paires par distance et temps, abondances sur la même couche",
+      "kind": "méthode",
+      "date": "2026-11-11",
+      "dataset_key": null,
+      "summary": "Méthode et tests de explore.filet_uvp_pairs et explore.filet_uvp_compare : critères spatiaux, temporels et de station, stades FILET, taxons, taille et statut UVP, couverture de la couche."
     }
   ]
 }

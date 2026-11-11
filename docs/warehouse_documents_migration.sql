@@ -3,7 +3,8 @@
 -- warehouse.document          : un document (clé stable doc_key, titre, type, auteur, date, lien, empreinte).
 -- warehouse.document_section  : son texte découpé en sections (titre de section, corps), indexé en texte intégral.
 -- catalogue.documents, catalogue.document_sections : lecture par les comptes; un document rattaché à une
---   version de jeu de données n'est visible que si cette version l'est (catalogue.my_datasets).
+--   version de jeu de données n'est visible que si cette version l'est : la sécurité par ligne des tables
+--   (même règle que les données) filtre seule, vues et fonctions comprises (propriétaire soumis à FORCE).
 -- catalogue.search_documents(q) : recherche plein texte (français et anglais), meilleurs extraits d'abord.
 --
 -- Chargement : scripts/add_warehouse_document.py (un fichier .md ou .txt), et docs/warehouse_documents.json
@@ -93,21 +94,19 @@ SELECT d.doc_key, d.title, d.kind, d.language, d.author, d.document_date, d.url,
        d.dataset_key, d.dataset_version_id, d.summary,
        (SELECT count(*) FROM warehouse.document_section s WHERE s.document_id = d.id) AS n_sections,
        d.sha256, d.loaded_at
-FROM warehouse.document d
-WHERE d.dataset_version_id IS NULL OR d.dataset_version_id IN (SELECT warehouse.readable_versions());
+FROM warehouse.document d;
 COMMENT ON VIEW catalogue.documents IS
     'Documents écrits (protocoles, méthodes, notes, rapports, publications) : un par doc_key. Lire le texte avec catalogue.document_sections ou read_document; chercher avec search_documents.';
 
 CREATE OR REPLACE VIEW catalogue.document_sections AS
 SELECT d.doc_key, d.title, s.ordinal, s.heading, s.body
 FROM warehouse.document_section s
-JOIN warehouse.document d ON d.id = s.document_id
-WHERE d.dataset_version_id IS NULL OR d.dataset_version_id IN (SELECT warehouse.readable_versions());
+JOIN warehouse.document d ON d.id = s.document_id;
 COMMENT ON VIEW catalogue.document_sections IS
     'Texte des documents, une ligne par section dans l''ordre d''origine (doc_key, ordinal).';
 
--- Owner's rights (readers have no access to the warehouse schema), the same dataset filter as the views:
--- readable_versions() looks at session_user, the connected account.
+-- Owner's rights (readers have no access to the warehouse schema); row security still applies to the owner
+-- (FORCE) and looks at session_user, the connected account.
 CREATE OR REPLACE FUNCTION catalogue.search_documents(p_query text, p_limit integer DEFAULT 8)
 RETURNS TABLE (doc_key text, title text, ordinal integer, heading text, excerpt text, rank real)
 LANGUAGE sql STABLE SECURITY DEFINER
@@ -125,7 +124,6 @@ AS $$
     JOIN warehouse.document d ON d.id = s.document_id
     CROSS JOIN q
     WHERE s.search @@ (q.fr || q.en)
-      AND (d.dataset_version_id IS NULL OR d.dataset_version_id IN (SELECT warehouse.readable_versions()))
     ORDER BY rank DESC, d.doc_key, s.ordinal
     LIMIT least(greatest(coalesce(p_limit, 8), 1), 25)
 $$;

@@ -67,3 +67,20 @@ class ContractTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class FiletUvpCompareTests(unittest.TestCase):
+    SQL = (ROOT / 'docs' / 'warehouse_filet_uvp_compare.sql').read_text(encoding='utf-8')
+
+    def test_aggregate_stage_with_its_parts_is_refused(self):
+        self.assertIn("'COPEPODID' = ANY(p_filet_stages) AND p_filet_stages && copepodid", self.SQL)
+        self.assertIn("'ALL_STAGES' = ANY(p_filet_stages) AND cardinality(p_filet_stages) > 1", self.SQL)
+
+    def test_uvp_volume_counts_every_bin_of_the_layer(self):
+        # Volume from the bins (empty ones included), not from the objects found.
+        self.assertIn('FROM explore.uvp_particle_sizes', self.SQL)
+        self.assertIn('b.depth_min_m >= l.dmin AND b.depth_max_m <= l.dmax', self.SQL)
+
+    def test_deployed_after_the_views_it_reads(self):
+        import deploy_warehouse_postgres as deploy
+        self.assertEqual(deploy.ALWAYS_FILES[-1], 'warehouse_filet_uvp_compare.sql')
