@@ -4,6 +4,24 @@
 
 **Dernière mise à jour :** 11 novembre 2026
 
+### 11 novembre 2026 — Base de connaissances, FILET chargé, comparaison FILET–UVP (phase 2)
+
+- Documents écrits consultables par les agents (modèle des serveurs MCP de connaissances : chercher puis lire
+  par identifiant) : `warehouse.document`/`document_section` (sécurité par ligne), `search_documents` (plein
+  texte français/anglais sans accents), `read_document` (six sections à la fois). Chargés : revue FILET,
+  descriptions et dictionnaires des trois feuilles de métadonnées du classeur FILET, note de méthode FILET–UVP.
+- FILET chargé depuis les CSV du responsable (empreintes identiques à la revue du 18 septembre; dictionnaire
+  absent, `--no-dictionary`) : 6 102 échantillons, 1 502 analyses, 4 941 lignes appariées et 106 non (les neuf
+  couples 2024). `neolab-load-filet` charge le même export dans un conteneur installé.
+- Classeur complet reçu : feuille « zooplankton abundances » (11 378 lignes, 421 couples, 275 taxons, grandes
+  et petites fractions) analysée, non chargée; table de profils LOKI (192 lignes) reçue, non chargée.
+- `explore.filet_uvp_pairs` et `explore.filet_uvp_compare` : paires par distance/temps/station, abondance UVP
+  intégrée sur la couche du filet (tranches vides comprises), taxons, stades FILET (agrégats refusés avec
+  leurs parties, vérifiés égaux à la somme), taille ESD ou grand axe, statut. Tests et chiffres dans le
+  document `filet-uvp-comparaison`; `claude -p` l'a trouvé et utilisé. FILET–CTD : aucun lien construit.
+- Limites : compte à périmètre restreint non testé sur les documents; partie Windows du chargement FILET non
+  encore lancée.
+
 ### 11 novembre 2026 — Image tout-en-un installée sur un PC Windows neuf; Codex Desktop branché (phase 2)
 
 - Installation par `installer_windows.bat` (image construite depuis les zips) sur le PC Windows du

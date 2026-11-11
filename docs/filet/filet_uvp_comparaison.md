@@ -68,3 +68,18 @@ FILET avec un profil UVP proche comptent, d'où peu de paires.
 
 Ces rapports décrivent les données; leur explication (taille minimale vue par l'UVP, maille du filet,
 annotation, écart de temps) relève du chercheur.
+
+## Exemple : stades FILET précis contre une taille UVP
+
+FILET *Calanus* C5 et femelles contre UVP *Calanus* validés de grand axe ≥ 2 mm (30 km, 24 h, station si
+pas de position) :
+
+```sql
+SELECT * FROM explore.filet_uvp_compare(30, 24, false, true, 'Calanus', 'Calanus%', ARRAY['C5','F'],
+                                        2000, NULL, 'major', true);
+```
+
+Le 11 novembre 2026 : 33 paires, dont 7 avec au moins un *Calanus* UVP validé ≥ 2 mm dans la couche
+(Amundsen 2023 et 2024). Les profils GreenEdge 2016 appariés n'en ont aucun de validé dans la couche du filet,
+alors que les *Calanus* UVP validés des profils appariés ont un grand axe médian de 3,9 mm. Une abondance FILET
+vide (NULL) signifie que les valeurs source sont NA pour ces taxons et stades, pas zéro.

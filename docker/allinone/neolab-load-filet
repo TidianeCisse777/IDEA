@@ -1,0 +1,29 @@
+#!/bin/bash
+# Charge l'export FILET dans le conteneur (les CSV ne passent pas par Git) :
+#
+#     docker cp neolabs_sample.csv neolab-warehouse:/opt/neolab/filet/neolabs_sample.csv
+#     docker cp neolabs_abundance.csv neolab-warehouse:/opt/neolab/filet/neolabs_abundance.csv
+#     docker exec neolab-warehouse bash /opt/neolab/IDEA/docker/allinone/neolab-load-filet
+#
+# Empreintes vérifiées contre l'export du 26 mai 2026 (docs/FILET_EXPORT_REVIEW.md), puis chargement
+# (populate_filet.py, sans dictionnaire), paires FILET–UVP par station et temps, documents rattachés.
+set -euo pipefail
+dir=/opt/neolab/filet
+declare -A expected=(
+    [neolabs_sample.csv]=9ed57d8cc47fc7261dc4d8f150ab80030b2f15bd82959e910f7fa694446a3c90
+    [neolabs_abundance.csv]=6fdb7f5c9afb06c55babd079489dd31abe8e784548706df8044fe419638900a9)
+for name in "${!expected[@]}"; do
+    [ -f "$dir/$name" ] || { echo "[neolab] ÉCHEC : $dir/$name absent (docker cp d'abord)"; exit 1; }
+    actual=$(sha256sum "$dir/$name" | cut -c1-64)
+    [ "$actual" = "${expected[$name]}" ] || { echo "[neolab] ÉCHEC : $name n'est pas l'export du 26 mai 2026 (empreinte $actual)"; exit 1; }
+done
+echo "[neolab] empreintes conformes"
+set -a; . "$NEOLAB_STATE/secrets.env"; set +a
+export WAREHOUSE_POSTGRES_HOST=/var/run/postgresql WAREHOUSE_POSTGRES_PORT=5432 WAREHOUSE_POSTGRES_DB="$POSTGRES_DB" \
+       WAREHOUSE_POSTGRES_USER="$POSTGRES_USER" WAREHOUSE_POSTGRES_PASSWORD="$POSTGRES_PASSWORD"
+py=/opt/neolab/venv/bin/python
+cd /opt/neolab/IDEA/scripts
+"$py" populate_filet.py --samples "$dir/neolabs_sample.csv" --abundance "$dir/neolabs_abundance.csv" --no-dictionary
+"$py" populate_filet_uvp_matches.py
+"$py" add_warehouse_document.py sync
+echo "[neolab] FILET CHARGÉ"

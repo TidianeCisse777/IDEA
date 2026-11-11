@@ -113,16 +113,18 @@ def load(conn, path: Path, key: str, title: str, kind: str, *, language='fr', au
     if not parts:
         raise SystemExit(f'{path.name} : aucun texte.')
     digest = hashlib.sha256(raw).hexdigest()
-    meta = (title, kind, language, author, document_date, url, path.name, dataset_key, summary, digest)
     with conn.transaction():
-        row = conn.execute('SELECT id, title, kind, language, author, document_date::text, url, source_name, '
-                           'dataset_key, summary, sha256 FROM warehouse.document WHERE doc_key = %s', (key,)).fetchone()
-        if row and tuple(row[1:]) == meta:
-            return f'{key} : inchangé'
+        # The dataset may be loaded after the document: the version link is part of what must match.
         version = None
         if dataset_key:
             version = conn.execute('SELECT max(id) FROM warehouse.dataset_version WHERE dataset_key = %s',
                                    (dataset_key,)).fetchone()[0]
+        meta = (title, kind, language, author, document_date, url, path.name, dataset_key, version, summary, digest)
+        row = conn.execute('SELECT id, title, kind, language, author, document_date::text, url, source_name, '
+                           'dataset_key, dataset_version_id, summary, sha256 FROM warehouse.document WHERE doc_key = %s',
+                           (key,)).fetchone()
+        if row and tuple(row[1:]) == meta:
+            return f'{key} : inchangé'
         if row:
             conn.execute('DELETE FROM warehouse.document WHERE id = %s', (row[0],))
         document_id = conn.execute(
