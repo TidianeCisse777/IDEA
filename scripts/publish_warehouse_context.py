@@ -102,8 +102,18 @@ def publish(conn):
                  'SELECT * FROM catalogue.dataset_versions LIMIT 20;')]
         rows.append(('graphs', GRAPHICS['purpose'], GRAPHICS['grain'], GRAPHICS['joins'],
                      GRAPHICS['caveats'], GRAPHICS['example']))
-        rows += [(name, item['purpose'], item['grain'], item['joins'], item['caveats'], item['example'])
+        # A view with no row at all says so at the head of its sheet and in the overview: an agent must never read
+        # an empty view (links never built, data not loaded) as « nothing exists » (QA of 11 November 2026).
+        empty = [name for name in VIEWS if name in actual and not conn.execute(
+            sql.SQL('SELECT EXISTS (SELECT 1 FROM explore.{})').format(sql.Identifier(name))).fetchone()[0]]
+        notice = ('VUE VIDE dans ce déploiement (0 ligne) : données non chargées ou liens non construits; '
+                  'un résultat vide ici ne prouve aucune absence. ')
+        rows += [(name, item['purpose'], item['grain'], item['joins'],
+                  (notice if name in empty else '') + item['caveats'], item['example'])
                  for name, item in VIEWS.items() if name in actual]
+        if empty:
+            rows[0] = (rows[0][0], rows[0][1] + ' Vues vides dans ce déploiement, à ne pas interpréter : '
+                       + ', '.join(sorted(empty)) + '.', *rows[0][2:])
         for name, purpose, grain, example in (
             ('dataset_versions', 'Inventaire vivant des versions enregistrées, sans URI de fichier local.',
              'Une version identifiée par source_instance, dataset_key et version_key.',

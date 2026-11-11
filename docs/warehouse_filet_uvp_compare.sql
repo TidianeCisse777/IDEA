@@ -34,7 +34,7 @@ DO $$ BEGIN  -- a current signature with an older column list (return type chang
         DROP FUNCTION explore.filet_uvp_pairs(double precision, double precision, boolean, boolean, text[]);
     END IF;
     IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'filet_uvp_compare' AND pronamespace = 'explore'::regnamespace
-               AND pronargs = 14 AND NOT 'uvp_n_objects_no_size' = ANY(proargnames)) THEN
+               AND pronargs = 14 AND NOT 'uvp_ecotaxa_project_id' = ANY(proargnames)) THEN
         DROP FUNCTION explore.filet_uvp_compare(double precision, double precision, boolean, boolean, text, text,
             text[], double precision, double precision, text, boolean, boolean, double precision, text[]);
     END IF;
@@ -125,7 +125,7 @@ RETURNS TABLE (filet_sample_id text, filet_analysis_id text, filet_deployment_id
                layer_min_m numeric, layer_max_m numeric, net_mesh_size_um numeric,
                filet_n_taxa integer, filet_abundance_depth_ind_m3 numeric, filet_abundance_flowmeter_ind_m3 numeric,
                uvp_n_bins integer, uvp_layer_coverage numeric, uvp_volume_m3 numeric, uvp_n_objects bigint,
-               uvp_n_objects_no_size bigint,
+               uvp_n_objects_no_size bigint, uvp_ecotaxa_project_id integer,
                uvp_abundance_ind_m3 numeric, ratio_uvp_filet_depth numeric)
 LANGUAGE plpgsql STABLE
 AS $$
@@ -182,14 +182,21 @@ BEGIN
     ), taxa AS MATERIALIZED (
         SELECT t.taxon_id::text AS taxon_id FROM explore.ecotaxa_taxa t
         WHERE t.object_class = 'organism' AND p_uvp_taxon = ANY(t.taxon_lineage)
+    ), source AS MATERIALIZED (
+        -- One EcoTaxa project per UVP profile: 199 GreenEdge 2016 profiles are linked to two samples that are
+        -- exact copies (projects 149 and 20880 or 20890; same counts by taxon and status, 11 November 2026).
+        -- Counting both doubled the UVP abundance. Kept: the smallest project id (149 for GreenEdge 2016).
+        SELECT u.uvp_profile_id, min(u.ecotaxa_project_id) AS project_id
+        FROM explore.uvp_samples u
+        WHERE u.uvp_profile_id IN (SELECT DISTINCT uvp_profile_id FROM layer_bins)
+        GROUP BY u.uvp_profile_id
     ), sized AS (
-        -- ESD from the area when the project gives no ESD (Amundsen 2023): ESD = 2·sqrt(area/π), identical to
-        -- the source ESD wherever both exist (ratio 1.0000 on 200 000 objects, 11 November 2026).
         SELECT lb.filet_sample_id, lb.analysis_id, lb.uvp_profile_id,
-               CASE WHEN p_size_measure = 'esd' THEN coalesce(o.esd_um, 2 * sqrt(o.area_um2 / pi()))
-                    ELSE o.major_um END AS size_um
+               CASE WHEN p_size_measure = 'esd' THEN o.esd_um ELSE o.major_um END AS size_um
         FROM layer_bins lb
+        JOIN source src ON src.uvp_profile_id = lb.uvp_profile_id
         JOIN explore.uvp_object_sizes o ON o.uvp_bin_id = lb.uvp_bin_id AND o.uvp_profile_id = lb.uvp_profile_id
+                                       AND o.ecotaxa_project_id = src.project_id
         WHERE o.taxon_id IN (SELECT taxon_id FROM taxa)
           AND o.uvp_profile_id IN (SELECT DISTINCT uvp_profile_id FROM layer_bins)
           AND (NOT p_validated_only OR o.annotation_status = 'validated')
@@ -212,6 +219,7 @@ BEGIN
            l.dmin, l.dmax, l.mesh, l.n_taxa, round(l.ab_depth, 4), round(l.ab_flow, 4),
            coalesce(u.n_bins, 0), round((u.thickness / nullif(l.dmax - l.dmin, 0))::numeric, 3),
            round(u.volume_m3::numeric, 3), coalesce(o.n, 0), coalesce(o.no_size, 0),
+           (SELECT src.project_id::integer FROM source src WHERE src.uvp_profile_id = l.uvp_profile_id),
            -- No abundance when objects of the chosen taxa lack the size measure: unknown, not zero.
            CASE WHEN coalesce(o.no_size, 0) = 0 THEN round((coalesce(o.n, 0) / nullif(u.volume_m3, 0))::numeric, 4) END,
            CASE WHEN coalesce(o.no_size, 0) = 0 THEN

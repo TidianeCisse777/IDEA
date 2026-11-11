@@ -87,7 +87,9 @@ class FiletUvpCompareTests(unittest.TestCase):
 
     def test_missing_size_is_unknown_not_zero(self):
         # Amundsen 2023 gives no ESD: the size filter must not turn those objects into « 0 too small ».
-        self.assertIn("coalesce(o.esd_um, 2 * sqrt(o.area_um2 / pi()))", self.SQL)
+        for name in ('warehouse_ecotaxa_object_size_migration.sql', 'warehouse_explore_catalog_migration.sql'):
+            self.assertIn('coalesce(o.esd_px, 2 * sqrt(o.area_px / pi()))',
+                          (ROOT / 'docs' / name).read_text(encoding='utf-8'), name)
         self.assertIn('uvp_n_objects_no_size', self.SQL)
         self.assertIn('CASE WHEN coalesce(o.no_size, 0) = 0 THEN', self.SQL)
 
@@ -106,3 +108,29 @@ class UvpCtdLinkTests(unittest.TestCase):
         self.assertNotIn('distance', self.SQL.lower().split('aucun lien par proximité')[0][-50:])
         import deploy_warehouse_postgres as deploy
         self.assertIn('warehouse_uvp_ctd_links.sql', deploy.ALWAYS_FILES)
+
+
+class DataQaTests(unittest.TestCase):
+    """Traps found by the data QA of 11 November 2026."""
+
+    def test_comparison_counts_one_ecotaxa_copy_per_uvp_profile(self):
+        # 199 GreenEdge 2016 profiles are linked to two identical EcoTaxa copies: UVP abundance was doubled.
+        sql = (ROOT / 'docs' / 'warehouse_filet_uvp_compare.sql').read_text(encoding='utf-8')
+        self.assertIn('min(u.ecotaxa_project_id) AS project_id', sql)
+        self.assertIn('o.ecotaxa_project_id = src.project_id', sql)
+        self.assertIn('uvp_ecotaxa_project_id integer', sql)
+
+    def test_uvp_sheets_warn_about_copies_and_object_sizes_expose_the_project(self):
+        import warehouse_context as context
+        for name in ('uvp_objects', 'uvp_object_sizes', 'uvp_taxon_abundance', 'uvp_samples'):
+            self.assertIn('COPIES ECOTAXA', context.VIEWS[name]['caveats'], name)
+        view = (ROOT / 'docs' / 'warehouse_ecotaxa_object_size_migration.sql').read_text(encoding='utf-8')
+        self.assertIn('e.project_id AS ecotaxa_project_id', view)
+
+    def test_empty_views_and_source_anomalies_are_stated(self):
+        import warehouse_context as context
+        publish = (ROOT / 'scripts' / 'publish_warehouse_context.py').read_text(encoding='utf-8')
+        self.assertIn('VUE VIDE dans ce déploiement', publish)
+        for name in ('taxon_mapping', 'filet_uvp_abundance', 'filet_ctd'):
+            self.assertRegex(context.VIEWS[name]['caveats'], r'(?i)vide|aucun lien', name)
+        self.assertIn('22497', context.VIEWS['filet_data']['caveats'])

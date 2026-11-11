@@ -314,6 +314,40 @@ VIEWS = {
         "SELECT * FROM explore.filet_uvp_abundance WHERE match_status='accepted' LIMIT 20;"),
 }
 
+# Traps found by the data QA of 11 November 2026, stated at the head of the sheets concerned.
+UVP_COPIES = (
+    'COPIES ECOTAXA : 199 profils UVP GreenEdge 2016 sont liés à DEUX samples EcoTaxa, copies identiques des mêmes '
+    'images (projet 149 et projet 20880 ou 20890 : mêmes comptes par profil, taxon et statut). Sans filtre, chaque '
+    'objet de ces profils compte deux fois, et COUNT(DISTINCT ecotaxa_object_id) ne les dédouble pas (identifiants '
+    'différents). Garder UN projet par profil : ecotaxa_project_id = 149 pour GreenEdge 2016 (règle générale : le plus '
+    'petit ecotaxa_project_id du profil). ')
+for _name in ('uvp_objects', 'uvp_object_sizes', 'uvp_taxon_abundance', 'uvp_samples'):
+    VIEWS[_name]['caveats'] = UVP_COPIES + VIEWS[_name]['caveats']
+VIEWS['uvp_taxon_abundance']['caveats'] = (
+    'annotation_policy contient le projet EcoTaxa (ex. validated_only:ecotaxa_project=149) : ne jamais filtrer par '
+    "LIKE 'validated_only%' sans fixer aussi ecotaxa_project_id. " + VIEWS['uvp_taxon_abundance']['caveats'])
+VIEWS['uvp_samples']['caveats'] = (
+    'latitude/longitude viennent d’EcoPart et sont NULL pour 182 profils GreenEdge 2016 : prendre alors celles de '
+    'explore.ecotaxa_samples (ecotaxa_sample_id), sinon une carte les omet sans le dire. ' + VIEWS['uvp_samples']['caveats'])
+VIEWS['filet_data']['caveats'] = (
+    'ANOMALIE SOURCE : l’échantillon 22497 (station 308, 2010) a un volume débitmètre négatif (-4181,4 m3) dans '
+    'l’export du labo; ses abondances et biomasses au débitmètre sont négatives (111 lignes) : les exclure '
+    '(abundance_flowmeter_ind_m3 < 0) et le dire. 84 échantillons ont un volume débitmètre de 0 : leurs valeurs au '
+    'débitmètre sont NULL (inconnues), pas nulles. ' + VIEWS['filet_data']['caveats'])
+VIEWS['filet_totals']['caveats'] = (
+    'Même anomalie source que filet_data pour l’échantillon 22497 (valeurs au débitmètre négatives). '
+    + VIEWS['filet_totals']['caveats'])
+VIEWS['taxon_mapping']['caveats'] = (
+    'Aucune correspondance taxonomique FILET–UVP validée n’est chargée (table vide au 11 novembre 2026) : rien ne peut '
+    'en être conclu. ' + VIEWS['taxon_mapping']['caveats'])
+VIEWS['filet_uvp_abundance']['caveats'] = (
+    'Vide tant que explore.taxon_mapping est vide (aucune correspondance taxonomique validée) : utiliser '
+    'explore.filet_uvp_compare. ' + VIEWS['filet_uvp_abundance']['caveats'])
+VIEWS['filet_ctd']['caveats'] = (
+    'Aucun lien FILET–CTD n’est construit (aucun chargeur ne remplit cette table, 11 novembre 2026) : une vue vide '
+    'ici ne dit rien des données CTD existantes. ' + VIEWS['filet_ctd']['caveats'])
+
+
 COLUMNS = {
     'dataset_version_id': 'Clé technique de version de la source de cette vue; voir catalogue.dataset_versions. Ne pas joindre des sources différentes par simple égalité de ce champ.',
     'metadata_dataset_version_id': 'Version des métadonnées FILET liées; peut être NULL si aucune métadonnée ne correspond.',
@@ -428,7 +462,7 @@ COLUMNS = {
     'major_px': 'Axe majeur de l’ellipse ajustée par Zooprocess, en pixels; valeur source, non recalculée.',
     'minor_px': 'Axe mineur de l’ellipse ajustée par Zooprocess, en pixels; valeur source, non recalculée.',
     'pixel_size_mm': 'Taille réelle d’un pixel pour l’acquisition de l’objet, en mm (EcoTaxa la donne en mm pour UVP5/Zooscan et en µm pour UVP6 : convertie ici; ordre de grandeur 0,07 à 0,17 mm); NULL si EcoTaxa ne la fournit pas (LOKI, Zooscan), auquel cas aucune colonne _um/_um2 n’est calculable pour cet objet.',
-    'esd_um': 'esd_px converti en micromètres via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une taille nulle.',
+    'esd_um': 'Diamètre sphérique équivalent en micromètres : esd_px source converti par pixel_size_mm, sinon diamètre du disque de même aire, 2·√(area_px/π) (la plupart des projets UVP6 récents donnent l’aire sans l’ESD; les deux sont égaux là où ils coexistent). NULL si pixel_size_mm ou l’aire manquent : taille inconnue, pas nulle.',
     'major_um': 'major_px converti en micromètres via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une taille nulle.',
     'minor_um': 'minor_px converti en micromètres via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une taille nulle.',
     'area_um2': 'area_px convertie en micromètres carrés via pixel_size_mm; NULL si pixel_size_mm est NULL, pas une aire nulle.',

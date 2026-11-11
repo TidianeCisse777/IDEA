@@ -112,10 +112,16 @@ SELECT
     o.depth_min_m AS object_depth_min_m, o.depth_max_m AS object_depth_max_m,
     b.id AS uvp_bin_id, b.depth_min_m, b.depth_max_m, b.sampled_volume_l,
     o.area_px, o.esd_px, o.major_px, o.minor_px, ac.pixel_size_mm,
-    (o.esd_px * ac.pixel_size_mm * 1000) AS esd_um,
+    -- ESD: source value, else the diameter of the disc of the same area (its definition). Most recent UVP6
+    -- projects give the area but no ESD (11.4 M objects, 11 November 2026). Where both exist they are equal
+    -- (ratio 1.0000 on 200 000 objects). Without this, a filter on esd_um silently dropped those projects.
+    (coalesce(o.esd_px, 2 * sqrt(o.area_px / pi())) * ac.pixel_size_mm * 1000) AS esd_um,
     (o.major_px * ac.pixel_size_mm * 1000) AS major_um,
     (o.minor_px * ac.pixel_size_mm * 1000) AS minor_um,
-    (o.area_px * (ac.pixel_size_mm * 1000) ^ 2) AS area_um2
+    (o.area_px * (ac.pixel_size_mm * 1000) ^ 2) AS area_um2,
+    -- Source sample and project: a profile can be linked to several EcoTaxa samples holding copies of the same
+    -- images (199 GreenEdge 2016 profiles: project 149 and 20880 or 20890). Keep one project per profile.
+    e.id AS ecotaxa_sample_id, e.project_id AS ecotaxa_project_id
 FROM warehouse.uvp_profile u
 JOIN warehouse.uvp_ecotaxa ul ON ul.uvp_profile_id = u.id
 JOIN warehouse.ecotaxa_sample e ON e.id = ul.ecotaxa_sample_id
