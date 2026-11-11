@@ -5,7 +5,9 @@
 #   3. le second zip retrouvé et décompressé à côté du premier;
 #   4. le dossier copié dans Ubuntu, puis installer.sh y fait le reste (outils Linux, base, compte, assistant).
 # Relançable : chaque étape déjà faite est sautée.
-$ErrorActionPreference = 'Stop'
+# Continue: in Windows PowerShell 5.1, a native command writing to stderr (wsl.exe) becomes an error record,
+# fatal under 'Stop' (seen on a fresh PC). Each step checks its own result; file cmdlets use -ErrorAction Stop.
+$ErrorActionPreference = 'Continue'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 function Step($text) { Write-Host "`n== $text" -ForegroundColor Cyan }
 function Fail($text) { Write-Host "`nÉCHEC : $text" -ForegroundColor Red; exit 1 }
@@ -67,18 +69,51 @@ if (-not (Test-Path $dockerApp)) {
     if (-not (Test-Path $dockerApp)) { Fail "Docker Desktop ne s'est pas installé : l'installer à la main, puis relancer." }
     Write-Host "Docker Desktop installé. Si Windows demande de redémarrer, redémarrer puis relancer installer_windows.bat." -ForegroundColor Yellow
 }
-function DockerInUbuntu { & wsl.exe -d $ubuntu -- docker info *> $null; return ($LASTEXITCODE -eq 0) }
+function DockerInUbuntu {
+    # cmd /c keeps wsl.exe's messages out of PowerShell's error stream.
+    & cmd.exe /c "wsl.exe -d $ubuntu -- docker info >nul 2>&1"
+    return ($LASTEXITCODE -eq 0)
+}
+function WaitDocker($seconds) {
+    $waited = 0
+    while (-not (DockerInUbuntu)) {
+        if ($waited -ge $seconds) { return $false }
+        Start-Sleep -Seconds 5; $waited += 5
+    }
+    return $true
+}
+function EnableWslIntegration {
+    # Docker Desktop's own setting « Resources → WSL integration → <distro> », written in its settings file.
+    $dir = Join-Path $env:APPDATA 'Docker'
+    $store = Join-Path $dir 'settings-store.json'; $legacy = Join-Path $dir 'settings.json'
+    if (Test-Path $store) { $path = $store; $list = 'IntegratedWslDistros'; $default = 'EnableIntegrationWithDefaultWslDistro' }
+    elseif (Test-Path $legacy) { $path = $legacy; $list = 'integratedWslDistros'; $default = 'enableIntegrationWithDefaultWslDistro' }
+    else { return $false }
+    try { $settings = Get-Content $path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop } catch { return $false }
+    $distros = @($settings.$list | Where-Object { $_ })
+    if ($distros -notcontains $ubuntu) { $distros += $ubuntu }
+    $settings | Add-Member -NotePropertyName $list -NotePropertyValue $distros -Force
+    $settings | Add-Member -NotePropertyName $default -NotePropertyValue $true -Force
+    if (-not (Test-Path "$path.avant-neolab")) { Copy-Item $path "$path.avant-neolab" }
+    # UTF-8 without BOM: Docker Desktop does not read a JSON file starting with a BOM.
+    [System.IO.File]::WriteAllText($path, ($settings | ConvertTo-Json -Depth 32), (New-Object System.Text.UTF8Encoding $false))
+    return $true
+}
 if (-not (DockerInUbuntu)) {
     if (-not (Get-Process 'Docker Desktop' -ErrorAction SilentlyContinue)) {
         Write-Host "Démarrage de Docker Desktop (au premier lancement : accepter ses conditions dans sa fenêtre)…"
         Start-Process $dockerApp
     }
-    $waited = 0
-    while (-not (DockerInUbuntu)) {
-        if ($waited -ge 600) {
-            Fail "Docker ne répond pas dans Ubuntu : dans Docker Desktop, Settings → Resources → WSL integration → activer $ubuntu → Apply, puis relancer."
+    if (-not (WaitDocker 120)) {
+        Write-Host "Docker ne répond pas dans $ubuntu : activation de l'intégration WSL de Docker Desktop pour $ubuntu, puis redémarrage de Docker Desktop…"
+        if (EnableWslIntegration) {
+            Get-Process 'Docker Desktop', 'com.docker.backend', 'com.docker.build' -ErrorAction SilentlyContinue | Stop-Process -Force
+            Start-Sleep -Seconds 5
+            Start-Process $dockerApp
         }
-        Start-Sleep -Seconds 5; $waited += 5
+        if (-not (WaitDocker 300)) {
+            Fail "Docker ne répond pas dans Ubuntu : dans Docker Desktop, Settings → Resources → WSL integration → activer $ubuntu → Apply & restart, puis relancer installer_windows.bat."
+        }
     }
 }
 Write-Host "Docker répond dans $ubuntu : OK"
@@ -92,7 +127,7 @@ if (-not (Test-Path (Join-Path $here "$dump.part1")) -and -not (Test-Path (Join-
     $piece = Get-ChildItem -Path (Split-Path -Parent $here), (Join-Path $env:USERPROFILE 'Downloads') -Recurse -Depth 3 `
                  -Filter "$dump.part1" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($piece) {
-        Move-Item $piece.FullName (Join-Path $here "$dump.part1")
+        Move-Item $piece.FullName (Join-Path $here "$dump.part1") -ErrorAction Stop
     } else {
         $parent = Split-Path -Parent $here
         $candidates = @((Join-Path $parent "${folder}_2sur2.zip"), (Join-Path (Split-Path -Parent $parent) "${folder}_2sur2.zip"),
@@ -101,9 +136,9 @@ if (-not (Test-Path (Join-Path $here "$dump.part1")) -and -not (Test-Path (Join-
         if (-not $zip2) { Fail "second zip (${folder}_2sur2.zip) introuvable : le mettre dans Téléchargements, puis relancer." }
         Write-Host "Décompression de $(Split-Path -Leaf $zip2)…"
         $tmp = Join-Path $env:TEMP "neolab_zip2"
-        if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
-        Expand-Archive -Path $zip2 -DestinationPath $tmp
-        Move-Item (Join-Path $tmp "$folder\$dump.part1") (Join-Path $here "$dump.part1")
+        if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force -ErrorAction Stop }
+        Expand-Archive -Path $zip2 -DestinationPath $tmp -ErrorAction Stop
+        Move-Item (Join-Path $tmp "$folder\$dump.part1") (Join-Path $here "$dump.part1") -ErrorAction Stop
         Remove-Item $tmp -Recurse -Force
     }
 }
