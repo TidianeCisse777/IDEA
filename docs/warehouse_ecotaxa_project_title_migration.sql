@@ -45,7 +45,12 @@ SELECT
 FROM warehouse.uvp_profile u
 JOIN warehouse.uvp_ecotaxa l ON l.uvp_profile_id = u.id
 JOIN warehouse.ecotaxa_sample e ON e.id = l.ecotaxa_sample_id
-LEFT JOIN warehouse.ecotaxa_project ep ON ep.project_id = e.project_id;
+LEFT JOIN warehouse.ecotaxa_project ep ON ep.project_id = e.project_id
+WHERE NOT EXISTS (
+    -- Copies: a profile linked to several EcoTaxa samples (199 GreenEdge 2016 profiles: project 149 and its
+    -- exact copies 20880 / 20890) keeps the sample of the smallest project only, so nothing counts twice.
+    SELECT 1 FROM warehouse.uvp_ecotaxa l2 JOIN warehouse.ecotaxa_sample e2 ON e2.id = l2.ecotaxa_sample_id
+    WHERE l2.uvp_profile_id = u.id AND e2.project_id < e.project_id);
 
 -- Kept identical to its copy in warehouse_ecopart_migration.sql (tests/test_warehouse_schema.py checks it):
 -- populate_ecopart.py replays the EcoPart migration at load time, after the always-applied migrations.

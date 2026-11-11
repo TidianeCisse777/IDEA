@@ -134,3 +134,17 @@ class DataQaTests(unittest.TestCase):
         for name in ('taxon_mapping', 'filet_uvp_abundance', 'filet_ctd'):
             self.assertRegex(context.VIEWS[name]['caveats'], r'(?i)vide|aucun lien', name)
         self.assertIn('22497', context.VIEWS['filet_data']['caveats'])
+
+    def test_uvp_views_keep_one_ecotaxa_copy_per_profile(self):
+        # The copies are filtered in the views themselves: an agent cannot count GreenEdge 2016 twice.
+        docs_dir = ROOT / 'docs'
+        for name in ('warehouse_ecotaxa_object_size_migration.sql', 'warehouse_ecotaxa_project_title_migration.sql',
+                     'warehouse_uvp_abundance_zone_migration.sql', 'warehouse_ecopart_migration.sql'):
+            self.assertIn('e2.project_id <', (docs_dir / name).read_text(encoding='utf-8'), name)
+
+        def definition(name, view):
+            text = (docs_dir / name).read_text(encoding='utf-8')
+            start = text.index('CREATE OR REPLACE VIEW explore.%s AS' % view)
+            return text[start:text.index(';', start)]
+        self.assertEqual(definition('warehouse_ecotaxa_object_size_migration.sql', 'uvp_objects'),
+                         definition('warehouse_ecopart_migration.sql', 'uvp_objects'))

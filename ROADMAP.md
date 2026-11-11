@@ -30,8 +30,10 @@
 1. Source FILET : échantillon 22497 (station 308, 2010), volume débitmètre −4181,4 m³, d'où 111 abondances et
    78 biomasses négatives au débitmètre (`SELECT * FROM explore.filet_data WHERE abundance_flowmeter_ind_m3 < 0`).
    Données brutes gardées, fiche avertie : à corriger par le labo.
-2. `explore.uvp_objects`, `uvp_object_sizes`, `uvp_samples`, `uvp_taxon_abundance` contiennent toujours les deux
-   copies GreenEdge : un agent qui ignore la fiche compte double.
+2. Corrigé ensuite : `explore.uvp_objects`, `uvp_object_sizes`, `uvp_samples` et `uvp_taxon_abundance` ne gardent
+   qu'une copie par profil (plus petit projet EcoTaxa). Vérifié : `uvp_samples` 685 lignes pour 685 profils,
+   `uvp_objects` 10 650 490 objets (−1 500 880), `ge_2016_185` 13 451 objets, am_leg3 et valeurs de référence
+   inchangés. Les copies restent dans les vues `ecotaxa_*` (projets distincts dans EcoTaxa), fiches averties.
 3. Rapports UVP/FILET médians de la note de méthode retirés (mesurés avec le double compte) : à remesurer.
 4. Aucun lien FILET–CTD ni correspondance taxonomique FILET–UVP chargés; 2 analyses FILET ont COPEPODID connu
    pour certains taxons seulement (somme partielle possible); positions UVP absentes d'EcoPart pour 182

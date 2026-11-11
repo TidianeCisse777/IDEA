@@ -316,16 +316,15 @@ VIEWS = {
 
 # Traps found by the data QA of 11 November 2026, stated at the head of the sheets concerned.
 UVP_COPIES = (
-    'COPIES ECOTAXA : 199 profils UVP GreenEdge 2016 sont liés à DEUX samples EcoTaxa, copies identiques des mêmes '
-    'images (projet 149 et projet 20880 ou 20890 : mêmes comptes par profil, taxon et statut). Sans filtre, chaque '
-    'objet de ces profils compte deux fois, et COUNT(DISTINCT ecotaxa_object_id) ne les dédouble pas (identifiants '
-    'différents). Garder UN projet par profil : ecotaxa_project_id = 149 pour GreenEdge 2016 (règle générale : le plus '
-    'petit ecotaxa_project_id du profil). ')
+    'COPIES ECOTAXA : 199 profils UVP GreenEdge 2016 sont liés à deux samples EcoTaxa, copies identiques des mêmes '
+    'images (projet 149 et projet 20880 ou 20890). Cette vue ne garde que le sample du plus petit projet (149) : '
+    'rien n’y compte deux fois, et les projets 20880 et 20890 n’y apparaissent pas. Les copies restent dans les vues '
+    'ecotaxa_* (ecotaxa_objects, ecotaxa_samples, ecotaxa_projects) : ne pas additionner 149, 20880, 20890 et 13224. ')
 for _name in ('uvp_objects', 'uvp_object_sizes', 'uvp_taxon_abundance', 'uvp_samples'):
     VIEWS[_name]['caveats'] = UVP_COPIES + VIEWS[_name]['caveats']
 VIEWS['uvp_taxon_abundance']['caveats'] = (
-    'annotation_policy contient le projet EcoTaxa (ex. validated_only:ecotaxa_project=149) : ne jamais filtrer par '
-    "LIKE 'validated_only%' sans fixer aussi ecotaxa_project_id. " + VIEWS['uvp_taxon_abundance']['caveats'])
+    'annotation_policy contient le projet EcoTaxa (ex. validated_only:ecotaxa_project=149); un profil n’a ici que '
+    'les politiques d’un seul projet. ' + VIEWS['uvp_taxon_abundance']['caveats'])
 VIEWS['uvp_samples']['caveats'] = (
     'latitude/longitude viennent d’EcoPart et sont NULL pour 182 profils GreenEdge 2016 : prendre alors celles de '
     'explore.ecotaxa_samples (ecotaxa_sample_id), sinon une carte les omet sans le dire. ' + VIEWS['uvp_samples']['caveats'])

@@ -131,7 +131,12 @@ LEFT JOIN warehouse.ecotaxa_acquisition ac ON ac.acquisition_id = o.acquisition_
 -- an EcoTaxa sample linked to several profiles or versions must not fan out.
 LEFT JOIN (warehouse.uvp_object_bin ob
     JOIN warehouse.uvp_bin b ON b.id = ob.uvp_bin_id)
-    ON ob.ecotaxa_object_id = o.id AND b.profile_id = u.id;
+    ON ob.ecotaxa_object_id = o.id AND b.profile_id = u.id
+WHERE NOT EXISTS (
+    -- Copies: a profile linked to several EcoTaxa samples (199 GreenEdge 2016 profiles: project 149 and its
+    -- exact copies 20880 / 20890) keeps the sample of the smallest project only, so nothing counts twice.
+    SELECT 1 FROM warehouse.uvp_ecotaxa l2 JOIN warehouse.ecotaxa_sample e2 ON e2.id = l2.ecotaxa_sample_id
+    WHERE l2.uvp_profile_id = u.id AND e2.project_id < e.project_id);
 
 COMMENT ON VIEW explore.uvp_object_sizes IS
     'Un objet EcoTaxa identifie par ligne, avec sa taille reelle (esd_um/major_um/minor_um/area_um2) quand la calibration pixel de son acquisition est connue (NULL sinon : ne pas supposer une taille absente egale a zero). '
@@ -139,3 +144,32 @@ COMMENT ON VIEW explore.uvp_object_sizes IS
     'sampled_volume_l est un attribut du bin, repete sur chaque objet de ce bin : pour une densite par taxon et gamme de taille, agreger le volume une seule fois par uvp_bin_id (ex. MIN(sampled_volume_l) GROUP BY uvp_bin_id), comme pour explore.uvp_particle_sizes, avant de diviser le compte d''objets filtres par ce volume. '
     'esd_px/major_px/minor_px/area_px sont les valeurs source EcoTaxa (Zooprocess), non recalculees; les colonnes _um/_um2 sont calculees ici a partir de pixel_size_mm, qui n''existe pas pour tous les projets. '
     'taxon_key suit la meme convention que uvp_taxon_abundance.taxon_key : pour comparer a une abondance FILET du meme taxon, joindre explore.taxon_mapping sur uvp_taxon_id = taxon_key (mapping_status accepted uniquement), comme explore.filet_uvp_abundance le fait en interne.';
+
+-- explore.uvp_objects without the EcoTaxa copies, for existing databases. Kept identical to its definition in
+-- warehouse_ecopart_migration.sql (tests/test_warehouse_documents.py checks it), which only runs on a new one.
+CREATE OR REPLACE VIEW explore.uvp_objects AS
+SELECT
+    u.id AS uvp_profile_id, u.dataset_version_id, u.ecopart_project_id,
+    u.sample_name, u.cruise_key, u.station_key, u.sampled_at,
+    COALESCE(e.marine_zone_key,u.marine_zone_key) AS marine_zone_key,
+    COALESCE(e.marine_zone_name,u.marine_zone_name) AS marine_zone_name,
+    COALESCE(e.marine_zone_version,u.marine_zone_version) AS marine_zone_version,
+    COALESCE(e.marine_zone_assignment_status,u.marine_zone_assignment_status) AS marine_zone_assignment_status,
+    e.id AS ecotaxa_sample_id, e.project_id AS ecotaxa_project_id, e.sample_orig_id,
+    o.id AS ecotaxa_object_id, o.object_id, o.acquisition_id, o.process_id,
+    o.category_id AS taxon_id, o.category_name AS taxon_name, o.annotation_status,
+    o.depth_min_m AS object_depth_min_m, o.depth_max_m AS object_depth_max_m,
+    b.id AS uvp_bin_id, b.source_bin_key, b.depth_min_m, b.depth_max_m,
+    b.sampled_volume_l, ob.depth_delta_m, ob.mapping_method, ob.mapping_status, o.image_uri
+FROM warehouse.uvp_profile u
+JOIN warehouse.uvp_ecotaxa ul ON ul.uvp_profile_id=u.id
+JOIN warehouse.ecotaxa_sample e ON e.id=ul.ecotaxa_sample_id
+JOIN warehouse.ecotaxa_object o ON o.sample_id=e.id
+LEFT JOIN (warehouse.uvp_object_bin ob
+    JOIN warehouse.uvp_bin b ON b.id=ob.uvp_bin_id)
+    ON ob.ecotaxa_object_id=o.id AND b.profile_id=u.id
+WHERE NOT EXISTS (
+    -- Copies: a profile linked to several EcoTaxa samples (199 GreenEdge 2016 profiles: project 149 and its
+    -- exact copies 20880 / 20890) keeps the sample of the smallest project only, so nothing counts twice.
+    SELECT 1 FROM warehouse.uvp_ecotaxa l2 JOIN warehouse.ecotaxa_sample e2 ON e2.id = l2.ecotaxa_sample_id
+    WHERE l2.uvp_profile_id = u.id AND e2.project_id < e.project_id);

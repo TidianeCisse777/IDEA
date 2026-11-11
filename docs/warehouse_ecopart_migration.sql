@@ -39,7 +39,12 @@ JOIN warehouse.ecotaxa_sample e ON e.id=ul.ecotaxa_sample_id
 JOIN warehouse.ecotaxa_object o ON o.sample_id=e.id
 LEFT JOIN (warehouse.uvp_object_bin ob
     JOIN warehouse.uvp_bin b ON b.id=ob.uvp_bin_id)
-    ON ob.ecotaxa_object_id=o.id AND b.profile_id=u.id;
+    ON ob.ecotaxa_object_id=o.id AND b.profile_id=u.id
+WHERE NOT EXISTS (
+    -- Copies: a profile linked to several EcoTaxa samples (199 GreenEdge 2016 profiles: project 149 and its
+    -- exact copies 20880 / 20890) keeps the sample of the smallest project only, so nothing counts twice.
+    SELECT 1 FROM warehouse.uvp_ecotaxa l2 JOIN warehouse.ecotaxa_sample e2 ON e2.id = l2.ecotaxa_sample_id
+    WHERE l2.uvp_profile_id = u.id AND e2.project_id < e.project_id);
 
 -- Multiple EcoTaxa projects can refer to one EcoPart project.
 -- Kept identical to its copy in warehouse_ecotaxa_project_title_migration.sql (tests/test_warehouse_schema.py checks it):
@@ -84,7 +89,12 @@ ALTER TABLE warehouse.uvp_taxon_abundance ADD COLUMN IF NOT EXISTS taxon_name te
 CREATE OR REPLACE VIEW explore.uvp_taxon_abundance AS
 WITH taxa AS (
     SELECT dataset_version_id,profile_id,taxon_key,annotation_policy,MIN(taxon_name) AS taxon_name
-    FROM warehouse.uvp_taxon_abundance
+    FROM warehouse.uvp_taxon_abundance x
+    -- Copies: only the policies of the smallest EcoTaxa project linked to the profile (see explore.uvp_objects).
+    WHERE NOT EXISTS (
+        SELECT 1 FROM warehouse.uvp_ecotaxa l2 JOIN warehouse.ecotaxa_sample e2 ON e2.id = l2.ecotaxa_sample_id
+        WHERE l2.uvp_profile_id = x.profile_id
+          AND e2.project_id < split_part(x.annotation_policy, 'ecotaxa_project=', 2)::bigint)
     GROUP BY 1,2,3,4
 )
 SELECT t.dataset_version_id,t.profile_id,b.id AS bin_id,t.taxon_key,t.annotation_policy,

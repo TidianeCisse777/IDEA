@@ -14,7 +14,12 @@ ALTER TABLE warehouse.uvp_taxon_abundance ADD COLUMN IF NOT EXISTS taxon_name te
 CREATE OR REPLACE VIEW explore.uvp_taxon_abundance AS
 WITH taxa AS (
     SELECT dataset_version_id,profile_id,taxon_key,annotation_policy,MIN(taxon_name) AS taxon_name
-    FROM warehouse.uvp_taxon_abundance
+    FROM warehouse.uvp_taxon_abundance x
+    -- Copies: only the policies of the smallest EcoTaxa project linked to the profile (see explore.uvp_objects).
+    WHERE NOT EXISTS (
+        SELECT 1 FROM warehouse.uvp_ecotaxa l2 JOIN warehouse.ecotaxa_sample e2 ON e2.id = l2.ecotaxa_sample_id
+        WHERE l2.uvp_profile_id = x.profile_id
+          AND e2.project_id < split_part(x.annotation_policy, 'ecotaxa_project=', 2)::bigint)
     GROUP BY 1,2,3,4
 )
 SELECT t.dataset_version_id,t.profile_id,b.id AS bin_id,t.taxon_key,t.annotation_policy,
