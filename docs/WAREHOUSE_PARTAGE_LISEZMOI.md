@@ -12,7 +12,25 @@ un conteneur Docker : il ne faut que **Docker Desktop**.
 - Les deux fichiers reçus : `neolab_warehouse_20261108_1sur2.zip` et `neolab_warehouse_20261108_2sur2.zip`.
 - 15 à 30 minutes la première fois (surtout des téléchargements).
 
-## Installer
+## Installation rapide : depuis le registre privé (recommandé)
+
+La base est déjà installée dans l'image : rien à restaurer. Il faut Docker Desktop, environ 25 Go libres, un
+compte GitHub qui a reçu l'accès au paquet `neolab-warehouse`, et un jeton GitHub classique avec le droit
+`read:packages` (github.com → Settings → Developer settings → Personal access tokens → Tokens (classic)).
+
+- **Windows** : double-cliquer `install_from_registry_windows.bat`. Le compte GitHub et le jeton sont demandés
+  une seule fois; le jeton se colle comme mot de passe et ne s'affiche pas.
+- **Mac, Linux** : `bash install_from_registry.sh`.
+
+Le téléchargement prend 10 à 60 minutes la première fois, puis le script démarre la base, vérifie le serveur
+MCP et branche les assistants installés (Claude Code, Codex, OpenCode, VS Code, Claude Desktop). Sous Windows,
+les scripts de branchement et de mise à jour sont copiés dans `Documents\neolab`.
+
+Publier l'image (responsable du warehouse, depuis le PC installé avec les zips et à jour) :
+`powershell -ExecutionPolicy Bypass -File scripts\publish_prebuilt_image.ps1 -Owner VOTRE_COMPTE_GITHUB`,
+puis donner l'accès au paquet sur GitHub (Packages → neolab-warehouse → Package settings → Manage access).
+
+## Installer avec les deux zips
 
 ### Windows
 

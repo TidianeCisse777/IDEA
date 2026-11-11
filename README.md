@@ -32,9 +32,12 @@ EcoTaxa, EcoPart, CTD, FILET ──chargeurs──▶ PostgreSQL (schéma wareho
 
 ## Installer (utilisateur)
 
-Il ne faut que **Docker Desktop**. Avec la copie partagée (deux zips), lancer l'installeur de son système;
-il construit l'image, installe la base et branche les assistants trouvés. Détails :
-[docs/WAREHOUSE_PARTAGE_LISEZMOI.md](docs/WAREHOUSE_PARTAGE_LISEZMOI.md).
+Il ne faut que **Docker Desktop**. Le plus rapide : l'**image du registre privé GitHub**, base déjà installée
+(`scripts/install_from_registry_windows.bat`, ou `bash scripts/install_from_registry.sh` sur Mac et Linux;
+accès au paquet `neolab-warehouse` et jeton `read:packages`). Sinon, la copie partagée en deux zips :
+l'installeur de son système construit l'image et restaure la base (30 minutes environ). Détails :
+[docs/WAREHOUSE_PARTAGE_LISEZMOI.md](docs/WAREHOUSE_PARTAGE_LISEZMOI.md). Publier l'image :
+`scripts/publish_prebuilt_image.ps1 -Owner <compte GitHub>`.
 
 | Système | Installer | Rebrancher les assistants | Mettre à jour |
 |---|---|---|---|

@@ -4,6 +4,22 @@
 
 **Dernière mise à jour :** 11 novembre 2026
 
+### 12 novembre 2026 — Partage par registre privé : image avec la base déjà installée
+
+- `scripts/publish_prebuilt_image.ps1` refait : l'image part du conteneur à jour (instantané : code mis à jour,
+  fiches, documents) et non plus de l'image d'installation (qui aurait servi l'ancien code); la base (8,6 Go)
+  est copiée directement à sa place (une seule fois dans l'image); publication sous `<date>-donnees` et
+  `donnees`; refus de republier depuis un conteneur venant déjà du registre (base stockée deux fois).
+- Installeurs collègues : `install_from_registry_windows.bat` et `install_from_registry.sh` (Docker, connexion
+  ghcr.io une fois, téléchargement, conteneur sur le volume `neolab_warehouse_donnees`, vérification PASS,
+  branchement des assistants avec le code du conteneur; Windows : scripts de branchement et de mise à jour pris
+  dans l'image). Options : remplacer le conteneur (`-Replace` / `--replace`), reprendre la base de l'image
+  (`-NewData`).
+- Vérifié ici : installeur Mac/Linux de bout en bout sur le conteneur local (sans registre) : PASS, dossier de
+  travail, Claude Code, Codex et VS Code branchés; scripts PowerShell analysés sans erreur. Non vérifié : la
+  fabrication et la publication de l'image réelle (8,6 Go; 6,4 Go libres ici), le téléchargement depuis
+  ghcr.io et l'installeur Windows : à faire sur le PC du responsable.
+
 ### 12 novembre 2026 — FILET : engin sur chaque ligne, contexte et commentaires du labo
 
 - Le classeur FILET ne donne que les libellés courts des engins (Hydrobios, 2x1m2, 4x1m2, 4x1m2 - LOKI, Bioness,
