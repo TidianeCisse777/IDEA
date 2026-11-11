@@ -4,6 +4,7 @@
 -- explore.filet_uvp_pairs(max_km, max_hours, require_same_station)
 --     Paires candidates : distance (haversine, km), écart de temps (h), station identique ou non, nombre de
 --     candidats par échantillon FILET et rang (le plus proche d'abord : distance/max_km + écart/max_hours).
+--     Position UVP : EcoPart, sinon moyenne des samples EcoTaxa du profil (uvp_position_source).
 --     max_km NULL : pas de critère spatial. Un profil UVP sans position ne passe un critère spatial que si
 --     station_if_no_position est vrai et que la station est la même (201 paires au 11 novembre 2026).
 -- explore.filet_uvp_compare(...)
@@ -19,7 +20,7 @@
 DROP FUNCTION IF EXISTS explore.filet_uvp_pairs(double precision, double precision, boolean);
 DO $$ BEGIN  -- version without the UVP position (return type changed)
     IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'filet_uvp_pairs' AND pronamespace = 'explore'::regnamespace
-               AND NOT 'uvp_latitude' = ANY(proargnames)) THEN
+               AND NOT 'uvp_position_source' = ANY(proargnames)) THEN
         DROP FUNCTION explore.filet_uvp_pairs(double precision, double precision, boolean, boolean);
     END IF;
 END $$;
@@ -42,18 +43,26 @@ CREATE OR REPLACE FUNCTION explore.filet_uvp_pairs(
 RETURNS TABLE (filet_sample_ref bigint, filet_sample_id text, filet_station text, filet_sampled_at timestamp,
                filet_latitude double precision, filet_longitude double precision,
                uvp_profile_id bigint, uvp_sample_name text, uvp_station text, uvp_sampled_at timestamp,
-               uvp_latitude double precision, uvp_longitude double precision, distance_km double precision, time_gap_hours double precision, same_station boolean,
+               uvp_latitude double precision, uvp_longitude double precision, uvp_position_source text,
+               distance_km double precision, time_gap_hours double precision, same_station boolean,
                candidates_for_sample integer, rank_for_sample integer)
 LANGUAGE sql STABLE
 AS $$
     WITH uvp AS (
-        SELECT uvp_profile_id, min(sample_name) AS sample_name, min(station_key) AS station_key,
-               min(sampled_at) AT TIME ZONE 'UTC' AS sampled_at, avg(latitude) AS latitude, avg(longitude) AS longitude
-        FROM explore.uvp_samples GROUP BY uvp_profile_id
+        -- Position from EcoPart; when EcoPart has none (GreenEdge 2016), from the profile's EcoTaxa samples.
+        SELECT u.uvp_profile_id, min(u.sample_name) AS sample_name, min(u.station_key) AS station_key,
+               min(u.sampled_at) AT TIME ZONE 'UTC' AS sampled_at,
+               coalesce(avg(u.latitude), avg(e.latitude)) AS latitude,
+               coalesce(avg(u.longitude), avg(e.longitude)) AS longitude,
+               CASE WHEN avg(u.latitude) IS NOT NULL THEN 'EcoPart'
+                    WHEN avg(e.latitude) IS NOT NULL THEN 'EcoTaxa (samples)' END AS position_source
+        FROM explore.uvp_samples u
+        LEFT JOIN explore.ecotaxa_samples e ON e.ecotaxa_sample_id = u.ecotaxa_sample_id
+        GROUP BY u.uvp_profile_id
     ), pairs AS (
         SELECT f.id AS filet_sample_ref, f.sample_id, f.station_name, f.deployment_datetime_start AS f_at,
                f.latitude AS f_lat, f.longitude AS f_lon, u.uvp_profile_id, u.sample_name, u.station_key,
-               u.sampled_at AS u_at, u.latitude AS u_lat, u.longitude AS u_lon,
+               u.sampled_at AS u_at, u.latitude AS u_lat, u.longitude AS u_lon, u.position_source AS u_src,
                CASE WHEN f.latitude IS NULL OR u.latitude IS NULL THEN NULL ELSE
                    2 * 6371.0088 * asin(sqrt(power(sin(radians(u.latitude - f.latitude) / 2), 2)
                        + cos(radians(f.latitude)) * cos(radians(u.latitude))
@@ -65,7 +74,7 @@ AS $$
         WHERE f.deployment_datetime_start IS NOT NULL
     )
     SELECT filet_sample_ref, sample_id, station_name, f_at, f_lat, f_lon, uvp_profile_id, sample_name, station_key,
-           u_at, u_lat, u_lon, round(km::numeric, 2)::double precision, round(hours::numeric, 2)::double precision, same,
+           u_at, u_lat, u_lon, u_src, round(km::numeric, 2)::double precision, round(hours::numeric, 2)::double precision, same,
            (count(*) OVER w)::integer,
            (row_number() OVER (w ORDER BY coalesce(km / nullif(p_max_km, 0), 0) + hours / nullif(p_max_hours, 0),
                                uvp_profile_id))::integer

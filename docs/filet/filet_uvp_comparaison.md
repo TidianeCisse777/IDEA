@@ -12,7 +12,9 @@ Les valeurs sont posées côte à côte : aucune conversion entre filet et UVP, 
   du déploiement FILET et l'heure du profil UVP (h, UTC).
 - `max_km` NULL : pas de critère spatial. `require_same_station` : stations identiques après normalisation
   (lettres et chiffres, majuscules, « G » initial retiré : G107 = 107).
-- `station_if_no_position` : un profil UVP sans position est accepté si la station est la même.
+- Position UVP : celle d'EcoPart, sinon la moyenne des samples EcoTaxa du profil (`uvp_position_source`);
+  les 182 profils GreenEdge 2016 sans position EcoPart l'ont ainsi.
+- `station_if_no_position` : un profil UVP sans aucune position est accepté si la station est la même.
 - Rang 1 = le plus proche (distance/max_km + écart/max_hours). `candidates_for_sample` dit s'il y en avait d'autres.
 
 ## Abondances sur la même couche
@@ -41,30 +43,32 @@ Paires (rang 1), échantillons FILET appariés, distance et écart médians, par
 
 | max_km, max_hours | Échantillons | km médian | h médian | Même station |
 |---|---|---|---|---|
-| 5, 6 | 856 | 0,5 | 2,1 | 93 % |
-| 10, 12 | 925 | 0,6 | 2,2 | 94 % |
-| 30, 24 | 971 | 0,6 | 2,3 | 91 % |
-| 50, 48 | 990 | 0,6 | 2,3 | 89 % |
+| 5, 6 | 1 046 | 0,6 | 1,9 | 94 % |
+| 10, 12 | 1 126 | 0,6 | 1,9 | 95 % |
+| 30, 24 | 1 160 | 0,6 | 2,0 | 93 % |
+| 50, 48 | 1 179 | 0,6 | 2,0 | 92 % |
 | station seule, 24 h | 1 114 | 0,7 | 2,0 | 100 % |
+| station seule, 5 h | 955 (133 stations) | 0,6 | 1,8 | 100 % |
 
-- Aucune paire de même station n'est à plus de 30 km; 201 paires de même station ont un profil UVP sans position.
+- Aucune paire de même station n'est à plus de 30 km; toutes ont une position UVP (EcoPart ou EcoTaxa).
 - La proximité retrouve des paires que le nom de station manque (Keb-S8 / keb_S08, A7/196 / A7,
   Nares-East-23 / NaresE23, C4-23 / CA4-23).
-- 30 km, 24 h : 322 échantillons n'ont qu'un candidat, les autres 2 à 9 (plusieurs profils UVP proches).
+- 30 km, 24 h : 310 échantillons n'ont qu'un candidat, les autres 2 à 10 (plusieurs profils UVP proches).
 
 Comparaison des copépodes (UVP Copepoda validés, FILET COPEPODID, meilleure paire) : seules les analyses
 FILET avec un profil UVP proche comptent, d'où peu de paires.
 
 | Réglage | Paires | Couverture médiane | UVP/FILET médian |
 |---|---|---|---|
-| 5 km, 6 h | 14 | 1,00 | 0,107 |
-| 30 km, 24 h | 15 | 1,00 | 0,135 |
-| 50 km, 72 h | 16 | 1,00 | 0,138 |
-| 100 km, 168 h | 20 | 0,98 | 0,189 |
-| 30 km, 24 h + station sans position | 33 | 0,99 | 0,197 |
-| 50 km, 72 h, tous statuts UVP | 16 | 1,00 | 0,146 |
-| 50 km, 72 h, stades C4, C5, M, F | 16 | 1,00 | 0,157 |
-| 50 km, 72 h, Calanus / Calanus% | 16 | 1,00 | 0,124 |
+| 5 km, 6 h | 33 | 0,99 | 0,197 |
+| 30 km, 24 h | 33 | 0,99 | 0,197 |
+| 50 km, 72 h | 34 | 0,99 | 0,191 |
+| 100 km, 168 h | 34 | 0,99 | 0,191 |
+| 50 km, 72 h, tous statuts UVP | 34 | 0,99 | 0,191 |
+| 50 km, 72 h, stades C4, C5, M, F | 34 | 0,99 | 0,276 |
+
+Limite : avec 50 km et 72 h, la variante *Calanus* / `Calanus%` dépasse les 30 s accordées à un compte de
+lecture (11 novembre 2026); préférer 30 km et 24 h.
 
 Ces rapports décrivent les données; leur explication (taille minimale vue par l'UVP, maille du filet,
 annotation, écart de temps) relève du chercheur.
