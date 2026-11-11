@@ -94,3 +94,15 @@ class FiletUvpCompareTests(unittest.TestCase):
     def test_station_filter_and_single_signatures(self):
         self.assertIn('p_filet_stations text[] DEFAULT NULL', self.SQL)
         self.assertIn('DROP FUNCTION IF EXISTS explore.filet_uvp_pairs(double precision, double precision, boolean, boolean);', self.SQL)
+
+
+class UvpCtdLinkTests(unittest.TestCase):
+    SQL = (ROOT / 'docs' / 'warehouse_uvp_ctd_links.sql').read_text(encoding='utf-8')
+
+    def test_links_follow_only_accepted_ecotaxa_ctd_links(self):
+        # explore.uvp_ctd was empty: CTD loaded after EcoPart; the links are now rebuilt at every deploy.
+        self.assertIn("c.match_status = 'accepted'", self.SQL)
+        self.assertIn('ON CONFLICT DO NOTHING', self.SQL)
+        self.assertNotIn('distance', self.SQL.lower().split('aucun lien par proximité')[0][-50:])
+        import deploy_warehouse_postgres as deploy
+        self.assertIn('warehouse_uvp_ctd_links.sql', deploy.ALWAYS_FILES)
