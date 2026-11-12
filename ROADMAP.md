@@ -21,6 +21,21 @@
 - Vérifié avec le compte de lecture : liens par méthode, source et statut; aucun profil sans mesure; audit d'accès
   vide; serveur MCP PASS; 173 tests.
 
+### 12 novembre 2026 — Mise à jour sans retour en arrière, liens CTD réparés, skill d'entretien
+
+- Constat sur le PC du responsable : une vieille copie de `update_warehouse_windows.ps1` (branche
+  `work/warehouse-fair`) a appliqué le code `08f2dbb`; son `warehouse_uvp_ctd_links.sql` a effacé les liens CTD
+  UVP par proximité, puis la migration `filet_uvp_compare` a échoué (type de retour changé). FILET intact.
+- `update_warehouse_windows.ps1` : refuse une version plus ancienne que celle du conteneur (comparaison GitHub,
+  avant toute copie); après succès, remplace ses copies dans son dossier (mise à jour, publication,
+  branchement) et installe le skill Claude Code `scripts/claude_skill/neolab-warehouse` dans `~/.claude/skills`.
+- `neolab-update` : relance `neolab-load-ctd` quand le chargeur change (empreinte `ctd_loaded`) ou qu'il manque
+  les liens par proximité d'un côté; un échec (Internet) avertit sans bloquer. Nouvelle commande `neolab-status`
+  (version, base, FILET, liens CTD par méthode, sans secret).
+- Vérifié ici sur la base locale : la mise à jour a relancé le chargeur seule (0 profil à télécharger, 5 min),
+  liens identiques (UVP 98 proximity + 496 transitive; FILET 5 128 lignes, 1 316 déploiements); « À JOUR »;
+  180 tests. Non vérifié : les scripts PowerShell sur Windows (pas de PowerShell ici).
+
 ### 12 novembre 2026 — Partage par registre privé : image avec la base déjà installée
 
 - `scripts/publish_prebuilt_image.ps1` refait : l'image part du conteneur à jour (instantané : code mis à jour,

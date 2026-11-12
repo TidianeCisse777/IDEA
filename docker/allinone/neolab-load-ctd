@@ -12,4 +12,6 @@ export WAREHOUSE_POSTGRES_HOST=/var/run/postgresql WAREHOUSE_POSTGRES_PORT=5432 
        WAREHOUSE_POSTGRES_USER="$POSTGRES_USER" WAREHOUSE_POSTGRES_PASSWORD="$POSTGRES_PASSWORD"
 cd /opt/neolab/IDEA/scripts
 /opt/neolab/venv/bin/python populate_ctd_proximity.py "$@"
+# neolab-update reruns the loader when this fingerprint changes or when its links have gone missing.
+case " $* " in *" --dry-run "*) ;; *) sha256sum populate_ctd_proximity.py | cut -c1-64 > "$NEOLAB_STATE/ctd_loaded" ;; esac
 echo "[neolab] CTD RELIÉES"

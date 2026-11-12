@@ -36,7 +36,9 @@ RUN python3 -m venv /opt/neolab/venv \
  && install -m 755 docker/allinone/entrypoint.sh /usr/local/bin/neolab-entrypoint \
  && install -m 755 docker/allinone/initdb.sh /docker-entrypoint-initdb.d/50_neolab.sh \
  && install -m 755 docker/allinone/neolab-mcp /usr/local/bin/neolab-mcp \
- && install -m 755 docker/allinone/neolab-check /usr/local/bin/neolab-check
+ && install -m 755 docker/allinone/neolab-check /usr/local/bin/neolab-check \
+ && install -m 755 docker/allinone/neolab-load-ctd /usr/local/bin/neolab-load-ctd \
+ && install -m 755 docker/allinone/neolab-status /usr/local/bin/neolab-status
 
 COPY neolab_warehouse_*.dump /opt/neolab/neolab.dump
 

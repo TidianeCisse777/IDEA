@@ -131,6 +131,16 @@ if ($current -eq $latest) {
     if (-not $Quiet -and -not $Auto) { Write-Host "Pour une mise à jour automatique à chaque session : mettre_a_jour_windows.bat -Auto" }
     exit 0
 }
+# Never go back: an old copy of this script once fetched an older branch and its migrations removed links.
+if ($current -match '^[0-9a-f]{40}$') {
+    $status = $null
+    try { $status = (Get-GitHub "$api/compare/$current...$latest" $token $null 'application/vnd.github+json' | ConvertFrom-Json).status }
+    catch { Say "comparaison des versions impossible ($($_.Exception.Message)) : mise à jour faite quand même." Yellow }
+    if ($status -in 'behind', 'diverged') {
+        Fail ("la branche $Branch ($($latest.Substring(0, 7))) n'est pas plus récente que le code du conteneur " +
+              "($($current.Substring(0, 7))) : rien n'est changé. Branche à suivre : mcp-neolab.")
+    }
+}
 Say "Mise à jour : $(if ($current) { $current.Substring(0, 7) } else { 'version d''installation' }) -> $($latest.Substring(0, 7))"
 
 # --- Download, copy into the container, apply
@@ -157,5 +167,19 @@ if ($LASTEXITCODE -ne 0) {
 $travail = Join-Path $HOME 'neolab-travail'
 New-Item -ItemType Directory -Force $travail | Out-Null
 & $docker cp "${container}:/opt/neolab/workspace/." "$travail\" *> $null
+# This script and its companions in this folder are replaced by the new ones, so an old copy never lingers;
+# the maintenance skill goes to Claude Code if it is installed.
+foreach ($name in 'update_warehouse_windows.ps1', 'update_warehouse_windows.bat', 'publish_prebuilt_image.ps1',
+                  'connect_assistants_windows.ps1', 'connect_assistants_windows.bat') {
+    $fresh = Join-Path $source.FullName "scripts\$name"
+    $mine = Join-Path $PSScriptRoot $name
+    if ($PSScriptRoot -and (Test-Path $fresh) -and (Test-Path $mine)) { Copy-Item $fresh $mine -Force }
+}
+$skill = Join-Path $source.FullName 'scripts\claude_skill\neolab-warehouse\SKILL.md'
+if ((Test-Path (Join-Path $HOME '.claude')) -and (Test-Path $skill)) {
+    $skillDir = Join-Path $HOME '.claude\skills\neolab-warehouse'
+    New-Item -ItemType Directory -Force $skillDir | Out-Null
+    Copy-Item $skill (Join-Path $skillDir 'SKILL.md') -Force
+}
 Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
 Say "À JOUR ($($latest.Substring(0, 7))). Rouvrir une nouvelle conversation dans l'assistant." Green

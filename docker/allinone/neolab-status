@@ -1,0 +1,15 @@
+#!/bin/bash
+# État du warehouse, sans afficher de secret : docker exec neolab-warehouse neolab-status
+# Version du code, base prête, FILET chargé, liens CTD par méthode (lecture seule).
+set -euo pipefail
+echo "code : $(cat /opt/neolab/version 2>/dev/null || echo 'version d installation')"
+[ -f "$NEOLAB_STATE/ready" ] && echo "base : prête" || echo "base : pas prête"
+[ -f "$NEOLAB_STATE/filet_loaded" ] && echo "FILET : chargé" || echo "FILET : non chargé par neolab-update"
+[ -f "$NEOLAB_STATE/ctd_loaded" ] && echo "CTD par proximité : chargeur passé" || echo "CTD par proximité : chargeur jamais passé avec cette version"
+set -a; . "$NEOLAB_STATE/secrets.env"; set +a
+PGPASSWORD="$POSTGRES_PASSWORD" psql -X -q -tA -F ' ' -h /var/run/postgresql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "
+SELECT 'liens CTD ' || side || ' ' || link_method || ' : ' || n FROM (
+  SELECT 'UVP' AS side, link_method, count(*) AS n FROM warehouse.uvp_ctd GROUP BY link_method
+  UNION ALL
+  SELECT 'FILET', link_method, count(*) FROM warehouse.filet_ctd GROUP BY link_method) t
+ORDER BY side DESC, link_method"

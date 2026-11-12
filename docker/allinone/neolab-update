@@ -13,6 +13,8 @@ py=/opt/neolab/venv/bin/python
 install -m 755 docker/allinone/neolab-mcp /usr/local/bin/neolab-mcp
 install -m 755 docker/allinone/neolab-check /usr/local/bin/neolab-check
 install -m 755 docker/allinone/entrypoint.sh /usr/local/bin/neolab-entrypoint
+install -m 755 docker/allinone/neolab-load-ctd /usr/local/bin/neolab-load-ctd
+install -m 755 docker/allinone/neolab-status /usr/local/bin/neolab-status
 echo "[neolab] mise à jour de la base (migrations, vues, fiches MCP)"
 set -a; . "$NEOLAB_STATE/secrets.env"; set +a
 report=$(WAREHOUSE_POSTGRES_HOST=/var/run/postgresql WAREHOUSE_POSTGRES_PORT=5432 \
@@ -32,6 +34,22 @@ if [ -f "$filet/neolabs_sample.csv" ] && [ -f "$filet/neolabs_abundance.csv" ]; 
     if [ "$(cat "$NEOLAB_STATE/filet_loaded" 2>/dev/null)" != "$wanted" ]; then
         echo "[neolab] chargement du FILET"
         bash /opt/neolab/IDEA/docker/allinone/neolab-load-filet "$filet" | grep '^\[neolab\]'
+    fi
+fi
+# CTD links by proximity (neolab-load-ctd): rerun when the loader changed or when its links are missing (an
+# older code once deleted the UVP ones). Only CTD profiles not yet loaded are downloaded (Internet needed).
+prox=$(PGPASSWORD="$POSTGRES_PASSWORD" psql -X -q -tA -h /var/run/postgresql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+    "SELECT (SELECT count(*) FROM warehouse.uvp_ctd WHERE link_method = 'proximity') || ' ' ||
+            (SELECT count(*) FROM warehouse.filet_ctd WHERE link_method = 'proximity')" 2>/dev/null || echo "? ?")
+uvp_prox=${prox%% *}; filet_prox=${prox##* }
+case "$prox" in *[!0-9\ ]*|'') prox_ok=0 ;; *) prox_ok=1 ;; esac
+if [ "$prox_ok" = 1 ] && { [ -f "$NEOLAB_STATE/ctd_loaded" ] || [ "$filet_prox" != 0 ] || [ "$uvp_prox" != 0 ]; }; then
+    if [ "$(cat "$NEOLAB_STATE/ctd_loaded" 2>/dev/null)" != "$(sha256sum scripts/populate_ctd_proximity.py | cut -c1-64)" ] \
+       || [ "$uvp_prox" = 0 ] || [ "$filet_prox" = 0 ]; then
+        echo "[neolab] liens CTD par proximité : recalcul (liens UVP $uvp_prox, FILET $filet_prox)"
+        if ! bash /opt/neolab/IDEA/docker/allinone/neolab-load-ctd 2>&1 | grep -E '^\[(ctd|neolab)\]'; then
+            echo "[neolab] ATTENTION : liens CTD non recalculés (Internet ?); relancer : docker exec neolab-warehouse neolab-load-ctd"
+        fi
     fi
 fi
 rm -rf /opt/neolab/workspace
