@@ -28,7 +28,8 @@ $state = ((& docker exec $container sh -c 'echo $NEOLAB_STATE') | Out-String).Tr
 $pgdata = ((& docker exec $container sh -c 'echo $PGDATA') | Out-String).Trim()
 & docker exec $container sh -c 'test -f $NEOLAB_STATE/ready' *> $null
 if ($LASTEXITCODE -ne 0 -or -not $state -or -not $pgdata) { Fail "la base n'est pas prête : attendre la fin de l'installation, puis relancer." }
-$dataRoot = Split-Path -Parent $pgdata
+# Linux path inside the container: Split-Path would turn it into \var\lib\... on Windows (refusal by mistake).
+$dataRoot = $pgdata.Substring(0, $pgdata.LastIndexOf('/'))
 if ($dataRoot -ne '/var/lib/postgresql/data') {
     # A container started from a published image already carries a copy of the data in its image layers:
     # baking it again would store the base twice. Publish from the PC installed with the zips.
@@ -46,20 +47,17 @@ Write-Host "== 2/5 Instantané du conteneur (code et réglages à jour, sans la 
 & docker commit $container neolab-snapshot:tmp | Out-Null
 if ($LASTEXITCODE -ne 0) { & docker start $container | Out-Null; Fail "instantané impossible (place disque ?)." }
 Write-Host "== 3/5 Copie de la base dans l'image (quelques minutes)"
+# The bake container keeps the snapshot's entrypoint, command and health check as they are; the base is streamed
+# into it as a tar archive (through cmd: a PowerShell pipe would alter the bytes). Only two environment variables
+# change at commit, with no quotes: Windows PowerShell 5.1 mangles quotes inside native arguments.
 & cmd.exe /c "docker rm -f neolab-bake >nul 2>&1"
-# /opt/neolab/data is outside any declared VOLUME: the copy becomes part of the image, and Docker copies it into
-# the colleague's new named volume at first start.
-& docker run --name neolab-bake --entrypoint sh -v "${volume}:/from:ro" neolab-snapshot:tmp -c "mkdir -p /opt/neolab/data && cp -a /from/. /opt/neolab/data/ && rm -f /opt/neolab/data/neolab/attempts && test -f /opt/neolab/data/neolab/ready && test -f /opt/neolab/data/pgdata/PG_VERSION"
+& docker create --name neolab-bake neolab-snapshot:tmp | Out-Null
+& cmd.exe /c "docker run --rm --entrypoint tar -v ${volume}:/x/data:ro neolab-snapshot:tmp -C /x --exclude=data/neolab/attempts -cf - data | docker cp - neolab-bake:/opt/neolab"
 $copied = $LASTEXITCODE
 & docker start $container | Out-Null
 if ($copied -ne 0) { & cmd.exe /c "docker rm -f neolab-bake >nul 2>&1 & docker rmi neolab-snapshot:tmp >nul 2>&1"; Fail "copie de la base impossible (place disque ?)." }
 Write-Host "== 4/5 Fabrication de l'image $target"
-& docker commit `
-    --change 'ENV PGDATA=/opt/neolab/data/pgdata' `
-    --change 'ENV NEOLAB_STATE=/opt/neolab/data/neolab' `
-    --change 'ENTRYPOINT ["neolab-entrypoint"]' `
-    --change 'CMD ["postgres", "-c", "logging_collector=on", "-c", "log_destination=csvlog", "-c", "log_filename=postgresql-%Y-%m-%d.log", "-c", "log_rotation_age=1d", "-c", "log_rotation_size=0"]' `
-    neolab-bake $target | Out-Null
+& docker commit --change "ENV PGDATA=/opt/neolab/data/pgdata" --change "ENV NEOLAB_STATE=/opt/neolab/data/neolab" neolab-bake $target | Out-Null
 $made = $LASTEXITCODE
 & cmd.exe /c "docker rm neolab-bake >nul 2>&1 & docker rmi neolab-snapshot:tmp >nul 2>&1"
 if ($made -ne 0) { Fail "fabrication de l'image impossible." }
