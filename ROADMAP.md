@@ -36,6 +36,12 @@
   travail, Claude Code, Codex et VS Code branchés; scripts PowerShell analysés sans erreur. Non vérifié : la
   fabrication et la publication de l'image réelle (8,6 Go; 6,4 Go libres ici), le téléchargement depuis
   ghcr.io et l'installeur Windows : à faire sur le PC du responsable.
+- Premier essai sur le PC du responsable : refus à tort (« ce conteneur vient déjà d'une image publiée »), car
+  `Split-Path` de Windows changeait le chemin Linux en `\var\lib\…`. Corrigé (découpe de texte), et la
+  fabrication n'utilise plus de guillemets dans les arguments de Docker (Windows PowerShell 5.1 les casse) :
+  point d'entrée hérité de l'instantané, base copiée en flux tar, seules `PGDATA` et `NEOLAB_STATE` changent.
+  Vérifié ici sur une petite base : démarrage sans réinitialisation, `ready` présent, tentatives exclues, données
+  lues. L'essai n'avait rien modifié (arrêt avant l'arrêt de la base).
 
 ### 12 novembre 2026 — FILET : engin sur chaque ligne, contexte et commentaires du labo
 
