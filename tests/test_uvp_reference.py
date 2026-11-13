@@ -59,7 +59,9 @@ class CitedCtdPosition(unittest.TestCase):
 
     def test_applied_after_the_links_and_after_new_ctd_zones(self):
         links = text('warehouse_uvp_ctd_links.sql')
-        self.assertTrue(links.rstrip().endswith('SELECT warehouse.apply_uvp_cited_ctd_positions();'))
+        # positions first (they back up the source values), then the distances that read them
+        self.assertLess(links.index('SELECT warehouse.apply_uvp_cited_ctd_positions();'),
+                        links.index('SET distance_km = x.distance_km'))
         prox = (ROOT / 'scripts' / 'populate_ctd_proximity.py').read_text(encoding='utf-8')
         self.assertLess(prox.index("assign(table='ctd_profile')"), prox.index('apply_uvp_cited_ctd_positions()'))
 
@@ -127,3 +129,46 @@ class ContextSheets(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class AuditFollowUps(unittest.TestCase):
+    """Points 4 to 9 of the audit of 13 November 2026."""
+
+    def test_particles_below_detection_are_unknown_not_zero(self):
+        view = text('warehouse_uvp_particle_sizes_view.sql')
+        self.assertIn('CASE WHEN p.size_max_um <= u.particle_min_detected_um THEN NULL ELSE p.supplied_concentration END', view)
+        self.assertIn('AS below_detection', view)
+        self.assertIn('p.supplied_concentration AS supplied_concentration_source', view)
+        self.assertIn('round(p.size_max_um::numeric, 3)::double precision AS size_max_um', view)
+        refresh = text('warehouse_derived_refresh.sql')
+        self.assertIn('min(p.size_min_um) FILTER (WHERE p.supplied_concentration > 0)', refresh)
+
+    def test_particle_sheet_uses_the_only_loaded_value(self):
+        import warehouse_context as context
+        sheet = context.VIEWS['uvp_particle_sizes']
+        self.assertIn('supplied_concentration', sheet['example'])
+        self.assertNotIn('particle_count', sheet['example'])
+
+    def test_filename_links_show_their_distance_and_gap(self):
+        links = text('warehouse_uvp_ctd_links.sql')
+        tail = links[links.index('SELECT warehouse.apply_uvp_cited_ctd_positions();'):]
+        self.assertIn('SET distance_km = x.distance_km, time_gap_hours = x.time_gap_hours', tail)
+        self.assertIn("WHERE u.link_method = 'filename_transitive'", tail)
+        self.assertIn('coalesce(p.source_latitude, e.lat_avg)', tail)
+
+    def test_ctd_targets_never_average_copies_nor_versions(self):
+        prox = (ROOT / 'scripts' / 'populate_ctd_proximity.py').read_text(encoding='utf-8')
+        targets = prox.split('def targets(conn)')[1].split('def match(')[0]
+        self.assertNotIn('avg(e.lat_avg)', targets)
+        self.assertIn('warehouse.uvp_canonical_sample k', targets)
+        self.assertIn('GROUP BY s.dataset_version_id, s.deployment_id', targets)
+        self.assertIn("WHERE s.dataset_version_id || '|' || s.deployment_id = %s", prox)
+
+    def test_sheets_warn_about_gaps_and_particular_profiles(self):
+        import warehouse_context as context
+        for name in ('ecopart_bins', 'uvp_taxon_abundance', 'uvp_objects'):
+            self.assertIn('TRANCHES MANQUANTES', context.VIEWS[name]['caveats'], name)
+        for name in ('uvp_samples', 'ecopart_bins', 'uvp_taxon_abundance'):
+            self.assertIn('de320_004_lighttest', context.VIEWS[name]['caveats'], name)
+        for column in ('below_detection', 'supplied_concentration_source'):
+            self.assertTrue(context.column_description('uvp_particle_sizes', column))

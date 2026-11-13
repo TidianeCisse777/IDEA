@@ -184,17 +184,20 @@ def km(lat1, lon1, lat2, lon2) -> float:
 
 def targets(conn) -> list[dict]:
     rows = conn.execute("""
+        -- Without its own position, a UVP profile takes its reference EcoTaxa copy's (never an average of copies
+        -- that disagree: ge_2016_001 is at +58.5 in one, -58.5 in the other). A FILET deployment is a dataset
+        -- version and a deployment id: two versions must not be averaged together.
         SELECT 'uvp', p.id::text, NULL::text, p.sampled_at,
-               coalesce(p.latitude, (SELECT avg(e.lat_avg) FROM warehouse.uvp_ecotaxa l
-                                     JOIN warehouse.ecotaxa_sample e ON e.id = l.ecotaxa_sample_id WHERE l.uvp_profile_id = p.id)),
-               coalesce(p.longitude, (SELECT avg(e.lon_avg) FROM warehouse.uvp_ecotaxa l
-                                      JOIN warehouse.ecotaxa_sample e ON e.id = l.ecotaxa_sample_id WHERE l.uvp_profile_id = p.id))
+               coalesce(p.latitude, (SELECT e.lat_avg FROM warehouse.uvp_canonical_sample k
+                                     JOIN warehouse.ecotaxa_sample e ON e.id = k.ecotaxa_sample_id WHERE k.uvp_profile_id = p.id)),
+               coalesce(p.longitude, (SELECT e.lon_avg FROM warehouse.uvp_canonical_sample k
+                                      JOIN warehouse.ecotaxa_sample e ON e.id = k.ecotaxa_sample_id WHERE k.uvp_profile_id = p.id))
         FROM warehouse.uvp_profile p
         WHERE NOT EXISTS (SELECT 1 FROM warehouse.uvp_ctd c WHERE c.uvp_profile_id = p.id AND c.link_method = 'filename_transitive')
         UNION ALL
-        SELECT 'filet', s.deployment_id::text, lower(min(s.gear)), min(s.deployment_datetime_start) AT TIME ZONE 'UTC',
-               avg(s.latitude), avg(s.longitude)
-        FROM warehouse.filet_sample s GROUP BY s.deployment_id""").fetchall()
+        SELECT 'filet', s.dataset_version_id || '|' || s.deployment_id, lower(min(s.gear)),
+               min(s.deployment_datetime_start) AT TIME ZONE 'UTC', avg(s.latitude), avg(s.longitude)
+        FROM warehouse.filet_sample s GROUP BY s.dataset_version_id, s.deployment_id""").fetchall()
     return [{'kind': k, 'id': i, 'gear': g, 'time': t, 'lat': la, 'lon': lo}
             for k, i, g, t, la, lo in rows if t is not None and la is not None and lo is not None]
 
@@ -310,7 +313,8 @@ def write_links(conn, links: list[dict], ids: dict[str, int]) -> dict:
             else:
                 conn.execute("""INSERT INTO warehouse.filet_ctd (filet_sample_id, ctd_profile_id, source_evidence, link_method,
                     ctd_source, distance_km, time_gap_hours, match_status)
-                    SELECT s.id, %s, %s, 'proximity', %s, %s, %s, %s FROM warehouse.filet_sample s WHERE s.deployment_id::text = %s
+                    SELECT s.id, %s, %s, 'proximity', %s, %s, %s, %s FROM warehouse.filet_sample s
+                    WHERE s.dataset_version_id || '|' || s.deployment_id = %s
                     ON CONFLICT DO NOTHING""", (*values, link['id']))
             key = (link['kind'], c['family'], link['status'])
             counts[key] = counts.get(key, 0) + 1

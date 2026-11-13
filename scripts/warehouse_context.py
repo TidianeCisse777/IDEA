@@ -174,14 +174,18 @@ VIEWS = {
         'sampled_volume_l est un attribut du bin, répété sur chaque size_class_key de ce bin : sommer ce volume '
         'directement sur plusieurs classes de taille le compte une fois par classe au lieu d’une fois par bin, et '
         'fausse la densité (division par un volume trop grand). Pour une densité sur une gamme de taille, agréger '
-        'le volume une seule fois par uvp_bin_id (ex. MIN(sampled_volume_l) GROUP BY uvp_bin_id), sommer '
-        'particle_count et ce volume par bin sur les size_class_key choisies, puis diviser et ×1000 pour des '
-        'particules/m³; ne pas mélanger des bins de profondeur différente dans une même somme sans le dire. '
-        'particle_count et observed_volume_m3 sont les valeurs source, non recalculées. Ne pas comparer directement '
-        'à une abondance taxonomique FILET ou UVP : la comparaison porte sur une taille, pas une identification.',
-        'WITH per_bin AS (SELECT uvp_bin_id, MIN(sampled_volume_l) AS vol_l, SUM(particle_count) AS n '
-        'FROM explore.uvp_particle_sizes WHERE size_min_um>=200 AND size_max_um<=1000 GROUP BY uvp_bin_id) '
-        'SELECT SUM(n)/SUM(vol_l)*1000 AS n_m3 FROM per_bin;'),
+        'le volume une seule fois par uvp_bin_id (ex. MIN(sampled_volume_l) GROUP BY uvp_bin_id). '
+        'VALEUR : supplied_concentration est la concentration EcoPart en particules/L (seule mesure chargée : '
+        'particle_count et observed_volume_m3 sont vides partout). Concentration d’une gamme de tailles dans un bin '
+        '= somme des classes; sur plusieurs bins, moyenne pondérée par le volume (Σ concentration × volume / Σ volume), '
+        '×1000 pour des particules/m³. SEUIL : sous la plus petite classe détectée dans le profil (classes 1-32 µm '
+        'partout, 32-64 µm souvent), supplied_concentration est NULL et below_detection vrai : l’UVP ne les voit pas, '
+        'ce n’est pas une absence (valeur source dans supplied_concentration_source). Ne pas mélanger des bins de '
+        'profondeur différente sans le dire. Ne pas comparer directement à une abondance taxonomique FILET ou UVP : '
+        'la comparaison porte sur une taille, pas une identification.',
+        'WITH per_bin AS (SELECT uvp_bin_id, MIN(sampled_volume_l) AS vol_l, SUM(supplied_concentration) AS n_l '
+        'FROM explore.uvp_particle_sizes WHERE size_min_um>=256 AND size_max_um<=1020 GROUP BY uvp_bin_id) '
+        'SELECT SUM(n_l*vol_l)/SUM(vol_l)*1000 AS particules_m3 FROM per_bin;'),
     'uvp_object_sizes': view(
         'Un objet EcoTaxa identifié (taxon) par ligne, avec sa taille réelle quand elle est calculable.',
         'Objet EcoTaxa (un par ligne), avec le bin EcoPart auquel il est rattaché.',
@@ -334,6 +338,21 @@ VIEWS['uvp_samples']['caveats'] = (
     'd’EcoPart (position_source = source), NULL si aucune; source_latitude/source_longitude gardent la position '
     'd’origine. Une position NULL n’est pas un point à (0, 0) : une carte omet ces profils, le dire. '
     + VIEWS['uvp_samples']['caveats'])
+# Traps found by the audit of 13 November 2026 (ROADMAP).
+UVP_BIN_GAPS = (
+    'TRANCHES MANQUANTES : 3 profils ont des tranches de 5 m absentes d’EcoPart (ge_2016_187 770-780 m, de410_003 '
+    '440-445 m, am_leg5_TCA_T3_20_01 1 040-1 085 m) : volume inconnu, pas nul; un total ou une moyenne sur ces '
+    'profondeurs l’ignore, le dire. 335 objets EcoTaxa de profils UVP n’ont aucune tranche (287 au-dessus de la '
+    'première, 31 sous la dernière, 17 dans un trou) et ne sont pas comptés dans les abondances. ')
+UVP_PROFILE_KINDS = (
+    'PROFILS PARTICULIERS : de320_004_lighttest est un test d’éclairage, à exclure d’une analyse scientifique sauf '
+    'demande; les profils yo-yo (de430_004_yo01 à yo03) et des profils lents (GreenEdge 2016, ex. ge_2016_030) ont '
+    'des volumes par tranche très élevés (jusqu’à 17 540 L pour 5 m, médiane 64 L) : les abondances restent justes, '
+    'mais un profil yo-yo repasse plusieurs fois la même profondeur, le dire avant de comparer des profils. ')
+for _name in ('ecopart_bins', 'uvp_taxon_abundance', 'uvp_objects'):
+    VIEWS[_name]['caveats'] = UVP_BIN_GAPS + VIEWS[_name]['caveats']
+for _name in ('uvp_samples', 'ecopart_bins', 'uvp_taxon_abundance'):
+    VIEWS[_name]['caveats'] = UVP_PROFILE_KINDS + VIEWS[_name]['caveats']
 TOW_AND_COMMENTS = (
     'ENGIN ET TRAIT : gear (Hydrobios, 2x1m2, 4x1m2, 4x1m2 - LOKI, Bioness, Ringnet…) et tow_type sont les libellés '
     'du labo, sans nom complet dans l’export (« hydrobios » en minuscules = Hydrobios, un déploiement). tow_type : les '
@@ -375,8 +394,8 @@ VIEWS['uvp_ctd']['caveats'] = CTD_LINKS + VIEWS['uvp_ctd']['caveats']
 CTD_LINK_COLUMNS = {
     'link_method': 'Comment le profil CTD a été relié : filename_transitive (fichier CTD cité par EcoTaxa) ou proximity (profil CTD Amundsen le plus proche en distance et en temps).',
     'ctd_source': 'Origine du profil CTD : rosette (CTD du navire) ou bioness (CTD montée sur le Bioness); NULL pour les liens par fichier.',
-    'distance_km': 'Distance entre la position de la cible (profil UVP ou déploiement FILET) et celle du profil CTD, en km (haversine); NULL pour les liens par fichier.',
-    'time_gap_hours': 'Écart absolu entre l’heure de la cible et le début du profil CTD, en heures (UTC); NULL pour les liens par fichier.',
+    'distance_km': 'Distance entre la position de la cible (profil UVP ou déploiement FILET) et celle du profil CTD, en km (haversine). Lien par fichier (UVP) : position déclarée de l’UVP (EcoPart, sinon copie EcoTaxa retenue), pour information seulement, le fichier cité faisant foi (ex. profils 2021 de… : positions déclarées fausses de 40 à 110 km); NULL sans position déclarée.',
+    'time_gap_hours': 'Écart absolu entre l’heure de la cible et le début du profil CTD, en heures (UTC). Lien par fichier : pour information (ex. ge_2016_149 à 151 : ~151 h), le lien reste accepted.',
     'match_status': 'accepted : lien par fichier, ou proximité ≤ 5 km et ≤ 6 h; candidate : proximité ≤ 10 km et ≤ 12 h, à signaler ou exclure.',
     'filet_deployment_id': 'Déploiement FILET de l’échantillon (filet_deployments.deployment_id).',
 }
@@ -612,6 +631,12 @@ def column_description(view_name, column):
     if column == 'position_source':
         return ('Origine de la position et de la zone du profil UVP : ctd_cite = profil CTD cité dans EcoTaxa (l’UVP est '
                 'sur la rosette; positions source fausses pour des profils 2021 et GreenEdge 2016), source = EcoPart.')
+    if column == 'below_detection':
+        return ('Vrai si la classe de taille est sous le seuil de détection observé du profil (sa borne haute ne dépasse '
+                'pas la plus petite classe non nulle du profil) : supplied_concentration est alors NULL, pas zéro.')
+    if column == 'supplied_concentration_source':
+        return ('Concentration EcoPart telle que fournie (particules/L), y compris les 0 des classes sous le seuil de '
+                'détection; ne pas l’utiliser pour une concentration sans tenir compte de below_detection.')
     if column in ('source_latitude', 'source_longitude'):
         return ('Position d’origine du profil UVP dans la source (EcoPart), gardée telle quelle, degrés WGS84; '
                 'peut différer de latitude/longitude quand position_source = ctd_cite.')

@@ -75,7 +75,24 @@ Base locale, code `4f8e078`, requêtes en lecture seule (compte propriétaire, t
   donne les mêmes objets qu'avant tant que les positions ne sont pas appliquées et n'est pas plus lente
   (tous les objets UVP 1,6 s contre 2,4 s ; un profil 0,4 s). Tests : `tests/test_uvp_reference.py` ; 203 réussis.
 - Non encore appliqué à la base du PC : il faut pousser puis lancer la mise à jour (premier déploiement : positions,
-  comptes par taxon et abondance recalculés). Restent ouverts : points 4 à 7 et 9.
+  comptes par taxon et abondance recalculés).
+
+**Corrigé ensuite (points 4 à 7 et 9)**
+- 4. Particules : `explore.uvp_particle_sizes` donne `supplied_concentration` NULL et `below_detection` vrai pour une
+  classe dont la borne haute ne dépasse pas la plus petite classe non nulle du profil (`uvp_profile.
+  particle_min_detected_um`, recalculé au déploiement) ; valeur source dans `supplied_concentration_source` ; les 0
+  des grandes classes restent des 0 ; bornes arrondies (8190). La fiche donnait un exemple faux
+  (`particle_count`, vide partout) : refait sur `supplied_concentration` (particules/L, moyenne pondérée par le volume).
+- 5 et 6. Fiches `ecopart_bins`, `uvp_taxon_abundance`, `uvp_objects`, `uvp_samples` : tranches manquantes (3
+  profils), 335 objets hors tranche, profils yo-yo et lents, `de320_004_lighttest` (test d'éclairage) à exclure.
+- 7. Liens UVP–CTD par fichier : `distance_km` et `time_gap_hours` calculés au déploiement entre la position et
+  l'heure déclarées de l'UVP (EcoPart, sinon copie EcoTaxa retenue) et la CTD citée ; le lien reste accepted.
+- 8 et 9. `populate_ctd_proximity.py` : sans position propre, la cible UVP prend la copie EcoTaxa de référence (plus
+  de moyenne de copies contradictoires) ; une cible FILET = version + déploiement. `de320_004_lighttest` cite
+  `2105016` : absent de l'ERDDAP Amundsen (2105_015 et 2105_017 existent), rien à corriger chez nous.
+- Vérifié sur une base jetable : déploiement « PRÊT » (585 colonnes documentées) ; classe 16-32 µm NULL et signalée,
+  grande classe à 0 gardée, 8190 ; distance du profil 2021 d'essai 108,45 km (cas réel `de410` ~108 km), lien
+  accepted, rejeu sans changement. Tests : 208 réussis.
 
 ### 13 novembre 2026 — QA des liens CTD (base locale, code `eedb2bc`)
 

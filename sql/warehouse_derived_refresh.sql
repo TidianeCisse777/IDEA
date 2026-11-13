@@ -96,5 +96,13 @@ RETURNS boolean LANGUAGE sql STABLE AS $$
            (SELECT d.signature FROM warehouse.derived_refresh d WHERE d.name = 'uvp_taxon_abundance')
 $$;
 
+-- Particle detection limit observed per profile (explore.uvp_particle_sizes, below_detection): lower bound of the
+-- smallest LPM class with a non-zero concentration in at least one bin of the profile (~1 s for 1 M rows).
+UPDATE warehouse.uvp_profile u
+SET particle_min_detected_um = d.min_detected_um
+FROM (SELECT b.profile_id, min(p.size_min_um) FILTER (WHERE p.supplied_concentration > 0) AS min_detected_um
+      FROM warehouse.uvp_particle p JOIN warehouse.uvp_bin b ON b.id = p.bin_id GROUP BY b.profile_id) d
+WHERE u.id = d.profile_id AND u.particle_min_detected_um IS DISTINCT FROM d.min_detected_um;
+
 SELECT warehouse.refresh_ecotaxa_sample_taxon(true);
 SELECT warehouse.refresh_uvp_taxon_abundance();

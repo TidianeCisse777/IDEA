@@ -25,3 +25,27 @@ WHERE u.link_method = 'filename_transitive'  -- proximity links belong to popula
 -- Position of each UVP profile from the CTD cited in EcoTaxa, once the links are known
 -- (warehouse_uvp_reference_migration.sql; run again by populate_ctd_proximity.py after new CTD zones).
 SELECT warehouse.apply_uvp_cited_ctd_positions();
+
+-- Distance and time gap of the filename links, for transparency: between the UVP's declared position (EcoPart,
+-- else its reference EcoTaxa copy) and time, and the cited CTD. They do not change the link (the cited file is the
+-- source of truth): they show the cases to read with care (e.g. ge_2016_149-151: same place, ~151 h apart; de… 2021:
+-- declared positions 40-110 km off). NULL when the UVP declares no position.
+UPDATE warehouse.uvp_ctd t
+SET distance_km = x.distance_km, time_gap_hours = x.time_gap_hours
+FROM (
+    SELECT u.uvp_profile_id, u.ctd_profile_id,
+           round((2 * 6371.0088 * asin(least(1, sqrt(power(sin(radians(c.latitude - d.lat) / 2), 2)
+               + cos(radians(d.lat)) * cos(radians(c.latitude)) * power(sin(radians(c.longitude - d.lon) / 2), 2)))))::numeric, 2)
+               AS distance_km,
+           round((abs(extract(epoch FROM c.sampled_at - p.sampled_at)) / 3600)::numeric, 2) AS time_gap_hours
+    FROM warehouse.uvp_ctd u
+    JOIN warehouse.uvp_profile p ON p.id = u.uvp_profile_id
+    JOIN warehouse.ctd_profile c ON c.id = u.ctd_profile_id
+    LEFT JOIN warehouse.uvp_canonical_sample k ON k.uvp_profile_id = p.id
+    LEFT JOIN warehouse.ecotaxa_sample e ON e.id = k.ecotaxa_sample_id
+    CROSS JOIN LATERAL (SELECT coalesce(p.source_latitude, e.lat_avg) AS lat,
+                               CASE WHEN p.source_latitude IS NOT NULL THEN p.source_longitude ELSE e.lon_avg END AS lon) d
+    WHERE u.link_method = 'filename_transitive'
+) x
+WHERE t.uvp_profile_id = x.uvp_profile_id AND t.ctd_profile_id = x.ctd_profile_id
+  AND (t.distance_km IS DISTINCT FROM x.distance_km OR t.time_gap_hours IS DISTINCT FROM x.time_gap_hours);
