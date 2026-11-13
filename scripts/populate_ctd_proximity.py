@@ -15,6 +15,11 @@ de chaque source applicable (rosette pour tous; filet Hydrobios ou Bioness pour 
 distance/10 km + écart/6 h. Gardé si ≤ 10 km et ≤ 12 h : « accepted » si ≤ 5 km et ≤ 6 h, sinon « candidate ».
 Distance haversine entre positions; écart entre l'heure du début de profil CTD et celle de la cible (UTC). Les liens
 « proximity » sont remplacés à chaque exécution; les liens par fichier (EcoTaxa) ne sont jamais touchés.
+
+Avant la proximité : un échantillon EcoTaxa dont ctd_rosette_filename n'est qu'un numéro de cast (« 079 », Amundsen
+2023-2024) est relié au profil de rosette de ce numéro, à ≤ 24 h de l'échantillon (le fichier cité fait foi; jamais de
+repli sur la position). Ces liens remplacent les liens par fichier de ces échantillons, puis les liens UVP–CTD par
+fichier sont recalculés (sql/warehouse_uvp_ctd_links.sql).
 Connexion : variables WAREHOUSE_POSTGRES_* (compte propriétaire). Bibliothèque standard + psycopg.
 """
 from __future__ import annotations
@@ -45,6 +50,8 @@ ROSETTE_VARS = {'PRES': 'PRES', 'TE90': 'TE90', 'PSAL': 'PSAL', 'SIGT': 'SIGT', 
 NET_VARS = {'Pres': 'PRES', 'Temp': 'TE90', 'Sal': 'PSAL', 'Net': 'NET'}
 ACCEPT_KM, ACCEPT_H = 5.0, 6.0
 CANDIDATE_KM, CANDIDATE_H = 10.0, 12.0
+CAST_DATASET, CAST_WINDOW_H = 'amundsen12713', 24.0
+CAST_NUMBER = re.compile(r'\s*(\d{1,3})\s*')
 
 
 def get_csv(dataset: str, query: str, retries: int = 3) -> list[dict]:
@@ -70,12 +77,12 @@ def when(text: str) -> datetime:
     return datetime.strptime(text[:19], '%Y-%m-%dT%H:%M:%S').replace(tzinfo=timezone.utc)
 
 
-def cast_index() -> list[dict]:
-    """One row per CTD profile (first scan): dataset, family, filename, time, position, station."""
+def cast_index(datasets: list[str] | None = None) -> list[dict]:
+    """One row per CTD profile (first scan): dataset, family, filename, time, position, station, cast number."""
     fields = 'filename,cruise_number,cast_number,station,time,latitude,longitude'
     order = urllib.parse.quote('orderByMin("filename,time")')
     casts = []
-    for dataset in ROSETTE + list(NET):
+    for dataset in datasets or ROSETTE + list(NET):
         family = NET.get(dataset, 'rosette')
         windows = ([(f'{y}-01-01T00:00:00Z', f'{y + 1}-01-01T00:00:00Z') for y in range(2014, 2025)]
                    if dataset == 'amundsen12713' else [(None, None)])
@@ -86,8 +93,87 @@ def cast_index() -> list[dict]:
                     continue
                 casts.append({'dataset': dataset, 'family': family, 'filename': row['filename'],
                               'time': when(row['time']), 'lat': float(row['latitude']), 'lon': float(row['longitude']),
-                              'station': row.get('station') or None, 'cruise': row.get('cruise_number') or None})
+                              'station': row.get('station') or None, 'cruise': row.get('cruise_number') or None,
+                              'cast': row.get('cast_number') or None})
     return casts
+
+
+def parse_time(value) -> datetime | None:
+    """A timestamp from the database or psql text ('2023-09-05 20:24:02+00'), in UTC; None if absent."""
+    if value is None or isinstance(value, datetime):
+        return value
+    text = str(value).strip().replace(' ', 'T')
+    if not text:
+        return None
+    if re.search(r'[+-]\d\d$', text):
+        text += ':00'
+    parsed = datetime.fromisoformat(text.replace('Z', '+00:00'))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def resolve_cast_numbers(samples: list[dict], casts: list[dict]) -> tuple[dict, dict]:
+    """EcoTaxa samples citing only a cast number ('079'): that number is the source of truth. Keeps the rosette
+    profile (amundsen12713) with this cast_number whose first scan is ≤ 24 h from the sample — the date tells legs
+    apart, as each leg restarts its numbering. None or several files: no link, never a fallback on position.
+    samples: [{'id', 'cited', 'time'}]. Returns ({sample id: cast}, {sample id: reason})."""
+    by_number = {}
+    for c in casts:
+        if c['dataset'] != CAST_DATASET or c.get('cast') in (None, '', 'NaN'):
+            continue
+        try:
+            by_number.setdefault(int(float(c['cast'])), []).append(c)
+        except ValueError:
+            continue
+    resolved, refused = {}, {}
+    for s in samples:
+        cited = CAST_NUMBER.fullmatch(str(s['cited'] or ''))
+        if not cited:
+            continue
+        if s['time'] is None:
+            refused[s['id']] = 'date absente'
+            continue
+        hits = {c['filename']: c for c in by_number.get(int(cited.group(1)), [])
+                if abs((c['time'] - s['time']).total_seconds()) <= CAST_WINDOW_H * 3600}
+        if len(hits) == 1:
+            resolved[s['id']] = next(iter(hits.values()))
+        else:
+            refused[s['id']] = 'ambigu : ' + ', '.join(sorted(hits)) if hits else 'aucun cast de ce numéro à ≤ 24 h'
+    return resolved, refused
+
+
+def cast_number_samples(conn) -> list[dict]:
+    rows = conn.execute("""SELECT id, ctd_rosette_filename, coalesce(datetime_min, datetime_max)
+        FROM warehouse.ecotaxa_sample WHERE ctd_rosette_filename ~ '^\\s*\\d{1,3}\\s*$'""").fetchall()
+    return [{'id': i, 'cited': f, 'time': parse_time(t)} for i, f, t in rows]
+
+
+def write_cast_number_links(conn, samples: list[dict], resolved: dict, ids: dict[str, int]) -> int:
+    """Replaces the filename links of these samples by the cited cast, then recomputes UVP–CTD filename links."""
+    written = 0
+    with conn.transaction():
+        conn.execute("DELETE FROM warehouse.ecotaxa_ctd WHERE relation_type = 'filename_exact' AND ecotaxa_sample_id = ANY(%s)",
+                     ([s['id'] for s in samples],))
+        when = {s['id']: s['time'] for s in samples}
+        for sid, c in resolved.items():
+            pid = ids.get(c['filename'])
+            if pid is None:
+                continue
+            gap = round(abs((c['time'] - when[sid]).total_seconds()) / 60, 1)
+            conn.execute("""INSERT INTO warehouse.ecotaxa_ctd (ecotaxa_sample_id, ctd_profile_id, relation_type, filename_match,
+                station_match, distance_km, time_gap_minutes, match_status, evidence)
+                VALUES (%s, %s, 'filename_exact', TRUE, NULL, NULL, %s, 'accepted', %s)
+                ON CONFLICT (ecotaxa_sample_id, ctd_profile_id) DO UPDATE SET relation_type = 'filename_exact',
+                filename_match = TRUE, match_status = 'accepted', time_gap_minutes = EXCLUDED.time_gap_minutes,
+                evidence = EXCLUDED.evidence""",
+                (sid, pid, gap, f"EcoTaxa ctd_rosette_filename = numéro de cast {c['cast']} → {c['filename']} "
+                               f"({CAST_DATASET}, ≤ {CAST_WINDOW_H:g} h)"))
+            written += 1
+        # Proximity is only for profiles without a filename link: drop it where the cited cast now links them.
+        conn.execute("""DELETE FROM warehouse.uvp_ctd u WHERE u.link_method = 'proximity' AND EXISTS (
+            SELECT 1 FROM warehouse.uvp_ecotaxa l JOIN warehouse.ecotaxa_ctd c ON c.ecotaxa_sample_id = l.ecotaxa_sample_id
+            WHERE l.uvp_profile_id = u.uvp_profile_id AND c.match_status = 'accepted')""")
+        conn.execute((ROOT / 'sql' / 'warehouse_uvp_ctd_links.sql').read_text(encoding='utf-8'))
+    return written
 
 
 def km(lat1, lon1, lat2, lon2) -> float:
@@ -240,6 +326,15 @@ def main() -> int:
     casts = cast_index()
     print(f'[ctd] index ERDDAP : {len(casts)} profils CTD', flush=True)
     with connection() as conn:
+        cited = cast_number_samples(conn)
+        resolved, refused = resolve_cast_numbers(cited, casts)
+        print(f'[ctd] numéros de cast EcoTaxa : {len(cited)} échantillons, {len(resolved)} résolus, '
+              f'{len(refused)} sans lien' + (f' ({json.dumps(dict(sorted(refused.items())[:5]), ensure_ascii=False)}…)'
+                                             if refused else ''), flush=True)
+        if not args.dry_run and cited:
+            ids = load_profiles(conn, list(resolved.values()))
+            print(f'[ctd] liens EcoTaxa par numéro de cast écrits : '
+                  f'{write_cast_number_links(conn, cited, resolved, ids)}', flush=True)
         target_rows = targets(conn)
         links = match(target_rows, casts)
         summary = {}

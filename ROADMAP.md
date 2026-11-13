@@ -2,7 +2,50 @@
 
 **Période proposée :** du 14 septembre au 30 novembre 2026
 
-**Dernière mise à jour :** 11 novembre 2026
+**Dernière mise à jour :** 13 novembre 2026
+
+### 13 novembre 2026 — QA des liens CTD (base locale, code `eedb2bc`)
+
+Requêtes en transaction lecture seule (compte propriétaire, conteneur local; le MCP n'était pas connecté) sur
+`warehouse.uvp_ctd`, `filet_ctd`, `uvp_profile`, `filet_sample`, `ctd_profile`. Aucune écriture.
+
+- Couverture : UVP 594/686 profils liés (593 acceptés, 1 candidat ; 496 par fichier EcoTaxa, 98 par proximité) ;
+  FILET 1 297/1 588 déploiements (1 241 avec un lien accepté, 56 seulement candidats ; rosette 1 296, Bioness 20),
+  4 957/6 102 échantillons. `explore.uvp_samples` montre 685 profils : le 686e (`lc_2022_19_04`, id 301) est
+  EcoPart seul, sans coordonnées ni CTD (la vue exige un lien EcoTaxa).
+- Liens par proximité : les 5 226 (98 UVP, 4 948 rosette, 180 Bioness) se recalculent à l'identique (haversine,
+  écart au début du profil CTD) : distance et écart à 0,01 près, statut cohérent, aucun au-delà de 10 km / 12 h.
+  FILET : une seule CTD par source et par déploiement, aucun déploiement lié partiellement. L'optimalité du choix
+  n'est pas vérifiable en base (seuls les profils CTD liés y sont, 1 245/1 246).
+- Liens par fichier EcoTaxa (`filename_transitive`, 496, tous `accepted`, sans distance ni écart stockés) : 62 sont
+  au-delà de 10 km ou 12 h. 49 ont l'heure juste (≤ 1 h) mais une position UVP éloignée (campagnes `de1xx`–`de5xx`
+  2021 et `ge` 2016 : `ge_2016_001` longitude 0,000, `ge_2016_076` latitude 64,033 contre 69,033 pour la CTD,
+  20 profils `de` à coordonnées entières, et un décalage de ~1,5° de longitude sur d'autres `de`) ; 4 à 1–12 h
+  (`amundsen2023`, ≤ 17,7 km) ; 9 au-delà de 12 h : `de430_004_yo01-03` ↔ `2105_039` et `de440_004_yo01-03` ↔
+  `2105_034` semblent inversés (0,0 h et 2,4 h une fois croisés), `ge_2016_149-151` à 0,0 km mais ~151 h.
+- Décision : le fichier CTD cité dans EcoTaxa (`ecotaxa_sample.ctd_rosette_filename`) fait foi. Contrôle de
+  conformité des liens `filename_transitive` : 454 conformes au fichier cité ; 20 non conformes, tous Amundsen
+  2023-2024 (cast voisin, 1 à 3 numéros d'écart, ex. `amundsen2023_305b_1` cite `079`, lié à `…_02_080`). Cause :
+  pour 2023-2024 EcoTaxa ne cite que le numéro de cast et `populate_amundsen_ctd.py` (`resolve_by_position`)
+  l'ignore : il prend le cast du même jour le plus proche en position (degrés × 80, ≤ 20 km), puis enregistre
+  `filename_exact`, `filename_match = true`. `de430_004`/`de440_004` sont conformes au fichier cité (gardés).
+  Les 24 profils 2023-2024 liés seulement par proximité tombent sur le cast cité. `de320_004_lighttest` cite
+  `2105016`, absent de la base (lié par proximité à `2105_015`) ; présence sur l'ERDDAP non vérifiée (réseau
+  indisponible). Sans lien Amundsen, à juste titre : 61 profils 2015-2016 (CTD `sbe19plus_…` de l'UVP ou `xx`),
+  30 profils 2022 (fichiers CTD locaux).
+- Correction (code, pas la base à la main) : un échantillon EcoTaxa qui ne cite qu'un numéro de cast est relié au
+  cast de rosette `amundsen12713` de ce `cast_number`, à ≤ 24 h (la date départage les legs) ; aucun ou plusieurs :
+  pas de lien, jamais de repli sur la position. Règle unique `resolve_cast_numbers` dans
+  `populate_ctd_proximity.py` (lancé par `neolab-load-ctd`, donc par `neolab-update` dès que le script change),
+  reprise par `populate_amundsen_ctd.py` (position supprimée). Les liens par fichier de ces échantillons sont
+  remplacés, la proximité retirée des profils qui ont un lien cité, puis `warehouse_uvp_ctd_links.sql` rejoué.
+  Tests : `tests/test_ctd_cast_numbers.py` (9) ; suite complète 188 réussis, 29 ignorés (base en direct).
+- Essai à blanc sur la base locale (conteneur jetable, nouveau code, lecture seule, ERDDAP réel : 2 136 casts) :
+  256 échantillons citant un numéro, 256 résolus ; 212 liens inchangés, 20 changés (exactement les 20 non
+  conformes), 24 nouveaux liens par fichier (les 24 profils liés seulement par proximité, même cast), 0 retiré ;
+  10 casts à télécharger. Non encore appliqué : il faut pousser puis lancer la mise à jour (`neolab-update`).
+- Reste ouvert : positions UVP douteuses (`de` 2021, `ge` 2016) à signaler ; `de320_004_lighttest` (cite
+  `2105016`, absent).
 
 ### 12 novembre 2026 — CTD : liens par proximité pour UVP et FILET (Amundsen Science)
 

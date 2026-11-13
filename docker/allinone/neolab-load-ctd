@@ -1,6 +1,7 @@
 #!/bin/bash
 # Relie les profils UVP et les déploiements FILET sans CTD aux profils CTD d'Amundsen Science les plus proches
-# (≤ 10 km et ≤ 12 h; accepted si ≤ 5 km et ≤ 6 h) et charge les profils CTD nécessaires depuis l'ERDDAP public :
+# (≤ 10 km et ≤ 12 h; accepted si ≤ 5 km et ≤ 6 h) et charge les profils CTD nécessaires depuis l'ERDDAP public.
+# Avant cela, relie les échantillons EcoTaxa qui ne citent qu'un numéro de cast (2023-2024) au cast cité :
 #
 #     docker exec neolab-warehouse bash /opt/neolab/IDEA/docker/allinone/neolab-load-ctd [--dry-run]
 #
