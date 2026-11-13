@@ -57,6 +57,17 @@
   point d'entrée hérité de l'instantané, base copiée en flux tar, seules `PGDATA` et `NEOLAB_STATE` changent.
   Vérifié ici sur une petite base : démarrage sans réinitialisation, `ready` présent, tentatives exclues, données
   lues. L'essai n'avait rien modifié (arrêt avant l'arrêt de la base).
+- Publication réelle sur le PC du responsable (12-13 novembre) : **publiée**, `ghcr.io/tidianecisse777/neolab-warehouse:20261112-donnees`
+  et `:donnees` (privées, 43 couches, `sha256:3f72bace…`), code `eedb2bc`, `neolab-check` PASS avant et après.
+  Étapes 1 à 4 du script réussies (image de 14,8 Go). L'envoi a échoué : la base forme une seule couche de
+  10 Go, et le Wi-Fi coupait la connexion toutes les 3 à 12 min (`broken pipe` sur le proxy Docker Desktop
+  3128, erreurs TLS intermittentes) ; chaque essai repartait de zéro. Contournement local, hors dépôt :
+  image refaite à partir de l'image fabriquée en 21 couches de ≤ 500 Mo (dossiers puis fichiers triés par
+  chemin), sans réarrêter la base ; vérifiée identique à l'image d'origine (contenu md5 des 1 635 entrées
+  identique, métadonnées identiques hors taille des répertoires, artefact du système de fichiers), puis
+  envoyée (dernier essai en 7 min, couches déjà présentes sautées). À reporter dans `publish_prebuilt_image.ps1` (couches découpées) ; pas encore fait ni testé.
+  Autres constats : la mise en veille du PC fige la copie (environ 9 h perdues), et il faut environ 25 Go libres.
+  Non vérifié : le téléchargement et l'installation chez un collègue.
 
 ### 12 novembre 2026 — FILET : engin sur chaque ligne, contexte et commentaires du labo
 
