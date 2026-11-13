@@ -43,7 +43,14 @@ Requêtes en transaction lecture seule (compte propriétaire, conteneur local; l
 - Essai à blanc sur la base locale (conteneur jetable, nouveau code, lecture seule, ERDDAP réel : 2 136 casts) :
   256 échantillons citant un numéro, 256 résolus ; 212 liens inchangés, 20 changés (exactement les 20 non
   conformes), 24 nouveaux liens par fichier (les 24 profils liés seulement par proximité, même cast), 0 retiré ;
-  10 casts à télécharger. Non encore appliqué : il faut pousser puis lancer la mise à jour (`neolab-update`).
+  10 casts à télécharger.
+- Appliqué sur le PC du responsable (mise à jour `eedb2bc` → `4f8e078`, « À JOUR ») : 256/256 échantillons résolus,
+  10 profils téléchargés ; liens UVP par fichier 520 (496 + 24), par proximité 74, FILET 5 128 inchangé ;
+  520/520 liens par fichier conformes au fichier cité (0 non conforme), 594/686 profils liés (593 acceptés),
+  aucun profil à deux liens ; `amundsen2023_305b_1` → `…_02_079` ; `neolab-check` PASS.
+- Premier essai de mise à jour en échec sans effet (« archive du code incomplète ») : lancé depuis Git Bash, le
+  `tar` de Git lisait `C:\…` comme un hôte distant. `update_warehouse_windows.ps1` prend désormais
+  `System32\tar.exe` ; test ajouté (189 réussis).
 - Reste ouvert : positions UVP douteuses (`de` 2021, `ge` 2016) à signaler ; `de320_004_lighttest` (cite
   `2105016`, absent).
 

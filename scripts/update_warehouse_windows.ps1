@@ -150,7 +150,10 @@ New-Item -ItemType Directory -Force $work | Out-Null
 $archive = Join-Path $work 'code.tar.gz'
 try { Save-GitHubArchive "$api/tarball/$latest" $token $archive }
 catch { Fail "téléchargement du code impossible ($($_.Exception.Message))." }
-& tar.exe -xzf $archive -C $work
+# Windows' own tar: launched from Git Bash, Git's tar comes first in PATH and reads "C:\..." as a remote host.
+$tar = Join-Path $env:SystemRoot 'System32\tar.exe'
+if (-not (Test-Path $tar)) { $tar = 'tar.exe' }
+& $tar -xzf $archive -C $work
 $source = Get-ChildItem $work -Directory | Select-Object -First 1
 if ($LASTEXITCODE -ne 0 -or -not $source -or -not (Test-Path (Join-Path $source.FullName 'docker\allinone\neolab-update'))) {
     Fail "archive du code incomplète."

@@ -27,6 +27,12 @@ class UpdateScript(unittest.TestCase):
         self.assertIn(r"scripts\claude_skill\neolab-warehouse\SKILL.md", script)
         self.assertTrue((ROOT / 'scripts' / 'claude_skill' / 'neolab-warehouse' / 'SKILL.md').exists())
 
+    def test_extracts_with_windows_tar(self):
+        # From Git Bash, Git's tar came first and failed on "C:\..." ("Cannot connect to C: resolve failed").
+        script = text('scripts', 'update_warehouse_windows.ps1')
+        self.assertIn(r"Join-Path $env:SystemRoot 'System32\tar.exe'", script)
+        self.assertNotRegex(script, r'(?m)^& tar\.exe ')
+
     def test_windows_scripts_keep_bom(self):
         for name in ('update_warehouse_windows.ps1', 'publish_prebuilt_image.ps1', 'install_from_registry_windows.ps1'):
             self.assertTrue((ROOT / 'scripts' / name).read_bytes().startswith(b'\xef\xbb\xbf'), name)
