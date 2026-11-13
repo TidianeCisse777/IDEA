@@ -29,7 +29,9 @@ DOCS = ROOT / 'sql'  # migrations SQL
 # record comes last so it describes a complete deployment.
 FRESH_FILES = ('warehouse_schema_proposal.sql', 'warehouse_metadata_migration.sql',
                'warehouse_ecopart_migration.sql')
-ALWAYS_FILES = ('warehouse_catalogue_schema_migration.sql', 'warehouse_ctd_zone_migration.sql', 'warehouse_uvp_particle_sizes_view.sql',
+ALWAYS_FILES = ('warehouse_catalogue_schema_migration.sql', 'warehouse_ctd_zone_migration.sql',
+               # before every explore view that reads warehouse.uvp_canonical_sample
+               'warehouse_uvp_reference_migration.sql', 'warehouse_uvp_particle_sizes_view.sql',
                'warehouse_ecotaxa_object_size_migration.sql', 'warehouse_taxon_mapping_view.sql',
                'warehouse_ecotaxa_project_title_migration.sql', 'warehouse_uvp_abundance_zone_migration.sql',
                'warehouse_marine_zone_migration.sql', 'warehouse_copepod_stage_migration.sql',
@@ -38,7 +40,7 @@ ALWAYS_FILES = ('warehouse_catalogue_schema_migration.sql', 'warehouse_ctd_zone_
                # after access control: its views filter with warehouse.readable_versions()
                'warehouse_documents_migration.sql', 'warehouse_filet_context_migration.sql',
                'warehouse_filet_deployments_view.sql', 'warehouse_ctd_proximity_migration.sql',
-               'warehouse_uvp_ctd_links.sql',
+               'warehouse_uvp_ctd_links.sql', 'warehouse_derived_refresh.sql',
                'warehouse_filet_uvp_compare.sql')
 ROLES_FILE = 'warehouse_roles.sql'
 RELEASE_FILE = 'warehouse_release.sql'

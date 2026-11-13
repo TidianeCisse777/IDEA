@@ -21,3 +21,7 @@ WHERE u.link_method = 'filename_transitive'  -- proximity links belong to popula
     SELECT 1 FROM warehouse.uvp_ecotaxa l
     JOIN warehouse.ecotaxa_ctd c ON c.ecotaxa_sample_id = l.ecotaxa_sample_id AND c.match_status = 'accepted'
     WHERE l.uvp_profile_id = u.uvp_profile_id AND c.ctd_profile_id = u.ctd_profile_id);
+
+-- Position of each UVP profile from the CTD cited in EcoTaxa, once the links are known
+-- (warehouse_uvp_reference_migration.sql; run again by populate_ctd_proximity.py after new CTD zones).
+SELECT warehouse.apply_uvp_cited_ctd_positions();

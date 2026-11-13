@@ -31,26 +31,31 @@ SELECT
     e.depth_min,
     e.depth_max,
     e.instrument,
-    COALESCE(e.marine_zone_key, u.marine_zone_key) AS marine_zone_key,
-    COALESCE(e.marine_zone_name, u.marine_zone_name) AS marine_zone_name,
-    COALESCE(e.marine_zone_source, u.marine_zone_source) AS marine_zone_source,
-    COALESCE(e.marine_zone_version, u.marine_zone_version) AS marine_zone_version,
-    COALESCE(e.marine_zone_assignment_status, u.marine_zone_assignment_status) AS marine_zone_assignment_status,
+    CASE WHEN u.position_source = 'ctd_cite' THEN u.marine_zone_key ELSE COALESCE(e.marine_zone_key, u.marine_zone_key) END AS marine_zone_key,
+    CASE WHEN u.position_source = 'ctd_cite' THEN u.marine_zone_name ELSE COALESCE(e.marine_zone_name, u.marine_zone_name) END AS marine_zone_name,
+    CASE WHEN u.position_source = 'ctd_cite' THEN u.marine_zone_source ELSE COALESCE(e.marine_zone_source, u.marine_zone_source) END AS marine_zone_source,
+    CASE WHEN u.position_source = 'ctd_cite' THEN u.marine_zone_version ELSE COALESCE(e.marine_zone_version, u.marine_zone_version) END AS marine_zone_version,
+    CASE WHEN u.position_source = 'ctd_cite' THEN u.marine_zone_assignment_status ELSE COALESCE(e.marine_zone_assignment_status, u.marine_zone_assignment_status) END AS marine_zone_assignment_status,
     e.object_count,
     e.nb_validated,
     e.nb_predicted,
     e.nb_dubious,
     e.nb_unclassified,
-    ep.title AS ecotaxa_project_title
+    ep.title AS ecotaxa_project_title,
+    -- Position: from the cited CTD (position_source = ctd_cite) or the source (EcoPart);
+    -- the source position is kept in source_latitude / source_longitude.
+    u.position_source,
+    u.source_latitude,
+    u.source_longitude
 FROM warehouse.uvp_profile u
 JOIN warehouse.uvp_ecotaxa l ON l.uvp_profile_id = u.id
 JOIN warehouse.ecotaxa_sample e ON e.id = l.ecotaxa_sample_id
 LEFT JOIN warehouse.ecotaxa_project ep ON ep.project_id = e.project_id
-WHERE NOT EXISTS (
-    -- Copies: a profile linked to several EcoTaxa samples (199 GreenEdge 2016 profiles: project 149 and its
-    -- exact copies 20880 / 20890) keeps the sample of the smallest project only, so nothing counts twice.
-    SELECT 1 FROM warehouse.uvp_ecotaxa l2 JOIN warehouse.ecotaxa_sample e2 ON e2.id = l2.ecotaxa_sample_id
-    WHERE l2.uvp_profile_id = u.id AND e2.project_id < e.project_id);
+WHERE EXISTS (
+    -- Copies: a profile linked to several EcoTaxa samples (199 GreenEdge 2016 profiles: projects 149 and 20880 /
+    -- 20890, same images) keeps one, warehouse.uvp_canonical_sample: the copy whose position agrees with the
+    -- profile's (cited CTD), the smallest project on a tie. Nothing counts twice.
+    SELECT 1 FROM warehouse.uvp_canonical_sample k WHERE k.uvp_profile_id = u.id AND k.ecotaxa_sample_id = e.id);
 
 -- Kept identical to its copy in warehouse_ecopart_migration.sql (tests/test_warehouse_schema.py checks it):
 -- populate_ecopart.py replays the EcoPart migration at load time, after the always-applied migrations.

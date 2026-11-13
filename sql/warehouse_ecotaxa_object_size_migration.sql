@@ -132,11 +132,11 @@ LEFT JOIN warehouse.ecotaxa_acquisition ac ON ac.acquisition_id = o.acquisition_
 LEFT JOIN (warehouse.uvp_object_bin ob
     JOIN warehouse.uvp_bin b ON b.id = ob.uvp_bin_id)
     ON ob.ecotaxa_object_id = o.id AND b.profile_id = u.id
-WHERE NOT EXISTS (
-    -- Copies: a profile linked to several EcoTaxa samples (199 GreenEdge 2016 profiles: project 149 and its
-    -- exact copies 20880 / 20890) keeps the sample of the smallest project only, so nothing counts twice.
-    SELECT 1 FROM warehouse.uvp_ecotaxa l2 JOIN warehouse.ecotaxa_sample e2 ON e2.id = l2.ecotaxa_sample_id
-    WHERE l2.uvp_profile_id = u.id AND e2.project_id < e.project_id);
+WHERE EXISTS (
+    -- Copies: a profile linked to several EcoTaxa samples (199 GreenEdge 2016 profiles: projects 149 and 20880 /
+    -- 20890, same images) keeps one, warehouse.uvp_canonical_sample: the copy whose position agrees with the
+    -- profile's (cited CTD), the smallest project on a tie. Nothing counts twice.
+    SELECT 1 FROM warehouse.uvp_canonical_sample k WHERE k.uvp_profile_id = u.id AND k.ecotaxa_sample_id = e.id);
 
 COMMENT ON VIEW explore.uvp_object_sizes IS
     'Un objet EcoTaxa identifie par ligne, avec sa taille reelle (esd_um/major_um/minor_um/area_um2) quand la calibration pixel de son acquisition est connue (NULL sinon : ne pas supposer une taille absente egale a zero). '
@@ -151,10 +151,10 @@ CREATE OR REPLACE VIEW explore.uvp_objects AS
 SELECT
     u.id AS uvp_profile_id, u.dataset_version_id, u.ecopart_project_id,
     u.sample_name, u.cruise_key, u.station_key, u.sampled_at,
-    COALESCE(e.marine_zone_key,u.marine_zone_key) AS marine_zone_key,
-    COALESCE(e.marine_zone_name,u.marine_zone_name) AS marine_zone_name,
-    COALESCE(e.marine_zone_version,u.marine_zone_version) AS marine_zone_version,
-    COALESCE(e.marine_zone_assignment_status,u.marine_zone_assignment_status) AS marine_zone_assignment_status,
+    CASE WHEN u.position_source = 'ctd_cite' THEN u.marine_zone_key ELSE COALESCE(e.marine_zone_key,u.marine_zone_key) END AS marine_zone_key,
+    CASE WHEN u.position_source = 'ctd_cite' THEN u.marine_zone_name ELSE COALESCE(e.marine_zone_name,u.marine_zone_name) END AS marine_zone_name,
+    CASE WHEN u.position_source = 'ctd_cite' THEN u.marine_zone_version ELSE COALESCE(e.marine_zone_version,u.marine_zone_version) END AS marine_zone_version,
+    CASE WHEN u.position_source = 'ctd_cite' THEN u.marine_zone_assignment_status ELSE COALESCE(e.marine_zone_assignment_status,u.marine_zone_assignment_status) END AS marine_zone_assignment_status,
     e.id AS ecotaxa_sample_id, e.project_id AS ecotaxa_project_id, e.sample_orig_id,
     o.id AS ecotaxa_object_id, o.object_id, o.acquisition_id, o.process_id,
     o.category_id AS taxon_id, o.category_name AS taxon_name, o.annotation_status,
@@ -168,8 +168,8 @@ JOIN warehouse.ecotaxa_object o ON o.sample_id=e.id
 LEFT JOIN (warehouse.uvp_object_bin ob
     JOIN warehouse.uvp_bin b ON b.id=ob.uvp_bin_id)
     ON ob.ecotaxa_object_id=o.id AND b.profile_id=u.id
-WHERE NOT EXISTS (
-    -- Copies: a profile linked to several EcoTaxa samples (199 GreenEdge 2016 profiles: project 149 and its
-    -- exact copies 20880 / 20890) keeps the sample of the smallest project only, so nothing counts twice.
-    SELECT 1 FROM warehouse.uvp_ecotaxa l2 JOIN warehouse.ecotaxa_sample e2 ON e2.id = l2.ecotaxa_sample_id
-    WHERE l2.uvp_profile_id = u.id AND e2.project_id < e.project_id);
+WHERE EXISTS (
+    -- Copies: a profile linked to several EcoTaxa samples (199 GreenEdge 2016 profiles: projects 149 and 20880 /
+    -- 20890, same images) keeps one, warehouse.uvp_canonical_sample: the copy whose position agrees with the
+    -- profile's (cited CTD), the smallest project on a tie. Nothing counts twice.
+    SELECT 1 FROM warehouse.uvp_canonical_sample k WHERE k.uvp_profile_id = u.id AND k.ecotaxa_sample_id = e.id);

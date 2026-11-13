@@ -143,7 +143,7 @@ VIEWS = {
         'Métadonnées des profils UVP liés à un sample EcoTaxa.',
         'Profil UVP × liaison sample EcoTaxa; plusieurs liaisons par profil possibles.',
         'uvp_profile_id = uvp_taxon_abundance.profile_id ou ecopart_bins.profile_id; ecotaxa_sample_id = ecotaxa_ctd_profile.ecotaxa_sample_id.',
-        'INNER JOIN : les profils sans sample EcoTaxa lié sont absents. COUNT(DISTINCT uvp_profile_id) pour compter les profils. marine_zone_key est ici la zone du sample EcoTaxa lié (sinon celle du profil) : un profil dont les samples se contredisent (profils GreenEdge 2016 vers 70° N : Baie de Baffin dans 149, Détroit de Davis dans 20890) apparaît dans les deux zones, et son profil est AMBIGUOUS (absent de zone_membership s’il n’a pas de coordonnées propres). Dire quel filtre de zone est utilisé quand le compte diffère de zone_membership. '
+        'INNER JOIN : les profils sans sample EcoTaxa lié sont absents. COUNT(DISTINCT uvp_profile_id) pour compter les profils. marine_zone_key est la zone du profil quand sa position vient de la CTD citée (position_source = ctd_cite), sinon celle du sample EcoTaxa lié (sinon celle du profil). Dire quel filtre de zone est utilisé quand le compte diffère de zone_membership. '
         'ecotaxa_project_title est le nom natif du projet, pour affichage uniquement (peut être NULL); ecotaxa_project_id reste la clé stable.',
         'SELECT uvp_profile_id,sample_name,station_key,sampled_at FROM explore.uvp_samples LIMIT 20;'),
     'uvp_objects': view(
@@ -317,18 +317,23 @@ VIEWS = {
 
 # Traps found by the data QA of 11 November 2026, stated at the head of the sheets concerned.
 UVP_COPIES = (
-    'COPIES ECOTAXA : 199 profils UVP GreenEdge 2016 sont liés à deux samples EcoTaxa, copies identiques des mêmes '
-    'images (projet 149 et projet 20880 ou 20890). Cette vue ne garde que le sample du plus petit projet (149) : '
-    'rien n’y compte deux fois, et les projets 20880 et 20890 n’y apparaissent pas. Les copies restent dans les vues '
-    'ecotaxa_* (ecotaxa_objects, ecotaxa_samples, ecotaxa_projects) : ne pas additionner 149, 20880, 20890 et 13224. ')
+    'COPIES ECOTAXA : 199 profils UVP GreenEdge 2016 sont liés à deux samples EcoTaxa, copies des mêmes images '
+    '(projet 149 et projet 20880 ou 20890). Cette vue garde un seul sample par profil (warehouse.uvp_canonical_sample) : '
+    'la copie dont la position concorde avec celle du profil, donc avec la CTD citée (la copie 149 a une position '
+    'fausse pour 19 profils : signe de longitude, latitude 59 au lieu de 69, longitude à un chiffre près), le plus '
+    'petit projet à égalité. Rien n’y compte deux fois. Les copies restent dans les vues ecotaxa_* (ecotaxa_objects, '
+    'ecotaxa_samples, ecotaxa_projects), positions source comprises : ne pas additionner 149, 20880, 20890 et 13224. ')
 for _name in ('uvp_objects', 'uvp_object_sizes', 'uvp_taxon_abundance', 'uvp_samples'):
     VIEWS[_name]['caveats'] = UVP_COPIES + VIEWS[_name]['caveats']
 VIEWS['uvp_taxon_abundance']['caveats'] = (
     'annotation_policy contient le projet EcoTaxa (ex. validated_only:ecotaxa_project=149); un profil n’a ici que '
     'les politiques d’un seul projet. ' + VIEWS['uvp_taxon_abundance']['caveats'])
 VIEWS['uvp_samples']['caveats'] = (
-    'latitude/longitude viennent d’EcoPart et sont NULL pour 182 profils GreenEdge 2016 : prendre alors celles de '
-    'explore.ecotaxa_samples (ecotaxa_sample_id), sinon une carte les omet sans le dire. ' + VIEWS['uvp_samples']['caveats'])
+    'POSITION : latitude/longitude sont celles du profil CTD cité dans EcoTaxa (position_source = ctd_cite : l’UVP est '
+    'sur la rosette, et des positions source sont fausses, ex. profils 2021 de… aux coordonnées entières), sinon celles '
+    'd’EcoPart (position_source = source), NULL si aucune; source_latitude/source_longitude gardent la position '
+    'd’origine. Une position NULL n’est pas un point à (0, 0) : une carte omet ces profils, le dire. '
+    + VIEWS['uvp_samples']['caveats'])
 TOW_AND_COMMENTS = (
     'ENGIN ET TRAIT : gear (Hydrobios, 2x1m2, 4x1m2, 4x1m2 - LOKI, Bioness, Ringnet…) et tow_type sont les libellés '
     'du labo, sans nom complet dans l’export (« hydrobios » en minuscules = Hydrobios, un déploiement). tow_type : les '
@@ -601,6 +606,15 @@ def column_description(view_name, column):
                 'n_samples': 'Nombre de samples EcoTaxa où la catégorie a au moins un objet lisible par le compte.'}[column]
     if view_name in ('uvp_ctd', 'filet_ctd') and column in CTD_LINK_COLUMNS:
         return CTD_LINK_COLUMNS[column]
+    if view_name == 'uvp_samples' and column in ('latitude', 'longitude'):
+        return ('Position retenue du profil UVP, degrés WGS84 : celle du profil CTD cité dans EcoTaxa quand '
+                'position_source = ctd_cite, sinon celle de la source EcoPart; NULL si aucune (pas un point à 0).')
+    if column == 'position_source':
+        return ('Origine de la position et de la zone du profil UVP : ctd_cite = profil CTD cité dans EcoTaxa (l’UVP est '
+                'sur la rosette; positions source fausses pour des profils 2021 et GreenEdge 2016), source = EcoPart.')
+    if column in ('source_latitude', 'source_longitude'):
+        return ('Position d’origine du profil UVP dans la source (EcoPart), gardée telle quelle, degrés WGS84; '
+                'peut différer de latitude/longitude quand position_source = ctd_cite.')
     if column in COLUMNS:
         return COLUMNS[column]
     if column.startswith(('latitude', 'longitude')):

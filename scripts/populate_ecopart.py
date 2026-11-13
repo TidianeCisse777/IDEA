@@ -520,29 +520,10 @@ def insert_abundance(conn: psycopg.Connection, version: int) -> int:
     all_loaded_objects (every object, validated or not) and validated_only
     (annotation_status = 'validated', i.e. EcoTaxa classif_qual V). An object
     never classified has no status and only counts in all_loaded_objects.
+    The calculation is the SQL function of sql/warehouse_derived_refresh.sql (one definition, also used by
+    the refresh run at every deployment).
     """
-    return conn.execute(
-        """INSERT INTO warehouse.uvp_taxon_abundance
-        (dataset_version_id,profile_id,bin_id,taxon_key,annotation_policy,
-         n_objects_taxon,sampled_volume_l,calculation_version,taxon_name)
-        SELECT %s,b.profile_id,b.id,
-            CASE WHEN o.category_id IS NOT NULL THEN 'ecotaxa:id:'||o.category_id
-                 WHEN o.category_name IS NOT NULL THEN 'ecotaxa:name:'||o.category_name
-                 ELSE 'warehouse:unclassified' END,
-            pol.policy||':ecotaxa_project='||s.project_id,
-            count(*),b.sampled_volume_l,'ecopart-warehouse-v1-sparse',
-            MIN(o.category_name)
-        FROM warehouse.uvp_bin b
-        JOIN warehouse.uvp_profile p ON p.id=b.profile_id
-        JOIN warehouse.uvp_object_bin m ON m.uvp_bin_id=b.id
-        JOIN warehouse.ecotaxa_object o ON o.id=m.ecotaxa_object_id
-        JOIN warehouse.ecotaxa_sample s ON s.id=o.sample_id
-        CROSS JOIN LATERAL (VALUES ('all_loaded_objects', true),
-                                   ('validated_only', o.annotation_status = 'validated')) pol(policy, keep)
-        WHERE p.dataset_version_id=%s AND pol.keep
-        GROUP BY 2,3,4,5""",
-        (version, version),
-    ).rowcount
+    return conn.execute("SELECT warehouse.insert_uvp_taxon_abundance(%s)", (version,)).fetchone()[0]
 
 
 def recompute_abundance(conn: psycopg.Connection) -> dict:
@@ -561,6 +542,14 @@ def recompute_abundance(conn: psycopg.Connection) -> dict:
             conn.execute("DELETE FROM warehouse.uvp_taxon_abundance WHERE dataset_version_id=%s", (version,))
             counts[version] = insert_abundance(conn, version)
         log(f"version {version}: {counts[version]} lignes d'abondance recalculées")
+    # Same bookkeeping as warehouse.refresh_uvp_taxon_abundance(): per-taxon counts first (part of the
+    # source's fingerprint), then the fingerprint, so the next deployment does not recompute for nothing.
+    with conn.transaction():
+        conn.execute("SELECT warehouse.refresh_ecotaxa_sample_taxon(true)")
+        conn.execute("""INSERT INTO warehouse.derived_refresh (name, signature, row_count, refreshed_at)
+            VALUES ('uvp_taxon_abundance', warehouse.uvp_abundance_signature(), %s, now())
+            ON CONFLICT (name) DO UPDATE SET signature = EXCLUDED.signature, row_count = EXCLUDED.row_count,
+            refreshed_at = EXCLUDED.refreshed_at""", (sum(counts.values()),))
     return counts
 
 

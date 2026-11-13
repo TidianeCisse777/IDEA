@@ -18,15 +18,37 @@ CREATE INDEX IF NOT EXISTS uvp_ecotaxa_sample_idx
 CREATE INDEX IF NOT EXISTS uvp_object_bin_bin_idx
     ON warehouse.uvp_object_bin(uvp_bin_id);
 
+-- Position kept from the source and reference EcoTaxa copy of each UVP profile (13 November 2026).
+-- Kept identical to its copy in warehouse_uvp_reference_migration.sql (tests/test_uvp_reference.py checks it).
+ALTER TABLE warehouse.uvp_profile ADD COLUMN IF NOT EXISTS source_latitude double precision;
+ALTER TABLE warehouse.uvp_profile ADD COLUMN IF NOT EXISTS source_longitude double precision;
+ALTER TABLE warehouse.uvp_profile ADD COLUMN IF NOT EXISTS source_marine_zone_key text;
+ALTER TABLE warehouse.uvp_profile ADD COLUMN IF NOT EXISTS source_marine_zone_name text;
+ALTER TABLE warehouse.uvp_profile ADD COLUMN IF NOT EXISTS source_marine_zone_source text;
+ALTER TABLE warehouse.uvp_profile ADD COLUMN IF NOT EXISTS source_marine_zone_version text;
+ALTER TABLE warehouse.uvp_profile ADD COLUMN IF NOT EXISTS source_marine_zone_assignment_status text;
+ALTER TABLE warehouse.uvp_profile ADD COLUMN IF NOT EXISTS position_source text;
+ALTER TABLE warehouse.uvp_profile ADD COLUMN IF NOT EXISTS position_ctd_profile_id bigint;
+CREATE OR REPLACE VIEW warehouse.uvp_canonical_sample AS
+SELECT DISTINCT ON (l.uvp_profile_id) l.uvp_profile_id, e.id AS ecotaxa_sample_id, e.project_id
+FROM warehouse.uvp_ecotaxa l
+JOIN warehouse.ecotaxa_sample e ON e.id = l.ecotaxa_sample_id
+JOIN warehouse.uvp_profile u ON u.id = l.uvp_profile_id
+ORDER BY l.uvp_profile_id,
+    round((2 * 6371.0088 * asin(least(1, sqrt(power(sin(radians(e.lat_avg - u.latitude) / 2), 2)
+        + cos(radians(u.latitude)) * cos(radians(e.lat_avg)) * power(sin(radians(e.lon_avg - u.longitude) / 2), 2)))))::numeric, 1)
+        NULLS LAST,
+    e.project_id;
+
 -- Scope mappings to the profile in this row, including multiple source versions.
 CREATE OR REPLACE VIEW explore.uvp_objects AS
 SELECT
     u.id AS uvp_profile_id, u.dataset_version_id, u.ecopart_project_id,
     u.sample_name, u.cruise_key, u.station_key, u.sampled_at,
-    COALESCE(e.marine_zone_key,u.marine_zone_key) AS marine_zone_key,
-    COALESCE(e.marine_zone_name,u.marine_zone_name) AS marine_zone_name,
-    COALESCE(e.marine_zone_version,u.marine_zone_version) AS marine_zone_version,
-    COALESCE(e.marine_zone_assignment_status,u.marine_zone_assignment_status) AS marine_zone_assignment_status,
+    CASE WHEN u.position_source = 'ctd_cite' THEN u.marine_zone_key ELSE COALESCE(e.marine_zone_key,u.marine_zone_key) END AS marine_zone_key,
+    CASE WHEN u.position_source = 'ctd_cite' THEN u.marine_zone_name ELSE COALESCE(e.marine_zone_name,u.marine_zone_name) END AS marine_zone_name,
+    CASE WHEN u.position_source = 'ctd_cite' THEN u.marine_zone_version ELSE COALESCE(e.marine_zone_version,u.marine_zone_version) END AS marine_zone_version,
+    CASE WHEN u.position_source = 'ctd_cite' THEN u.marine_zone_assignment_status ELSE COALESCE(e.marine_zone_assignment_status,u.marine_zone_assignment_status) END AS marine_zone_assignment_status,
     e.id AS ecotaxa_sample_id, e.project_id AS ecotaxa_project_id, e.sample_orig_id,
     o.id AS ecotaxa_object_id, o.object_id, o.acquisition_id, o.process_id,
     o.category_id AS taxon_id, o.category_name AS taxon_name, o.annotation_status,
@@ -40,11 +62,11 @@ JOIN warehouse.ecotaxa_object o ON o.sample_id=e.id
 LEFT JOIN (warehouse.uvp_object_bin ob
     JOIN warehouse.uvp_bin b ON b.id=ob.uvp_bin_id)
     ON ob.ecotaxa_object_id=o.id AND b.profile_id=u.id
-WHERE NOT EXISTS (
-    -- Copies: a profile linked to several EcoTaxa samples (199 GreenEdge 2016 profiles: project 149 and its
-    -- exact copies 20880 / 20890) keeps the sample of the smallest project only, so nothing counts twice.
-    SELECT 1 FROM warehouse.uvp_ecotaxa l2 JOIN warehouse.ecotaxa_sample e2 ON e2.id = l2.ecotaxa_sample_id
-    WHERE l2.uvp_profile_id = u.id AND e2.project_id < e.project_id);
+WHERE EXISTS (
+    -- Copies: a profile linked to several EcoTaxa samples (199 GreenEdge 2016 profiles: projects 149 and 20880 /
+    -- 20890, same images) keeps one, warehouse.uvp_canonical_sample: the copy whose position agrees with the
+    -- profile's (cited CTD), the smallest project on a tie. Nothing counts twice.
+    SELECT 1 FROM warehouse.uvp_canonical_sample k WHERE k.uvp_profile_id = u.id AND k.ecotaxa_sample_id = e.id);
 
 -- Multiple EcoTaxa projects can refer to one EcoPart project.
 -- Kept identical to its copy in warehouse_ecotaxa_project_title_migration.sql (tests/test_warehouse_schema.py checks it):
@@ -90,11 +112,11 @@ CREATE OR REPLACE VIEW explore.uvp_taxon_abundance AS
 WITH taxa AS (
     SELECT dataset_version_id,profile_id,taxon_key,annotation_policy,MIN(taxon_name) AS taxon_name
     FROM warehouse.uvp_taxon_abundance x
-    -- Copies: only the policies of the smallest EcoTaxa project linked to the profile (see explore.uvp_objects).
-    WHERE NOT EXISTS (
-        SELECT 1 FROM warehouse.uvp_ecotaxa l2 JOIN warehouse.ecotaxa_sample e2 ON e2.id = l2.ecotaxa_sample_id
-        WHERE l2.uvp_profile_id = x.profile_id
-          AND e2.project_id < split_part(x.annotation_policy, 'ecotaxa_project=', 2)::bigint)
+    -- Copies: only the policies of the profile's reference EcoTaxa project (warehouse.uvp_canonical_sample).
+    WHERE EXISTS (
+        SELECT 1 FROM warehouse.uvp_canonical_sample k
+        WHERE k.uvp_profile_id = x.profile_id
+          AND k.project_id = split_part(x.annotation_policy, 'ecotaxa_project=', 2)::bigint)
     GROUP BY 1,2,3,4
 )
 SELECT t.dataset_version_id,t.profile_id,b.id AS bin_id,t.taxon_key,t.annotation_policy,

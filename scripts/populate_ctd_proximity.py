@@ -353,6 +353,12 @@ def main() -> int:
         print('[ctd] liens écrits : ' + ', '.join(f'{k[0]}/{k[1]}/{k[2]}={v}' for k, v in sorted(counts.items())), flush=True)
     from assign_filet_zones import assign
     print('[ctd] zones des profils CTD : ' + json.dumps(assign(table='ctd_profile'), ensure_ascii=False), flush=True)
+    # UVP profiles take the position and zone of their cited CTD (sql/warehouse_uvp_reference_migration.sql),
+    # now that the zones of the newly loaded CTD profiles are known.
+    with connection() as conn:
+        if conn.execute("SELECT to_regprocedure('warehouse.apply_uvp_cited_ctd_positions()')").fetchone()[0]:
+            changed = conn.execute('SELECT warehouse.apply_uvp_cited_ctd_positions()').fetchone()[0]
+            print(f'[ctd] profils UVP à la position de la CTD citée (mis à jour) : {changed}', flush=True)
     return 0
 
 

@@ -13,3 +13,7 @@ SELECT 'liens CTD ' || side || ' ' || link_method || ' : ' || n FROM (
   UNION ALL
   SELECT 'FILET', link_method, count(*) FROM warehouse.filet_ctd GROUP BY link_method) t
 ORDER BY side DESC, link_method"
+PGPASSWORD="$POSTGRES_PASSWORD" psql -X -q -tA -h /var/run/postgresql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "
+SELECT 'abondance UVP : ' || CASE WHEN to_regprocedure('warehouse.uvp_abundance_is_fresh()') IS NULL THEN 'contrôle absent (mettre à jour)'
+       WHEN warehouse.uvp_abundance_is_fresh() THEN 'à jour' ELSE 'À RECALCULER (relancer la mise à jour)' END;
+SELECT 'positions UVP : ' || coalesce(position_source, '?') || ' ' || count(*) FROM warehouse.uvp_profile GROUP BY position_source ORDER BY 1" 2>/dev/null || true

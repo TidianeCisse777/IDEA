@@ -53,6 +53,30 @@ Base locale, code `4f8e078`, requêtes en lecture seule (compte propriétaire, t
 10. Non refait dans cet audit : contrôle avec le compte de lecture du MCP et batterie d'agents ; sources brutes
     EcoTaxa et EcoPart non relues (constats faits sur la base).
 
+**Corrigé dans le code (points 1, 2, 3 et 8 ; décision : la position de la CTD citée fait foi)**
+- Position : `warehouse_uvp_reference_migration.sql`. Un profil UVP dont un lien CTD vient du fichier cité dans
+  EcoTaxa prend la position et la zone de ce profil CTD (`position_source = 'ctd_cite'`, `position_ctd_profile_id`) ;
+  la position et la zone d'origine restent dans `source_latitude`, `source_longitude`, `source_marine_zone_*` ; si
+  le lien disparaît, retour à la source. Appliqué en fin de `warehouse_uvp_ctd_links.sql` (chaque déploiement) et
+  par `populate_ctd_proximity.py` après les zones des nouveaux profils CTD. Les vues UVP prennent alors la zone du
+  profil ; `explore.uvp_samples` expose `position_source`, `source_latitude`, `source_longitude` (fiches à jour).
+- Copie de référence : `warehouse.uvp_canonical_sample` (copie la plus proche de la position du profil, plus petit
+  projet à égalité) remplace « plus petit projet » dans `uvp_objects`, `uvp_object_sizes`, `uvp_samples` et
+  `uvp_taxon_abundance` (mêmes définitions dans la migration EcoPart rejouée par le chargeur).
+- Tables dérivées : `warehouse_derived_refresh.sql`. Calcul de l'abondance en une fonction SQL
+  (`insert_uvp_taxon_abundance`, appelée aussi par `populate_ecopart.py`) ; à chaque déploiement, comptes par
+  taxon recalculés, puis abondance si l'empreinte de sa source a changé (`derived_refresh`, ~1 min 20 mesurée
+  sur la base complète) ; `neolab-status` dit si l'abondance est à jour.
+- Vérifié : déploiement réel sur une base PostgreSQL vide et jetable (image locale) : « PRÊT », rejoué deux fois
+  (relançable). Jeu d'essai des trois cas réels (GreenEdge sans position avec copie 149 fausse ; profil 2021 aux
+  coordonnées entières ; profil sans CTD citée) : positions et zones de la CTD, sources gardées, copie 20880
+  retenue, une ligne par profil (3 objets, pas 6), abondance recalculée puis « à jour », objet validé après coup
+  détecté, retour à la source si la CTD citée disparaît. Sur la base réelle (lecture seule), la nouvelle règle
+  donne les mêmes objets qu'avant tant que les positions ne sont pas appliquées et n'est pas plus lente
+  (tous les objets UVP 1,6 s contre 2,4 s ; un profil 0,4 s). Tests : `tests/test_uvp_reference.py` ; 203 réussis.
+- Non encore appliqué à la base du PC : il faut pousser puis lancer la mise à jour (premier déploiement : positions,
+  comptes par taxon et abondance recalculés). Restent ouverts : points 4 à 7 et 9.
+
 ### 13 novembre 2026 — QA des liens CTD (base locale, code `eedb2bc`)
 
 Requêtes en transaction lecture seule (compte propriétaire, conteneur local; le MCP n'était pas connecté) sur

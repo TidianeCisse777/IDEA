@@ -140,7 +140,10 @@ class DataQaTests(unittest.TestCase):
         docs_dir = ROOT / 'sql'
         for name in ('warehouse_ecotaxa_object_size_migration.sql', 'warehouse_ecotaxa_project_title_migration.sql',
                      'warehouse_uvp_abundance_zone_migration.sql', 'warehouse_ecopart_migration.sql'):
-            self.assertIn('e2.project_id <', (docs_dir / name).read_text(encoding='utf-8'), name)
+            text = (docs_dir / name).read_text(encoding='utf-8')
+            # One reference copy per profile (warehouse.uvp_canonical_sample), no longer the smallest project.
+            self.assertIn('FROM warehouse.uvp_canonical_sample k', text, name)
+            self.assertNotIn('e2.project_id <', text, name)
 
         def definition(name, view):
             text = (docs_dir / name).read_text(encoding='utf-8')
