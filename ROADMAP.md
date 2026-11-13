@@ -4,6 +4,55 @@
 
 **Dernière mise à jour :** 13 novembre 2026
 
+### 13 novembre 2026 — Audit EcoTaxa, EcoPart et abondance UVP : points à corriger par priorité
+
+Base locale, code `4f8e078`, requêtes en lecture seule (compte propriétaire, transaction lecture seule), aucune
+écriture. Recalculs indépendants des tables `warehouse.*`; requêtes reproductibles dans la session.
+
+**Vérifié juste**
+- Abondance stockée (`uvp_taxon_abundance`, 796 404 lignes) : formule `n / volume_L × 1000` juste partout, volume
+  identique à celui de la tranche, aucun compte nul ou négatif. Recompte indépendant (objets → tranche par
+  `floor(profondeur/5)×5`, sans `uvp_object_bin`) sur 20 profils au hasard : totaux par profil identiques.
+- Tranches (`uvp_bin`, 71 520, 686 profils) : toutes de 5 m, aucune sans volume ou à volume nul, aucun
+  chevauchement ni doublon. Chaque objet dans une seule tranche (12 151 035, tous `accepted`, écart ≤ 2,5 m).
+- Compteurs par sample EcoTaxa (`object_count`, `nb_validated`, `nb_predicted`, `nb_dubious`) = objets, 6 138/6 138.
+- Taxons : tous classés (307 organismes, 16 non vivants, 14 temporaires, 3 techniques).
+- Particules EcoPart (`uvp_particle`, 1 001 280) : volume = celui de la tranche, aucune concentration négative.
+- Dates profil UVP / sample EcoTaxa : aucun écart > 3 h ; positions concordantes quand les deux existent.
+
+**À corriger, par priorité**
+1. **Abondance UVP et comptes par taxon périmés** (faux aujourd'hui). Projets 17498 et 18084 (Amundsen 2024) :
+   9 659 et 5 863 objets validés de plus dans `ecotaxa_object` que dans `uvp_taxon_abundance` (validated_only), et
+   répartition par taxon décalée (totaux tous statuts identiques : reclassements). `ecotaxa_sample_taxon`
+   (calculé les 7-8 nov.) faux sur 1 669 lignes (17498), 208 (18084), 27 (14622). Cause : objets rechargés
+   sans recalcul des tables dérivées. À faire : recalcul (`populate_ecopart.recompute_abundance`, comptes par
+   taxon), recalcul enchaîné après tout chargement d'objets, contrôle de fraîcheur dans `neolab-check`.
+2. **Copie EcoTaxa retenue fausse pour 19 profils GreenEdge 2016.** Les vues `explore` gardent la copie du
+   projet 149 ; pour ces 19 profils sa position diffère de la copie 20880/20890, et seule cette dernière est à
+   0,0 km de la CTD citée. Copie 149 : longitude à un chiffre près (≈ 1°, 30-50 km, 9 profils), signe inversé
+   (`ge_2016_001`, 7 333 km, zone « HORS_ARCTIQUE » au lieu de Golfe du Saint-Laurent), latitude 59 au lieu de 69
+   (`ge_2016_076`, Mer du Labrador au lieu de Détroit de Davis), `ge_2016_141` Baffin au lieu de Davis. Objets
+   validés identiques (1 500 548 des deux côtés). À décider : copie de référence = 20880/20890.
+3. **Positions UVP 2021 (`de…`)** fausses dans EcoPart et EcoTaxa (mêmes valeurs) : 20 profils à coordonnées
+   entières, ~1,5° de longitude d'écart pour d'autres, alors que la CTD citée est à la bonne heure. Carte et zones
+   faussées. À décider : signaler « position incertaine » ou prendre la position de la CTD citée.
+4. **Particules 1-32 µm à 0 partout** (5 classes × 71 520 tranches) : sous la résolution de l'UVP, « non
+   mesurable » stocké comme 0 (inconnu ≠ zéro) ; 32-64 µm à 0 pour 33 676 tranches. À passer en NULL ou à signaler.
+5. **Tranches manquantes** : 3 profils, 12 tranches (`ge_2016_187` 770-780 m, `de410_003` 440-445 m,
+   `am_leg5_TCA_T3_20_01` 1 040-1 085 m) : volume inconnu, 17 objets hors tranche. Plus 318 objets au-dessus de la
+   première tranche (287) ou sous la dernière (31), non comptés. À signaler dans les fiches.
+6. **Volumes extrêmes** (jusqu'à 17 540 L pour 5 m, médiane 64 L) : yo-yo (`de430_004_yo*`), profils lents
+   GreenEdge, et `de320_004_lighttest` (test d'éclairage) : plausibles, mais le test ne devrait sans doute pas
+   compter comme profil scientifique. À décider.
+7. **Liens CTD par fichier sans distance ni écart** (520) : à calculer et exposer (ex. `ge_2016_149-151` :
+   même position, ~151 h d'écart).
+8. **Position cible du chargeur CTD par proximité** : moyenne des copies EcoTaxa quand le profil n'a pas de
+   position (`ge_2016_001` donnerait une longitude 0). Se règle avec le point 2.
+9. Plus faible : regroupement FILET par `deployment_id` seul (une seule version aujourd'hui) ;
+   `de320_004_lighttest` cite `2105016`, absent ; borne de classe `8189.999999999999` (affichage).
+10. Non refait dans cet audit : contrôle avec le compte de lecture du MCP et batterie d'agents ; sources brutes
+    EcoTaxa et EcoPart non relues (constats faits sur la base).
+
 ### 13 novembre 2026 — QA des liens CTD (base locale, code `eedb2bc`)
 
 Requêtes en transaction lecture seule (compte propriétaire, conteneur local; le MCP n'était pas connecté) sur
