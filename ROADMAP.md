@@ -77,6 +77,14 @@ Base locale, code `4f8e078`, requêtes en lecture seule (compte propriétaire, t
 - Non encore appliqué à la base du PC : il faut pousser puis lancer la mise à jour (premier déploiement : positions,
   comptes par taxon et abondance recalculés).
 
+**Première application (`4f8e078` → `ca0a060`) interrompue**
+- Le moteur Docker est tombé pendant le recalcul de l'abondance (machine virtuelle arrêtée, mise à jour figée sur
+  `docker exec` de 17 h 05 à 19 h 40, PC probablement en veille, aucune erreur PostgreSQL). Après redémarrage de
+  Docker Desktop : migrations jusqu'aux liens CTD appliquées (positions : 520 profils `ctd_cite`, 166 `source`),
+  rafraîchissement annulé par PostgreSQL (abondance inchangée, 796 404 lignes), version toujours `4f8e078`.
+- Cause de la durée : le recalcul traitait les 12 versions EcoPart une par une, chacune relisant les 12 M d'objets.
+  Corrigé : une seule passe pour toutes les versions (`insert_uvp_taxon_abundance(NULL)`), vérifiée sur base jetable.
+
 **Corrigé ensuite (points 4 à 7 et 9)**
 - 4. Particules : `explore.uvp_particle_sizes` donne `supplied_concentration` NULL et `below_detection` vrai pour une
   classe dont la borne haute ne dépasse pas la plus petite classe non nulle du profil (`uvp_profile.

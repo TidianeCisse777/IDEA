@@ -17,8 +17,9 @@ CREATE TABLE IF NOT EXISTS warehouse.derived_refresh (
 COMMENT ON TABLE warehouse.derived_refresh IS
     'Empreinte de la source au dernier calcul d''une table dérivée (uvp_taxon_abundance) : recalcul seulement si elle change.';
 
--- Positive counts per bin, taxon and annotation policy for one EcoPart version (zeros are added at read time by
--- explore.uvp_taxon_abundance). Two policies: every loaded object, and validated objects only.
+-- Positive counts per bin, taxon and annotation policy for one EcoPart version, or for all of them when p_version is
+-- NULL (zeros are added at read time by explore.uvp_taxon_abundance). Two policies: every loaded object, and
+-- validated objects only.
 CREATE OR REPLACE FUNCTION warehouse.insert_uvp_taxon_abundance(p_version bigint)
 RETURNS bigint LANGUAGE plpgsql AS $$
 DECLARE
@@ -27,7 +28,7 @@ BEGIN
     INSERT INTO warehouse.uvp_taxon_abundance
         (dataset_version_id, profile_id, bin_id, taxon_key, annotation_policy,
          n_objects_taxon, sampled_volume_l, calculation_version, taxon_name)
-    SELECT p_version, b.profile_id, b.id,
+    SELECT p.dataset_version_id, b.profile_id, b.id,
         CASE WHEN o.category_id IS NOT NULL THEN 'ecotaxa:id:' || o.category_id
              WHEN o.category_name IS NOT NULL THEN 'ecotaxa:name:' || o.category_name
              ELSE 'warehouse:unclassified' END,
@@ -41,8 +42,8 @@ BEGIN
     JOIN warehouse.ecotaxa_sample s ON s.id = o.sample_id
     CROSS JOIN LATERAL (VALUES ('all_loaded_objects', true),
                                ('validated_only', o.annotation_status = 'validated')) pol(policy, keep)
-    WHERE p.dataset_version_id = p_version AND pol.keep
-    GROUP BY 2, 3, 4, 5;
+    WHERE (p_version IS NULL OR p.dataset_version_id = p_version) AND pol.keep
+    GROUP BY 1, 2, 3, 4, 5;
     GET DIAGNOSTICS inserted = ROW_COUNT;
     RETURN inserted;
 END
@@ -65,7 +66,6 @@ CREATE OR REPLACE FUNCTION warehouse.refresh_uvp_taxon_abundance(p_force boolean
 RETURNS bigint LANGUAGE plpgsql AS $$
 DECLARE
     signature text := warehouse.uvp_abundance_signature();
-    version bigint;
     total bigint := 0;
 BEGIN
     IF NOT p_force AND signature IS NOT DISTINCT FROM
@@ -73,14 +73,11 @@ BEGIN
         RETURN -1;
     END IF;
     PERFORM pg_advisory_xact_lock(4172026);
-    FOR version IN
-        SELECT DISTINCT p.dataset_version_id FROM warehouse.uvp_profile p
-        JOIN warehouse.dataset_version v ON v.id = p.dataset_version_id
-        WHERE v.source_instance = 'ecopart' ORDER BY 1
-    LOOP
-        DELETE FROM warehouse.uvp_taxon_abundance WHERE dataset_version_id = version;
-        total := total + warehouse.insert_uvp_taxon_abundance(version);
-    END LOOP;
+    -- Every EcoPart version in one pass: one version at a time made each pass read the 12 M objects again
+    -- (13 November 2026: still running after 2 h on the lab PC, ~1 min 20 for all at once).
+    DELETE FROM warehouse.uvp_taxon_abundance a USING warehouse.dataset_version v
+    WHERE v.id = a.dataset_version_id AND v.source_instance = 'ecopart';
+    total := warehouse.insert_uvp_taxon_abundance(NULL);
     INSERT INTO warehouse.derived_refresh (name, signature, row_count, refreshed_at)
     VALUES ('uvp_taxon_abundance', signature, total, now())
     ON CONFLICT (name) DO UPDATE SET signature = EXCLUDED.signature, row_count = EXCLUDED.row_count,
