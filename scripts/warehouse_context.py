@@ -41,7 +41,7 @@ def lettres(axes):
         ax.set_title(f'({chr(97 + i)}) ' + ax.get_title(loc='left'), loc='left')
 
 def enregistrer(fig, nom, dossier='figures'):
-    # nombres à la française puis PNG 300 dpi + SVG à la taille d'impression; renvoie les chemins écrits
+    # nombres à la française puis PNG 300 dpi, SVG et PDF (vectoriels) à la taille d'impression; renvoie les chemins
     fr = FuncFormatter(lambda v, _: (f'{v:,.10g}' if abs(v) >= 1000 else f'{v:.10g}')
                        .replace(',', '\u202f').replace('.', ',').replace('-', '\u2212'))
     for ax in fig.axes:
@@ -49,7 +49,7 @@ def enregistrer(fig, nom, dossier='figures'):
             if axe.get_scale() == 'linear':
                 axe.set_major_formatter(fr)
     os.makedirs(os.path.join(dossier, nom), exist_ok=True)
-    chemins = [os.path.join(dossier, nom, f'{nom}.{ext}') for ext in ('png', 'svg')]
+    chemins = [os.path.join(dossier, nom, f'{nom}.{ext}') for ext in ('png', 'svg', 'pdf')]
     for chemin in chemins:
         fig.savefig(chemin)
     return [os.path.abspath(c) for c in chemins]
@@ -83,8 +83,11 @@ GRAPHICS = view(
     'part de détritus. Abondance par taxon UVP : tracer validated_only à côté de all_loaded_objects (ou dire pourquoi une '
     'seule), avec le nombre de profils de chacune.',
     # Style
-    'TAILLE : la figure est produite à sa taille d’impression et collée sans redimensionnement : largeur colonne 8 cm, '
-    'intermédiaire 12 cm, page 16 cm (A4, marges 2,5 cm); hauteur 5 à 12 cm, 9 cm par défaut pour une page. '
+    'MESSAGE : une figure répond à une seule question, décidée avant de tracer (Rougier et al. 2014); ne pas se fier aux '
+    'réglages par défaut. TAILLE : la figure est produite à sa taille d’impression et collée sans redimensionnement : '
+    'largeur colonne 8 cm, intermédiaire 12 cm, page 16 cm (A4, marges 2,5 cm); hauteur 5 à 12 cm, 9 cm par défaut pour '
+    'une page. Pour une revue, ses largeurs (ex. Nature 89 mm, 120-136 mm ou 183 mm, hauteur ≤ 170 mm) et son guide '
+    'priment. '
     'POLICE : DejaVu Sans 8 pt partout (axes, graduations, légende), 9 pt pour les titres de panneaux; jamais plus petit. '
     'TITRE : pas de titre global dans l’image par défaut (la légende de figure du rapport le remplace : la fournir dans la '
     'réponse); s’il est demandé, descriptif et court (« Profil vertical, station 24, 12 juin 2018 »), jamais un résultat ni '
@@ -96,11 +99,18 @@ GRAPHICS = view(
     'PALETTE[0]; quantité continue en cividis (cmocean pour une variable océanographique), barre de couleur avec unités. '
     'Toujours une légende pour plus d’une série; au-delà de 6 catégories, regrouper en « Autres (n) » ou faire des petits '
     'multiples. TEXTE : noms de genre et d’espèce en italique (taxon()), « spp. » en romain; libellés en français. '
+    'HONNÊTETÉ : un diagramme en barres part de zéro (jamais d’axe tronqué); mêmes échelles pour des panneaux à comparer; '
+    'ne pas colorer par la variable déjà portée par un axe (ex. la pression quand la profondeur est en ordonnée). '
+    'PALETTES CONTINUES : perceptuellement uniformes (cmocean, cividis), lisibles imprimées en gris; jamais d’arc-en-ciel '
+    '(jet, rainbow); séquentielle pour une grandeur, divergente centrée sur une valeur de référence nommée (ex. 0 pour un '
+    'écart ou une anomalie) (Thyng et al. 2016). '
     'INTERDITS : 3D décorative, double axe, camemberts, ombres, dégradés, étiquettes de valeur sur chaque point. '
     'TYPES : profil vertical = profondeur en ordonnée croissante vers le bas (ax.set_ylim(profondeur_max, 0)), un panneau par variable sur un '
     'axe de profondeur commun, couches du filet en barres horizontales de min_sample_depth à max_sample_depth, CTD en '
     'profondeur TEOS-10, UVP au même grain de couche (ou par tranche, en le disant); échelle logarithmique seulement '
-    'explicitée et compatible avec zéros et valeurs négatives. Filet–UVP (explore.filet_uvp_compare, document '
+    'explicitée et compatible avec zéros et valeurs négatives. COUPES ET SECTIONS interpolées : dire la méthode et la '
+    'grille d’interpolation, montrer les points de mesure, ne rien tracer au-delà des données (pas d’extrapolation '
+    'jusqu’au fond ni entre stations trop éloignées sans le dire). Filet–UVP (explore.filet_uvp_compare, document '
     'filet-uvp-comparaison) : une carte de couples place un point par déploiement filet (filet_deployment_id) relié à son '
     'profil UVP; la réponse donne le nombre de déploiements, de profils UVP et de stations, pas de lignes. Ne pas opposer le '
     'total des copépodes du filet à l’UVP comme une même grandeur : l’UVP ne voit que les gros individus; comparer taille '
@@ -147,8 +157,8 @@ GRAPHICS = view(
     'l’utilisateur demande une interprétation, donner les mesures et dire que l’interprétation revient aux chercheurs. '
     'Aucun ajustement statistique ni intervalle d’incertitude inventé. Signaler toute limite restante. '
     'LIVRABLES (enregistrer() pour PNG et SVG) : dans figures/<nom>/ du dossier de travail, avec des chemins relatifs (jamais un chemin absolu '
-    'recopié à la main, jamais un dossier synchronisé type OneDrive) : PNG 300 dpi et SVG (texte modifiable) à la taille '
-    'd’impression, CSV exact des données tracées, script Python reproductible, fichier de provenance (requête SQL, '
+    'recopié à la main, jamais un dossier synchronisé type OneDrive) : PNG 300 dpi, SVG (texte modifiable) et PDF '
+    '(vectoriel, préféré des revues) à la taille d’impression, CSV exact des données tracées, script Python reproductible, fichier de provenance (requête SQL, '
     'paramètres, versions, méthode, exclusions, limites). Puis vérifier qu’ils existent (ex. ls) et donner le chemin absolu '
     'réellement affiché par cette vérification. RENDU : relire l’image finale APRÈS la dernière modification du script, pas '
     'une version antérieure; si une retouche suit la relecture, relire de nouveau.',

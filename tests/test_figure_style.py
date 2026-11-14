@@ -42,7 +42,7 @@ class CopiedAsIs(unittest.TestCase):
         ns['lettres']([ax])
         folder = tempfile.mkdtemp()
         paths = ns['enregistrer'](fig, 'essai', dossier=folder)
-        self.assertEqual([Path(p).name for p in paths], ['essai.png', 'essai.svg'])
+        self.assertEqual([Path(p).name for p in paths], ['essai.png', 'essai.svg', 'essai.pdf'])
         from matplotlib.image import imread
         height, width = imread(os.path.join(folder, 'essai', 'essai.png')).shape[:2]
         self.assertAlmostEqual(width / 300 * 2.54, 16.0, delta=0.05)
@@ -72,6 +72,16 @@ class AnswerRules(unittest.TestCase):
                      'formule', 'dénominateur', 'sous le seuil de détection', 'tronqué à 1 000 lignes',
                      'accepted ou candidate', 'jamais des zéros'):
             self.assertIn(part, text)
+
+
+class BestPractices(unittest.TestCase):
+    def test_sources_rules_are_in_the_sheet(self):
+        text = ' '.join(GRAPHICS.values())
+        for rule in ('une seule question', 'part de zéro', 'jamais d’axe tronqué', 'perceptuellement uniformes',
+                     'jamais d’arc-en-ciel', 'divergente centrée sur une valeur de référence',
+                     'ne pas colorer par la variable déjà portée par un axe', 'grille d’interpolation',
+                     'ne rien tracer au-delà des données', '89 mm', 'PDF', 'Thyng', 'Rougier'):
+            self.assertIn(rule, text)
 
 
 if __name__ == '__main__':
