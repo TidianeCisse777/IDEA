@@ -4,6 +4,18 @@
 
 **Dernière mise à jour :** 13 novembre 2026
 
+### 13 novembre 2026 — Figures prêtes pour un rapport : fiche graphs restructurée, style servi par le MCP
+
+- Fiche graphs réécrite en quatre parties (outil et bibliothèques, données et calcul, style, statut et livraison),
+  toutes les règles précédentes gardées (tests inchangés). Ajouts : taille d'impression (colonne 8 cm, intermédiaire
+  12 cm, page 16 cm), DejaVu Sans 8 pt (titres de panneaux 9 pt), pas de titre global par défaut mais une légende de
+  figure prête à coller dans la réponse, titres jamais interprétatifs, lettres (a), (b) des panneaux, nombres à la
+  française, palette catégorielle fixe validée daltonisme (paires adjacentes), genre et espèce en italique, profil
+  vertical type (un panneau par variable, profondeur TEOS-10), livrables hors dossier synchronisé.
+- Code de style (STYLE_CODE) dans la fiche elle-même : tout agent qui lit warehouse_context(topic=graphs) l'obtient,
+  quel que soit son dossier (un module local copié dans neolab-travail a été écarté). Test : le bloc, exécuté tel
+  quel, donne une figure de 16,0 × 9,0 cm à 300 dpi, italiques et nombres français ; 212 tests réussis.
+
 ### 13 novembre 2026 — Audit EcoTaxa, EcoPart et abondance UVP : points à corriger par priorité
 
 Base locale, code `4f8e078`, requêtes en lecture seule (compte propriétaire, transaction lecture seule), aucune

@@ -837,6 +837,7 @@ def workspace_text():
             'CLAUDE.md, Codex AGENTS.md, Gemini CLI GEMINI.md, GitHub Copilot .github/copilot-instructions.md).\n\n'
             + SERVER_INSTRUCTIONS + '\n\n'
             'Les fichiers produits (graphiques, cartes, CSV, scripts) vont dans ce dossier, avec leurs chemins relatifs. '
+            'Graphiques : lire warehouse_context(topic=graphs) et copier son code de style standard en tête de script.\n'
             'Ce fichier ne contient aucun mot de passe : la connexion passe par le serveur MCP neolab-warehouse.\n')
 
 

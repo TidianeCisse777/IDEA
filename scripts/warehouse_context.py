@@ -5,78 +5,136 @@ def view(purpose, grain, joins, caveats, example):
     return dict(purpose=purpose, grain=grain, joins=joins, caveats=caveats, example=example)
 
 
-GRAPHICS = view(
-    'Règles de graphiques NeoLab. Utiliser Python : pandas pour manipuler les résultats SQL, '
-    'Matplotlib pour les figures scientifiques statiques; seaborn facultatif pour les distributions. '
-    'Cartopy avec Matplotlib pour les cartes statiques et projections; Folium pour les cartes '
-    'interactives exportées en HTML. GeoPandas/Shapely/pyproj seulement si des opérations de '
-    'géométrie ou de reprojection sont nécessaires. cmocean pour les palettes de variables '
-    'océanographiques, avec barre de couleur et unités explicites; conserver cividis en repli. '
-    'Pour l’analyse physique océanographique : oceans fournit des utilitaires, gsw (GSW/TEOS-10) '
-    'les propriétés thermodynamiques; xarray convient aux données multidimensionnelles/NetCDF. '
-    'Ces bibliothèques sont facultatives selon le besoin; ne pas les installer ni les appeler toutes '
-    'systématiquement. Vérifier pour chaque fonction les entrées requises, unités, convention '
-    'scientifique et domaine de validité; toute grandeur dérivée conserve formule et provenance. '
-    'Avec gsw, distinguer salinité pratique/absolue et température in situ/conservative; ne pas '
-    'substituer directement pression et profondeur. Clarifier les hypothèses manquantes avant calcul. '
-    'Plotly uniquement si une interaction est demandée ou utile à une exploration explicitée; '
-    'fournir alors un HTML autonome. Vérifier les bibliothèques installées avant exécution; leur '
-    'mention ici ne signifie pas qu’elles sont disponibles. Respecter un choix explicite de l’utilisateur.',
-    'Le graphique représente le grain documenté et un résultat réellement calculé. Agréger dans SQL '
-    'avant transfert. DbHub limite les réponses à 1 000 lignes : contrôler le nombre attendu et toute '
-    'indication de résultat tronqué; ne jamais tracer un sous-ensemble tronqué comme une population complète. '
-    'Une base vide produit un constat d’absence de données, aucun graphique avec données inventées. '
-    'NULL et zéro restent distincts. Ne pas interpoler, lisser, normaliser ou exclure des valeurs sans '
-    'méthode explicite; demander une clarification si cela change le sens scientifique.',
-    'Style par défaut : fond blanc, police DejaVu Sans 11 pt, titre descriptif court en français, '
-    'axes avec noms et unités vérifiées, légende lisible, grille fine gris clair et marges sans texte coupé. '
-    'Couleurs catégorielles adaptées au daltonisme, palette séquentielle cividis pour une quantité continue. '
-    'Conserver couleurs et échelles cohérentes entre panneaux comparables. Pas de 3D décorative ou '
-    'double axe sans justification. Profils : profondeur en ordonnée croissante vers le bas; '
-    'échelle logarithmique uniquement explicitée et compatible avec zéros/valeurs négatives. '
-    'Conserver les deux dénominateurs FILET séparés et appliquer l’agrégation UVP pondérée par volume. '
-    'Filet–UVP (explore.filet_uvp_compare, document filet-uvp-comparaison) : une carte de couples place un point '
-    'par déploiement filet (filet_deployment_id) relié à son profil UVP; la réponse donne le nombre de '
-    'déploiements, de profils UVP et de stations, pas de lignes. Ne pas opposer le total des copépodes du filet à '
-    'l’UVP comme une même grandeur : l’UVP ne voit que les gros individus; comparer taille contre taille (stades '
-    'détaillés, carbone par individu p_min_filet_ug_c_per_ind, taille UVP min_size_um) et le dire dans la réponse. '
-    'Nuage filet contre UVP : axes en ind./m³ de même échelle, ligne 1:1 en tirets, couples étiquetés par station; '
-    'nombre d’objets UVP et couverture de la couche (uvp_layer_coverage) dans la réponse (tableau), couverture '
-    '< 0,95 signalée. Profil vertical : couches du filet en barres horizontales de min_sample_depth à '
-    'max_sample_depth, UVP au même grain de couche (ou par tranche, en le disant). '
+# Style standard NeoLab (warehouse_context topic=graphs) : copier tel quel en tête de script.
+STYLE_CODE = r"""import os
+import matplotlib
+import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
+CM = 1 / 2.54
+LARGEUR_CM = {'colonne': 8, 'intermediaire': 12, 'page': 16}   # taille d'impression, collée sans redimensionner
+PALETTE = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948']  # ordre fixe
+AUTRES = '#9e9d97'
+STATUT = {'confirmed': ('#007B88', '-'), 'exploratory': ('#B87514', '--'), 'uncertain': ('#737C86', ':')}
+plt.rcParams.update({
+    'font.family': 'DejaVu Sans', 'font.size': 8, 'axes.titlesize': 9, 'axes.titlelocation': 'left',
+    'mathtext.fontset': 'dejavusans', 'axes.prop_cycle': matplotlib.cycler(color=PALETTE),
+    'axes.spines.top': False, 'axes.spines.right': False, 'axes.edgecolor': '#9a9a9a', 'axes.linewidth': 0.6,
+    'axes.grid': True, 'grid.color': '#e3e3e3', 'grid.linewidth': 0.5, 'axes.axisbelow': True,
+    'lines.linewidth': 1.2, 'legend.frameon': False, 'figure.facecolor': 'white', 'savefig.facecolor': 'white',
+    'savefig.dpi': 300, 'svg.fonttype': 'none', 'image.cmap': 'cividis'})
 
-    'Cartographie : vérifier le CRS; les coordonnées du warehouse sont en degrés WGS84. '
-    'Avec Cartopy, séparer projection d’affichage et transform des données : PlateCarree pour les '
-    'longitudes/latitudes WGS84, projection polaire adaptée à l’Arctique si pertinente. '
-    'Ordre des points : Cartopy (longitude, latitude), Folium [latitude, longitude], '
-    'GeoJSON [longitude, latitude]. Exclure explicitement les coordonnées manquantes/hors domaine '
-    'sans les inventer. Calculer les distances en géodésique/PostGIS, pas en degrés ni en pixels. '
-    'Conserver la version des zones et les ambiguïtés; distinguer source, statut et concentration '
-    'dans la légende. Identifier les fonds/tuiles et leurs attributions. Les tuiles, bibliothèques '
-    'JavaScript distantes et fonds Cartopy peuvent nécessiter Internet ou un cache local : '
-    'ne pas annoncer une carte Folium autonome hors ligne sans l’avoir vérifiée. '
-    'Privilégier les fonds locaux/caches; confirmer tout téléchargement lourd.',
-    'La figure reste sobre : titre court, axes avec unités, légende; aucun cartouche de statut, aucune note de '
-    'source, de paramètres, de comptes ou de limites dans l’image (ils surchargent le graphique). Ces informations '
-    'vont dans la RÉPONSE de l’agent, à côté de la figure, toujours, dans une section claire « Données et méthode » : '
-    'quelques puces courtes, sans surcharger la réponse : données et vues utilisées, critères et paramètres, comptes '
-    '(ex. déploiements, profils, objets), statut Exploratoire par défaut (pas une probabilité de confiance), limites '
-    'et exclusions; la requête SQL complète reste dans la section des requêtes exécutées. Statuts : confirmed exige une '
-    'validation scientifique explicitement documentée (un match accepted ou un test technique réussi ne suffit pas); '
-    'exploratory par défaut; uncertain signale les limites connues, sans inventer de valeurs ou d’intervalles. Si une '
-    'même figure mêle des séries de statuts différents, les distinguer par le trait (confirmed #007B88 plein, '
-    'exploratory #B87514 tirets, uncertain #737C86 pointillés) avec un libellé dans la légende, jamais la couleur seule. '
-    'Aucune interprétation biologique, aucun ajustement statistique ni intervalle '
-    'd’incertitude inventé. Conserver requête SQL, paramètres, versions, méthode, exclusions et limites '
-    'dans un fichier de provenance accompagnant la figure. Produire un PNG à 300 dpi et un SVG pour '
-    'les figures statiques, le CSV exact tracé et le script Python reproductible; indiquer les chemins '
-    'réels des fichiers créés. Fichiers : les écrire dans le dossier de travail courant avec des chemins '
-    'relatifs (jamais un chemin absolu recopié à la main), puis vérifier qu’ils existent (ex. ls) et donner '
-    'le chemin absolu réellement affiché par cette vérification. Rendu : relire l’image finale APRÈS la '
-    'dernière modification du script, pas une version antérieure; si une retouche suit la relecture, '
-    'relire de nouveau. Abondance « totale » ou « tous taxons » : exclure les catégories non vivantes et techniques (object_class de explore.ecotaxa_taxa), ou nommer la grandeur concentration de particules (objets/m³), jamais individus/m³; donner la part de détritus. Abondance par taxon : tracer la politique validated_only à côté de '
-    'all_loaded_objects (ou expliquer pourquoi une seule), avec le nombre de profils de chacune, car '
-    'all_loaded_objects inclut les objets prédits non validés. Signaler toute limite restante.',
+def figure(largeur='page', hauteur_cm=9, **kw):
+    # largeur 'colonne' (8 cm), 'intermediaire' (12 cm) ou 'page' (16 cm); jamais de bbox_inches='tight'
+    return plt.subplots(figsize=(LARGEUR_CM[largeur] * CM, hauteur_cm * CM), layout='constrained', **kw)
+
+def taxon(nom):
+    # genre et espèce en italique, « spp. » en romain; un nom seul (rang inconnu) reste en romain
+    m = nom.split()
+    if (2 <= len(m) <= 3 and m[0][:1].isupper() and m[0][1:].islower() and m[1].islower()
+            and all(w.isalpha() or w in ('spp.', 'sp.') for w in m)):
+        return ' '.join(w if w in ('spp.', 'sp.') else '$\\it{' + w + '}$' for w in m)
+    return nom
+
+def lettres(axes):
+    # (a), (b)... devant le titre de chaque panneau
+    for i, ax in enumerate(getattr(axes, 'flat', axes)):
+        ax.set_title(f'({chr(97 + i)}) ' + ax.get_title(loc='left'), loc='left')
+
+def enregistrer(fig, nom, dossier='figures'):
+    # nombres à la française puis PNG 300 dpi + SVG à la taille d'impression; renvoie les chemins écrits
+    fr = FuncFormatter(lambda v, _: (f'{v:,.10g}' if abs(v) >= 1000 else f'{v:.10g}')
+                       .replace(',', '\u202f').replace('.', ',').replace('-', '\u2212'))
+    for ax in fig.axes:
+        for axe in (ax.xaxis, ax.yaxis):
+            if axe.get_scale() == 'linear':
+                axe.set_major_formatter(fr)
+    os.makedirs(os.path.join(dossier, nom), exist_ok=True)
+    chemins = [os.path.join(dossier, nom, f'{nom}.{ext}') for ext in ('png', 'svg')]
+    for chemin in chemins:
+        fig.savefig(chemin)
+    return [os.path.abspath(c) for c in chemins]
+"""
+
+
+GRAPHICS = view(
+    # Bibliothèques et outil
+    'CODE STANDARD : copier tel quel, en tête de tout script de figure, le bloc STYLE ci-dessous (fin de cette fiche) : il fixe police, tailles, palette, italiques, nombres à la française et formats. Puis fig, axes = figure("page", hauteur_cm=9, ...), taxon(nom) pour les légendes, lettres(axes) pour les panneaux, enregistrer(fig, nom). Ne pas redéfinir ces valeurs à la main. '
+    'BIBLIOTHÈQUES : Python; pandas pour manipuler les résultats SQL, Matplotlib pour toute figure statique (seaborn '
+    'facultatif pour les distributions). Cartopy avec Matplotlib pour les cartes statiques; Folium seulement pour une carte '
+    'interactive en HTML. Plotly uniquement si une interaction est demandée ou utile à une exploration explicitée, en HTML '
+    'autonome. GeoPandas/Shapely/pyproj seulement pour de la géométrie ou une reprojection. cmocean pour une variable '
+    'océanographique continue (barre de couleur avec unités), cividis en repli. Océanographie physique : oceans (utilitaires), '
+    'gsw (GSW/TEOS-10) pour les propriétés thermodynamiques, xarray pour NetCDF/multidimensionnel. Ces bibliothèques sont '
+    'facultatives : vérifier qu’elles sont installées avant de les appeler, ne pas toutes les installer. Pour chaque fonction, '
+    'vérifier entrées, unités, convention et domaine de validité; toute grandeur dérivée garde formule et provenance. Avec gsw, '
+    'distinguer salinité pratique/absolue et température in situ/conservative; ne jamais substituer pression et profondeur '
+    '(profondeur = -gsw.z_from_p(pression_dbar, latitude du profil), TEOS-10). Clarifier les hypothèses manquantes avant tout calcul. '
+    'Respecter un choix explicite de l’utilisateur. STYLE (à copier) :\n' + STYLE_CODE,
+    # Données et calcul
+    'DONNÉES : la figure montre le grain documenté et un résultat réellement calculé; agréger dans SQL avant transfert. '
+    'DbHub limite une réponse à 1 000 lignes : contrôler le nombre attendu et toute indication de résultat tronqué; ne '
+    'jamais tracer un sous-ensemble tronqué comme une population complète. Une base vide ou un résultat vide donne un '
+    'constat d’absence, jamais une figure avec des données inventées. NULL et zéro restent distincts (un NULL ne se trace pas '
+    'comme 0). Ne pas interpoler, lisser, normaliser ou exclure sans méthode explicite; demander une clarification si cela '
+    'change le sens scientifique. FILET : garder séparés les deux dénominateurs (volume par la profondeur, débitmètre); un '
+    'taxon par sa ligne ALL_STAGES, jamais un agrégat additionné à ses stades. UVP : agrégation pondérée par le volume. '
+    'Abondance « totale » ou « tous taxons » : exclure les catégories non vivantes et techniques (object_class de '
+    'explore.ecotaxa_taxa) ou nommer la grandeur concentration de particules (objets/m³), jamais individus/m³, et donner la '
+    'part de détritus. Abondance par taxon UVP : tracer validated_only à côté de all_loaded_objects (ou dire pourquoi une '
+    'seule), avec le nombre de profils de chacune.',
+    # Style
+    'TAILLE : la figure est produite à sa taille d’impression et collée sans redimensionnement : largeur colonne 8 cm, '
+    'intermédiaire 12 cm, page 16 cm (A4, marges 2,5 cm); hauteur 5 à 12 cm, 9 cm par défaut pour une page. '
+    'POLICE : DejaVu Sans 8 pt partout (axes, graduations, légende), 9 pt pour les titres de panneaux; jamais plus petit. '
+    'TITRE : pas de titre global dans l’image par défaut (la légende de figure du rapport le remplace : la fournir dans la '
+    'réponse); s’il est demandé, descriptif et court (« Profil vertical, station 24, 12 juin 2018 »), jamais un résultat ni '
+    'une interprétation (pas « maximum à 10-20 m »). Panneaux multiples : lettres (a), (b)… devant le titre de panneau, '
+    'titre de panneau d’un ou deux mots. AXES : nom et unité vérifiée entre parenthèses (« Abondance (ind./m³) », '
+    '« Profondeur (m) »), nombres à la française (virgule décimale, espace fine pour les milliers), fond blanc, grille fine '
+    'gris clair, pas de cadre haut et droit. COULEURS : catégories dans l’ordre fixe de PALETTE (adaptée au daltonisme), '
+    'gris AUTRES pour « Autres », couleur liée à l’entité et identique entre figures et panneaux; une seule série en '
+    'PALETTE[0]; quantité continue en cividis (cmocean pour une variable océanographique), barre de couleur avec unités. '
+    'Toujours une légende pour plus d’une série; au-delà de 6 catégories, regrouper en « Autres (n) » ou faire des petits '
+    'multiples. TEXTE : noms de genre et d’espèce en italique (taxon()), « spp. » en romain; libellés en français. '
+    'INTERDITS : 3D décorative, double axe, camemberts, ombres, dégradés, étiquettes de valeur sur chaque point. '
+    'TYPES : profil vertical = profondeur en ordonnée croissante vers le bas (ax.set_ylim(profondeur_max, 0)), un panneau par variable sur un '
+    'axe de profondeur commun, couches du filet en barres horizontales de min_sample_depth à max_sample_depth, CTD en '
+    'profondeur TEOS-10, UVP au même grain de couche (ou par tranche, en le disant); échelle logarithmique seulement '
+    'explicitée et compatible avec zéros et valeurs négatives. Filet–UVP (explore.filet_uvp_compare, document '
+    'filet-uvp-comparaison) : une carte de couples place un point par déploiement filet (filet_deployment_id) relié à son '
+    'profil UVP; la réponse donne le nombre de déploiements, de profils UVP et de stations, pas de lignes. Ne pas opposer le '
+    'total des copépodes du filet à l’UVP comme une même grandeur : l’UVP ne voit que les gros individus; comparer taille '
+    'contre taille (stades détaillés, carbone par individu p_min_filet_ug_c_per_ind, taille UVP min_size_um) et le dire. '
+    'Nuage filet contre UVP : axes en ind./m³ de même échelle, ligne 1:1 en tirets, couples étiquetés par station; nombre '
+    'd’objets UVP et couverture de la couche (uvp_layer_coverage) dans la réponse, couverture < 0,95 signalée. '
+    'CARTES : vérifier le CRS (coordonnées du warehouse en degrés WGS84); avec Cartopy, séparer la projection d’affichage '
+    'du transform des données (PlateCarree pour longitude/latitude WGS84, projection polaire pour l’Arctique si pertinente). '
+    'Ordre des points : Cartopy (longitude, latitude), Folium [latitude, longitude], GeoJSON [longitude, latitude]. Exclure '
+    'explicitement les coordonnées manquantes ou hors domaine, sans les inventer; distances en géodésique ou PostGIS, jamais '
+    'en degrés ni en pixels. Garder la version des zones et les ambiguïtés; distinguer source, statut et concentration dans '
+    'la légende; nommer les fonds et tuiles avec leur attribution. Tuiles, bibliothèques JavaScript distantes et fonds '
+    'Cartopy peuvent demander Internet ou un cache local : ne pas annoncer une carte Folium autonome hors ligne sans '
+    'l’avoir vérifiée; préférer les fonds locaux et confirmer tout téléchargement lourd.',
+    # Statut et livraison
+    'SOBRIÉTÉ : aucun cartouche de statut, aucune note de source, de paramètres, de comptes ou de limites dans l’image '
+    '(ils surchargent la figure). Ces informations vont dans la RÉPONSE de l’agent, à côté de la figure, toujours : '
+    '1) une légende de figure prête à coller (« Figure. … », une ou deux phrases descriptives : quoi, où, quand, unités, '
+    'panneaux (a), (b)…, sans résultat ni interprétation; individus/m³ seulement pour des organismes, sinon objets/m³); '
+    '2) une section « Données et méthode » de quelques puces '
+    'courtes, sans surcharger la réponse : données et vues utilisées, critères et paramètres, comptes (déploiements, '
+    'profils, objets), statut Exploratoire par défaut (pas une probabilité de confiance), limites et exclusions; la '
+    'requête SQL complète reste dans la section des requêtes exécutées. STATUTS : confirmed exige une validation '
+    'scientifique explicitement documentée (un match accepted ou un test technique réussi ne suffit pas); exploratory par '
+    'défaut; uncertain signale les limites connues, sans inventer de valeurs ni d’intervalles. Séries de statuts différents '
+    'dans une même figure : distinguées par le trait (STATUT : confirmed #007B88 plein, exploratory #B87514 tirets, '
+    'uncertain #737C86 pointillés) avec un libellé dans la légende, jamais par la couleur seule. Aucune interprétation '
+    'biologique, aucun ajustement statistique ni intervalle d’incertitude inventé. Signaler toute limite restante. '
+    'LIVRABLES (enregistrer() pour PNG et SVG) : dans figures/<nom>/ du dossier de travail, avec des chemins relatifs (jamais un chemin absolu '
+    'recopié à la main, jamais un dossier synchronisé type OneDrive) : PNG 300 dpi et SVG (texte modifiable) à la taille '
+    'd’impression, CSV exact des données tracées, script Python reproductible, fichier de provenance (requête SQL, '
+    'paramètres, versions, méthode, exclusions, limites). Puis vérifier qu’ils existent (ex. ls) et donner le chemin absolu '
+    'réellement affiché par cette vérification. RENDU : relire l’image finale APRÈS la dernière modification du script, pas '
+    'une version antérieure; si une retouche suit la relecture, relire de nouveau.',
     "SELECT topic,purpose,grain,relations,caveats FROM catalogue.warehouse_context WHERE topic='graphs';",
 )
 
