@@ -371,13 +371,13 @@ VIEWS = {
         'Un échantillon = un filet (ou des filets regroupés) pour une couche min_sample_depth–max_sample_depth et une maille. Hydrobios et Bioness : plusieurs couches superposées par déploiement (profil vertical); 2x1m2 et 4x1m2 : une couche, plusieurs mailles. Détails et chiffres : document filet-organisation (search_documents). Un échantillon peut avoir plusieurs analyses ou filets. Zone ambiguous peut signifier chevauchement de polygones, pas exclusion spatiale. Ne pas assimiler station FILET et station UVP par identifiant.',
         'SELECT id,sample_id,station_name,latitude,longitude,n_analyses FROM explore.filet_samples LIMIT 20;'),
     'filet_data': view(
-        'Abondances et biomasses FILET fournies, avec métadonnées éventuellement non appariées.',
+        'Abondances et biomasses FILET de copépodes fournies, avec métadonnées éventuellement non appariées.',
         'Version d’abondance × sample_id × analysis_id × taxon_id × stage; ligne source conservée.',
         'sample_id + metadata_dataset_version_id vers filet_samples.sample_id + dataset_version_id; ne pas utiliser la version d’abondance à la place de la version des métadonnées.',
         'Valeurs source : ne pas recalculer les volumes ou concentrations. Depth et flowmeter restent deux dénominateurs distincts. Ne pas sommer stades détaillés et agrégats; metadata_matched=false garde la ligne sans inventer de coordonnées. analysis_contract est un libellé source, pas une règle validée de séparation.',
         'SELECT sample_id,analysis_id,taxon_id,stage,abundance_depth_ind_m3,abundance_flowmeter_ind_m3,metadata_matched FROM explore.filet_data LIMIT 20;'),
     'filet_totals': view(
-        'Sous-ensemble FILET au stade ALL_STAGES.', 'Même grain que filet_data, limité à stage=ALL_STAGES.',
+        'Copépodes FILET au stade ALL_STAGES (tous stades, nauplii compris).', 'Même grain que filet_data, limité à stage=ALL_STAGES.',
         'Même contrat de jointure et de versions que filet_data.',
         'Ne pas additionner ALL_STAGES avec les sous-stades. Ne pas mélanger depth et flowmeter. Un total fourni n’autorise pas une équivalence taxonomique avec UVP.',
         'SELECT sample_id,taxon_id,abundance_depth_ind_m3 FROM explore.filet_totals LIMIT 20;'),
@@ -447,6 +447,8 @@ TOW_AND_COMMENTS = (
     'trait oblique (« oblique » 21 fois, « vertical » 2 fois) : le dire ainsi, ce n’est pas une définition du labo. '
     'COMMENTAIRES (sample_comments, analysis_comments, et dans filet_samples deployment_comments, net_comments) : les '
     'lire avant de comparer, ils signalent des échantillons non quantitatifs, des filets regroupés ou échappés. ')
+COPEPODS_ONLY = (
+    'COPÉPODES SEULEMENT : les abondances et biomasses FILET viennent de l’export « copepod abund&biomass » (copépodites, adultes et nauplii; document filet-copepod-metadata); aucun autre groupe du zooplancton : nommer « copépodes » dans les titres, axes et légendes, jamais « abondance » ou « zooplancton » seuls. taxon_id est le libellé source : des catégories larges (Copepoda, Calanus spp., Cyclopoida) coexistent avec des espèces du même groupe et leur exclusivité n’est pas documentée; un total de plusieurs taxon_id le dit dans les LIMITES, avec la liste des taxon_id sommés. ')
 for _name in ('filet_data', 'filet_totals', 'filet_samples', 'filet_deployments'):
     VIEWS[_name]['caveats'] = TOW_AND_COMMENTS + VIEWS[_name]['caveats']
 VIEWS['filet_data']['caveats'] = (
@@ -454,7 +456,8 @@ VIEWS['filet_data']['caveats'] = (
     'l’export du labo; ses abondances et biomasses au débitmètre sont négatives (111 lignes) : les exclure '
     '(abundance_flowmeter_ind_m3 < 0) et le dire. 84 échantillons ont un volume débitmètre de 0 : leurs valeurs au '
     'débitmètre sont NULL (inconnues), pas nulles. ' + VIEWS['filet_data']['caveats'])
-VIEWS['filet_totals']['caveats'] = (
+VIEWS['filet_data']['caveats'] = COPEPODS_ONLY + VIEWS['filet_data']['caveats']
+VIEWS['filet_totals']['caveats'] = COPEPODS_ONLY + (
     'Même anomalie source que filet_data pour l’échantillon 22497 (valeurs au débitmètre négatives). '
     + VIEWS['filet_totals']['caveats'])
 VIEWS['taxon_mapping']['caveats'] = (

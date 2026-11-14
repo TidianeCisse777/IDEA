@@ -65,6 +65,15 @@ class Tidiness(unittest.TestCase):
         self.assertIn('def enregistrer(fig, nom, dossier):', STYLE_CODE)   # no default: no file lands at the root
 
 
+class FiletIsCopepods(unittest.TestCase):
+    def test_filet_sheets_say_copepods_only_and_list_summed_taxa(self):
+        from warehouse_context import VIEWS
+        for name in ('filet_data', 'filet_totals'):
+            text = ' '.join(VIEWS[name].values())
+            for part in ('COPÉPODES SEULEMENT', 'nauplii', 'liste des taxon_id sommés', 'Calanus spp.'):
+                self.assertIn(part, text)
+
+
 class AnswerRules(unittest.TestCase):
     def test_no_scientific_interpretation_anywhere(self):
         from publish_warehouse_context import OVERVIEW

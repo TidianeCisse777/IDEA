@@ -4,6 +4,28 @@
 
 **Dernière mise à jour :** 14 novembre 2026
 
+### 14 novembre 2026 — Essai réel Codex : profil vertical FILET 1576 et CTD 711
+
+- Requête : « profil vertical d'un trait FILET avec CTD ». Codex (MCP local, code `8f2c60e`) a lu les fiches overview,
+  graphs et filet, et a choisi le déploiement 1576 (station 24, 12 juin 2018, 9 couches de 0 à 160 m). Il a pris le
+  profil CTD 711, lié par proximité (`accepted`, 0,5 km, 1,25 h). Ses requêtes sont visibles dans l'audit PostgreSQL
+  (`neolab-mcp:codex-mcp-client`).
+- Conforme : un seul dossier `analyses/2026-11-14_profil-filet-1576/`, rien à la racine, et la suite « seulement les
+  copépodes » réutilise ce dossier. Le code de style est copié tel quel (16 × 12 cm, (a) à (d), nombres à la
+  française). Il livre PNG, SVG, PDF, CSV, script, SQL et provenance. La profondeur vient de TEOS-10, rien n'est
+  extrapolé au-dessus de 2 m, et la réponse contient la légende, Données / Méthode / Limites / Statut (exploratoire),
+  sans interprétation. Les abondances par couche sont identiques à celles de la figure du 13 novembre (max. 10-20 m :
+  4 996,5 ind./m³).
+- Écarts : 1) la première figure titrait « Abondance » sans dire « copépodes ». Les fiches FILET ne disaient pas que
+  l'export ne contient que des copépodes, et Codex l'a appris dans `filet-export-review`. 2) Le total somme 14
+  taxon_id, dont des catégories larges (Copepoda, Calanus spp., Cyclopoida), sans le signaler en limite.
+- Correction : règle « COPÉPODES SEULEMENT » dans `filet_data` et `filet_totals`. Elle demande de nommer les
+  copépodes et de citer en limite la liste des taxon_id sommés, car leur exclusivité n'est pas documentée.
+  Vérification : la version 37 compte 101 taxon_id, tous des copépodes. Dans la couche 0-10 m du déploiement 1576,
+  Calanus spp. vaut 70 ind./m³ contre 24,4 pour les espèces de Calanus nommées : ce n'est donc pas leur somme.
+- Constat source non corrigé : « Scaphocalanus brevicornis » et « Scaphocalanus Brevicornis » existent comme deux
+  taxon_id distincts.
+
 ### 14 novembre 2026 — Un dossier par question dans le dossier de travail
 
 - Constat : `~/neolab-travail` contenait 143 entrées, surtout des scripts `.py`, du SQL, des CSV et des figures
