@@ -13,7 +13,8 @@
   française, palette catégorielle fixe validée daltonisme (paires adjacentes), genre et espèce en italique, profil
   vertical type (un panneau par variable, profondeur TEOS-10), livrables hors dossier synchronisé.
 - Code de style (STYLE_CODE) dans la fiche elle-même : tout agent qui lit warehouse_context(topic=graphs) l'obtient,
-  quel que soit son dossier (un module local copié dans neolab-travail a été écarté). Test : le bloc, exécuté tel
+  quel que soit son dossier (un module local copié dans neolab-travail a été écarté).
+- Réponse à côté de chaque figure : légende prête à coller, puis « Données et méthode » en quatre rubriques fixes (DONNÉES : vues, identifiants, dates, versions, comptes ; MÉTHODE : formule, dénominateur, agrégation, filtres, conversions, exclusions ; LIMITES : liste à vérifier une à une, chiffrée ; STATUT). AUCUNE INTERPRÉTATION SCIENTIFIQUE (biologique, écologique, physique, causale) ni dans la figure, ni dans la légende, ni dans la réponse, avec formulations permises et interdites ; même règle dans le contexte général (overview). Test : le bloc, exécuté tel
   quel, donne une figure de 16,0 × 9,0 cm à 300 dpi, italiques et nombres français ; 212 tests réussis.
 
 ### 13 novembre 2026 — Audit EcoTaxa, EcoPart et abondance UVP : points à corriger par priorité

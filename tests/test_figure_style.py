@@ -19,7 +19,7 @@ class Sheet(unittest.TestCase):
         self.assertIn(STYLE_CODE, GRAPHICS['purpose'])
         self.assertFalse((ROOT / 'scripts' / 'neolab_figures.py').exists())
         text = ' '.join(GRAPHICS.values())
-        for rule in ('8 cm', '16 cm', '8 pt', 'italique', 'légende de figure prête à coller',
+        for rule in ('8 cm', '16 cm', '8 pt', 'italique', 'LÉGENDE DE FIGURE prête à coller',
                      'jamais un résultat ni une interprétation', 'OneDrive', 'gsw.z_from_p'):
             self.assertIn(rule, text)
         self.assertNotIn('nf.', text)
@@ -52,6 +52,26 @@ class CopiedAsIs(unittest.TestCase):
         import matplotlib.pyplot as plt
         self.assertEqual(plt.rcParams['font.size'], 8)
         self.assertEqual(plt.rcParams['savefig.dpi'], 300)
+
+
+
+class AnswerRules(unittest.TestCase):
+    def test_no_scientific_interpretation_anywhere(self):
+        from publish_warehouse_context import OVERVIEW
+        text = ' '.join(GRAPHICS.values())
+        self.assertIn('AUCUNE INTERPRÉTATION SCIENTIFIQUE', text)
+        for scope in ('ni dans la figure, ni dans la légende, ni dans la réponse', 'ni physique, ni causale'):
+            self.assertIn(scope, text)
+        for word in ('« thermocline »', '« domine »', '« explique »', '« suggère »'):
+            self.assertIn(word, text)                                # listed as forbidden
+        self.assertIn('Aucune interprétation scientifique', OVERVIEW)
+
+    def test_data_method_and_limits_template(self):
+        text = ' '.join(GRAPHICS.values())
+        for part in ('LÉGENDE DE FIGURE', 'DONNÉES :', 'MÉTHODE :', 'LIMITES :', 'STATUT :', 'dataset_version',
+                     'formule', 'dénominateur', 'sous le seuil de détection', 'tronqué à 1 000 lignes',
+                     'accepted ou candidate', 'jamais des zéros'):
+            self.assertIn(part, text)
 
 
 if __name__ == '__main__':

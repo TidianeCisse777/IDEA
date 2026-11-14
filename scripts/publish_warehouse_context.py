@@ -20,7 +20,7 @@ OVERVIEW = (
     'Comparer FILET et UVP : explore.filet_uvp_compare(...) et explore.filet_uvp_pairs(...), décrits dans la fiche filet_uvp_abundance et le document filet-uvp-comparaison. '
     'Les documents écrits (protocoles, méthodes, notes) sont dans catalogue.documents : les chercher avec '
     'search_documents pour une question de méthode, de protocole ou de provenance, et citer doc_key et section. '
-    'Ne pas interpréter biologiquement les résultats. NULL signifie absent/inconnu; zéro et absence '
+    'Aucune interprétation scientifique (biologique, écologique, physique ou causale) : décrire les mesures, jamais ce qu’elles signifient; chaque réponse donne ses données, sa méthode et ses limites (gabarit « Données et méthode » de la fiche graphs). NULL signifie absent/inconnu; zéro et absence '
     'de ligne sont différents. Garder source, versions, politiques d’annotation, stades et '
     'dénominateurs explicites. Ne pas sommer les volumes répétés par taxon ou les '
     'concentrations FILET répétées par bin. Les fichiers sources bruts ne sont pas modifiés. '
