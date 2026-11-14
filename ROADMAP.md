@@ -2,7 +2,21 @@
 
 **Période proposée :** du 14 septembre au 30 novembre 2026
 
-**Dernière mise à jour :** 13 novembre 2026
+**Dernière mise à jour :** 14 novembre 2026
+
+### 14 novembre 2026 — Un dossier par question dans le dossier de travail
+
+- Constat : `~/neolab-travail` contenait 143 entrées, surtout des scripts `.py`, du SQL, des CSV et des figures
+  posés à la racine par les assistants.
+- Règle « RANGEMENT » ajoutée aux instructions du serveur MCP (`SERVER_INSTRUCTIONS`, envoyées à tous les
+  assistants à la connexion) et donc aux `CLAUDE.md`, `AGENTS.md`, `GEMINI.md` du dossier de travail. Chaque question
+  a son dossier `analyses/AAAA-MM-JJ_sujet-court/`, créé avant le premier fichier. Il reçoit les scripts, le SQL, les
+  CSV, les figures et la provenance. Rien ne va à la racine.
+- Fiche `graphs` : les livrables vont dans ce dossier. `enregistrer(fig, nom, dossier)` n'a plus de dossier par
+  défaut et n'écrit plus de sous-dossier `figures/<nom>/`.
+- Tests : 216 réussis, 29 ignorés (nouveau test `Tidiness`).
+- Limites : les fichiers déjà à la racine de `~/neolab-travail` n'ont pas été déplacés. La règle est une consigne :
+  un assistant peut l'ignorer, et seul l'essai en conversation réelle le montrera.
 
 ### 13 novembre 2026 — Figures prêtes pour un rapport : fiche graphs restructurée, style servi par le MCP
 

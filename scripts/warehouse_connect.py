@@ -257,7 +257,8 @@ SERVER_INSTRUCTIONS = (
     "explore.ecotaxa_sample_taxa et de la lignée EcoTaxa (taxon_lineage), pas d'une liste de mémoire. Si la question est floue (projet, taxon, profondeur, année, "
     "objets validés ou non), dire le choix retenu ou demander une précision. "
     "Pour une question de méthode, de protocole, d'unité ou de provenance, chercher aussi dans les documents écrits "
-    "(search_documents, puis read_document) et citer le document et la section. Commencer la réponse par une courte section « Raisonnement » "
+    "(search_documents, puis read_document) et citer le document et la section. "
+    "RANGEMENT des fichiers produits : rien à la racine du dossier de travail. Chaque question a son dossier analyses/AAAA-MM-JJ_sujet-court/ (date du jour, minuscules et tirets, ex. analyses/2026-11-14_profil-filet-1576/), créé avant le premier fichier; tout ce que la question produit y va (scripts .py, requêtes .sql, CSV, JSON, figures PNG/SVG/PDF, provenance.md), sans sous-dossier inutile. Une suite de la même question réutilise son dossier; une nouvelle question en crée un autre. Fichiers intermédiaires supprimés à la fin. Donner le chemin du dossier dans la réponse. Commencer la réponse par une courte section « Raisonnement » "
     "(question comprise, choix et leurs raisons), et finir par les requêtes exécutées."
 )
 
@@ -836,7 +837,8 @@ def workspace_text():
             'Ce dossier sert à analyser les données du warehouse NeoLab avec un assistant IA (Claude Code lit '
             'CLAUDE.md, Codex AGENTS.md, Gemini CLI GEMINI.md, GitHub Copilot .github/copilot-instructions.md).\n\n'
             + SERVER_INSTRUCTIONS + '\n\n'
-            'Les fichiers produits (graphiques, cartes, CSV, scripts) vont dans ce dossier, avec leurs chemins relatifs. '
+            'Les fichiers produits vont dans analyses/<date>_<sujet>/, un dossier par question (voir RANGEMENT ci-dessus), '
+            'jamais à la racine de ce dossier. '
             'Graphiques : lire warehouse_context(topic=graphs) et copier son code de style standard en tête de script.\n'
             'Ce fichier ne contient aucun mot de passe : la connexion passe par le serveur MCP neolab-warehouse.\n')
 

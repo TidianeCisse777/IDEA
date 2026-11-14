@@ -40,16 +40,17 @@ def lettres(axes):
     for i, ax in enumerate(getattr(axes, 'flat', axes)):
         ax.set_title(f'({chr(97 + i)}) ' + ax.get_title(loc='left'), loc='left')
 
-def enregistrer(fig, nom, dossier='figures'):
-    # nombres à la française puis PNG 300 dpi, SVG et PDF (vectoriels) à la taille d'impression; renvoie les chemins
+def enregistrer(fig, nom, dossier):
+    # dossier = celui de la question (analyses/AAAA-MM-JJ_sujet/); nombres à la française puis PNG 300 dpi,
+    # SVG et PDF (vectoriels) à la taille d'impression; renvoie les chemins
     fr = FuncFormatter(lambda v, _: (f'{v:,.10g}' if abs(v) >= 1000 else f'{v:.10g}')
                        .replace(',', '\u202f').replace('.', ',').replace('-', '\u2212'))
     for ax in fig.axes:
         for axe in (ax.xaxis, ax.yaxis):
             if axe.get_scale() == 'linear':
                 axe.set_major_formatter(fr)
-    os.makedirs(os.path.join(dossier, nom), exist_ok=True)
-    chemins = [os.path.join(dossier, nom, f'{nom}.{ext}') for ext in ('png', 'svg', 'pdf')]
+    os.makedirs(dossier, exist_ok=True)
+    chemins = [os.path.join(dossier, f'{nom}.{ext}') for ext in ('png', 'svg', 'pdf')]
     for chemin in chemins:
         fig.savefig(chemin)
     return [os.path.abspath(c) for c in chemins]
@@ -156,7 +157,8 @@ GRAPHICS = view(
     'profond », « migration », « favorise », « explique », « suggère », « lié à », « en raison de », « typique de ». Si '
     'l’utilisateur demande une interprétation, donner les mesures et dire que l’interprétation revient aux chercheurs. '
     'Aucun ajustement statistique ni intervalle d’incertitude inventé. Signaler toute limite restante. '
-    'LIVRABLES (enregistrer() pour PNG et SVG) : dans figures/<nom>/ du dossier de travail, avec des chemins relatifs (jamais un chemin absolu '
+    'LIVRABLES (enregistrer() pour PNG, SVG et PDF) : tous dans le dossier de la question, analyses/AAAA-MM-JJ_sujet-court/ '
+    '(RANGEMENT des instructions du serveur : rien à la racine du dossier de travail), avec des chemins relatifs (jamais un chemin absolu '
     'recopié à la main, jamais un dossier synchronisé type OneDrive) : PNG 300 dpi, SVG (texte modifiable) et PDF '
     '(vectoriel, préféré des revues) à la taille d’impression, CSV exact des données tracées, script Python reproductible, fichier de provenance (requête SQL, '
     'paramètres, versions, méthode, exclusions, limites). Puis vérifier qu’ils existent (ex. ls) et donner le chemin absolu '

@@ -43,8 +43,9 @@ class CopiedAsIs(unittest.TestCase):
         folder = tempfile.mkdtemp()
         paths = ns['enregistrer'](fig, 'essai', dossier=folder)
         self.assertEqual([Path(p).name for p in paths], ['essai.png', 'essai.svg', 'essai.pdf'])
+        self.assertTrue(all(Path(p).parent == Path(folder).resolve() for p in paths))   # no extra subfolder
         from matplotlib.image import imread
-        height, width = imread(os.path.join(folder, 'essai', 'essai.png')).shape[:2]
+        height, width = imread(os.path.join(folder, 'essai.png')).shape[:2]
         self.assertAlmostEqual(width / 300 * 2.54, 16.0, delta=0.05)
         self.assertAlmostEqual(height / 300 * 2.54, 9.0, delta=0.05)
         self.assertEqual(ax.get_title(loc='left'), '(a) Essai')
@@ -53,6 +54,15 @@ class CopiedAsIs(unittest.TestCase):
         self.assertEqual(plt.rcParams['font.size'], 8)
         self.assertEqual(plt.rcParams['savefig.dpi'], 300)
 
+
+class Tidiness(unittest.TestCase):
+    def test_every_question_gets_its_own_folder_never_the_root(self):
+        import warehouse_connect
+        for text in (warehouse_connect.SERVER_INSTRUCTIONS, warehouse_connect.workspace_text(),
+                     ' '.join(GRAPHICS.values())):
+            self.assertIn('analyses/', text)
+            self.assertIn('racine', text)
+        self.assertIn('def enregistrer(fig, nom, dossier):', STYLE_CODE)   # no default: no file lands at the root
 
 
 class AnswerRules(unittest.TestCase):
