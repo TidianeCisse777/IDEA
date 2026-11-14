@@ -97,6 +97,10 @@ Base locale, code `4f8e078`, requêtes en lecture seule (compte propriétaire, t
 - Bogue de distance : `least(1, NULL)` vaut 1, une longitude absente (30 profils GreenEdge : latitude EcoPart sans
   longitude) donnait 20 015 km. Corrigé : `warehouse.haversine_km` STRICT ; la position déclarée vient d'EcoPart
   seulement si latitude et longitude y sont. Vérifié sur base jetable (NULL ; 108,45 km par la copie EcoTaxa).
+- Appliqué (`9750edc`, « À JOUR », PASS) : 685 copies de référence pour 685 profils, distances des liens par fichier
+  max 223 km (49 au-delà de 10 km). Temps à chaud, nouvelle règle / ancienne règle sur la même base : abondance
+  d'un profil 1,07 s / 0,86 s ; objets d'un profil 1,95 s / 1,96 s ; objets d'am_leg3 (1,9 M) 10,8 s / 9,2 s.
+  Le premier appel après redémarrage ou mise à jour est 5 à 18 fois plus lent (cache froid), quelle que soit la règle.
 
 **Corrigé ensuite (points 4 à 7 et 9)**
 - 4. Particules : `explore.uvp_particle_sizes` donne `supplied_concentration` NULL et `below_detection` vrai pour une
