@@ -132,11 +132,10 @@ LEFT JOIN warehouse.ecotaxa_acquisition ac ON ac.acquisition_id = o.acquisition_
 LEFT JOIN (warehouse.uvp_object_bin ob
     JOIN warehouse.uvp_bin b ON b.id = ob.uvp_bin_id)
     ON ob.ecotaxa_object_id = o.id AND b.profile_id = u.id
-WHERE EXISTS (
-    -- Copies: a profile linked to several EcoTaxa samples (199 GreenEdge 2016 profiles: projects 149 and 20880 /
-    -- 20890, same images) keeps one, warehouse.uvp_canonical_sample: the copy whose position agrees with the
-    -- profile's (cited CTD), the smallest project on a tie. Nothing counts twice.
-    SELECT 1 FROM warehouse.uvp_canonical_sample k WHERE k.uvp_profile_id = u.id AND k.ecotaxa_sample_id = e.id);
+-- Copies: a profile linked to several EcoTaxa samples (199 GreenEdge 2016 profiles: projects 149 and 20880 /
+-- 20890, same images) keeps one, flagged uvp_ecotaxa.is_reference (warehouse.refresh_uvp_reference_copies):
+-- the copy whose position agrees with the profile's (cited CTD), the smallest project on a tie.
+WHERE ul.is_reference;
 
 COMMENT ON VIEW explore.uvp_object_sizes IS
     'Un objet EcoTaxa identifie par ligne, avec sa taille reelle (esd_um/major_um/minor_um/area_um2) quand la calibration pixel de son acquisition est connue (NULL sinon : ne pas supposer une taille absente egale a zero). '
@@ -168,8 +167,7 @@ JOIN warehouse.ecotaxa_object o ON o.sample_id=e.id
 LEFT JOIN (warehouse.uvp_object_bin ob
     JOIN warehouse.uvp_bin b ON b.id=ob.uvp_bin_id)
     ON ob.ecotaxa_object_id=o.id AND b.profile_id=u.id
-WHERE EXISTS (
-    -- Copies: a profile linked to several EcoTaxa samples (199 GreenEdge 2016 profiles: projects 149 and 20880 /
-    -- 20890, same images) keeps one, warehouse.uvp_canonical_sample: the copy whose position agrees with the
-    -- profile's (cited CTD), the smallest project on a tie. Nothing counts twice.
-    SELECT 1 FROM warehouse.uvp_canonical_sample k WHERE k.uvp_profile_id = u.id AND k.ecotaxa_sample_id = e.id);
+-- Copies: a profile linked to several EcoTaxa samples (199 GreenEdge 2016 profiles: projects 149 and 20880 /
+-- 20890, same images) keeps one, flagged uvp_ecotaxa.is_reference (warehouse.refresh_uvp_reference_copies):
+-- the copy whose position agrees with the profile's (cited CTD), the smallest project on a tie.
+WHERE ul.is_reference;

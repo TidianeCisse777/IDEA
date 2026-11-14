@@ -21,7 +21,7 @@ def text(name: str) -> str:
 def reference_block(sql: str) -> str:
     """The shared DDL: profile columns and the reference copy view, whitespace-normalised."""
     start = sql.index('ALTER TABLE warehouse.uvp_profile ADD COLUMN IF NOT EXISTS source_latitude')
-    end = sql.index('e.project_id;', start) + len('e.project_id;')
+    end = sql.index('WHERE l.is_reference;', start) + len('WHERE l.is_reference;')
     return ' '.join(sql[start:end].split())
 
 
@@ -32,10 +32,29 @@ class SharedDefinitions(unittest.TestCase):
                          reference_block(text('warehouse_uvp_reference_migration.sql')))
 
     def test_reference_copy_is_the_closest_to_the_profile_then_the_smallest_project(self):
-        block = reference_block(text('warehouse_uvp_reference_migration.sql'))
-        self.assertIn('SELECT DISTINCT ON (l.uvp_profile_id) l.uvp_profile_id, e.id AS ecotaxa_sample_id, e.project_id', block)
-        self.assertRegex(block, r'ORDER BY l\.uvp_profile_id, round\(.*\)::numeric, 1\) NULLS LAST, e\.project_id;$')
-        self.assertIn('least(1, sqrt(', block)       # asin() never gets a value above 1 from rounding
+        sql = ' '.join(text('warehouse_uvp_reference_migration.sql').split())
+        body = sql.split('CREATE OR REPLACE FUNCTION warehouse.refresh_uvp_reference_copies()')[1].split('$$;')[0]
+        self.assertIn('SELECT DISTINCT ON (l.uvp_profile_id) l.uvp_profile_id, l.ecotaxa_sample_id', body)
+        self.assertIn('round(warehouse.haversine_km(u.latitude, u.longitude, e.lat_avg, e.lon_avg)::numeric, 1) NULLS LAST, '
+                      'e.project_id)', body)
+        self.assertIn('SET is_reference = (c.ecotaxa_sample_id = l.ecotaxa_sample_id)', body)
+        # chosen again whenever positions change
+        self.assertIn('PERFORM warehouse.refresh_uvp_reference_copies();',
+                      sql.split('CREATE OR REPLACE FUNCTION warehouse.apply_uvp_cited_ctd_positions()')[1])
+
+    def test_distance_is_null_when_a_coordinate_is_missing(self):
+        # least(1, NULL) is 1: a missing longitude used to give pi * R = 20 015 km.
+        sql = ' '.join(text('warehouse_uvp_reference_migration.sql').split())
+        self.assertIn('RETURNS double precision LANGUAGE sql IMMUTABLE STRICT AS', sql)
+        for name in ('warehouse_uvp_ctd_links.sql',):
+            self.assertNotIn('asin(least(1', text(name), name)
+
+    def test_views_read_the_flag_not_a_sorted_view(self):
+        # Reading a sorted view per row made explore.uvp_taxon_abundance 16 s for one profile.
+        for name, alias in (('warehouse_ecopart_migration.sql', 'ul'), ('warehouse_ecotaxa_object_size_migration.sql', 'ul'),
+                            ('warehouse_ecotaxa_project_title_migration.sql', 'l')):
+            self.assertIn(f'WHERE {alias}.is_reference;', text(name), name)
+            self.assertNotIn('DISTINCT ON', text(name).split('CREATE OR REPLACE VIEW warehouse.uvp_canonical_sample')[1][:400], name)                 if 'uvp_canonical_sample AS' in text(name) else None
 
     def test_no_view_keeps_the_old_smallest_project_rule(self):
         for path in SQL.glob('*.sql'):
@@ -154,7 +173,8 @@ class AuditFollowUps(unittest.TestCase):
         tail = links[links.index('SELECT warehouse.apply_uvp_cited_ctd_positions();'):]
         self.assertIn('SET distance_km = x.distance_km, time_gap_hours = x.time_gap_hours', tail)
         self.assertIn("WHERE u.link_method = 'filename_transitive'", tail)
-        self.assertIn('coalesce(p.source_latitude, e.lat_avg)', tail)
+        self.assertIn('warehouse.haversine_km(d.lat, d.lon, c.latitude, c.longitude)', tail)
+        self.assertIn('p.source_latitude IS NOT NULL AND p.source_longitude IS NOT NULL', tail)
 
     def test_ctd_targets_never_average_copies_nor_versions(self):
         prox = (ROOT / 'scripts' / 'populate_ctd_proximity.py').read_text(encoding='utf-8')

@@ -85,6 +85,19 @@ Base locale, code `4f8e078`, requêtes en lecture seule (compte propriétaire, t
 - Cause de la durée : le recalcul traitait les 12 versions EcoPart une par une, chacune relisant les 12 M d'objets.
   Corrigé : une seule passe pour toutes les versions (`insert_uvp_taxon_abundance(NULL)`), vérifiée sur base jetable.
 
+**Après la deuxième application (`eadc11f`, « À JOUR », PASS) : régression corrigée**
+- Vérifié sur la base : positions appliquées (520 `ctd_cite`, 182 profils GreenEdge positionnés, 9 zones changées),
+  54 profils GreenEdge sur la copie 20880/20890 (19 grands écarts + 35 de moins de 2 km), abondance à jour
+  (813 874 lignes, 0 écart sur 13 projets ; 17498 : 374 455 validés, 18084 : 167 049), comptes par taxon 0 écart,
+  particules sous le seuil à NULL (1-32 µm partout, 32-64 µm sur 33 676 tranches), 67 656 zéros de grande classe gardés.
+- Régression : la vue triée `uvp_canonical_sample`, lue ligne à ligne, rendait `explore.uvp_taxon_abundance`
+  lente (16 s pour un profil contre 1,1 s avant) et `uvp_objects` d'un projet > 60 s (21,7 s avant). Corrigé :
+  drapeau `uvp_ecotaxa.is_reference` posé par `refresh_uvp_reference_copies()` (après chaque application des
+  positions et par `populate_ecopart.py`), lu directement par les vues.
+- Bogue de distance : `least(1, NULL)` vaut 1, une longitude absente (30 profils GreenEdge : latitude EcoPart sans
+  longitude) donnait 20 015 km. Corrigé : `warehouse.haversine_km` STRICT ; la position déclarée vient d'EcoPart
+  seulement si latitude et longitude y sont. Vérifié sur base jetable (NULL ; 108,45 km par la copie EcoTaxa).
+
 **Corrigé ensuite (points 4 à 7 et 9)**
 - 4. Particules : `explore.uvp_particle_sizes` donne `supplied_concentration` NULL et `below_detection` vrai pour une
   classe dont la borne haute ne dépasse pas la plus petite classe non nulle du profil (`uvp_profile.

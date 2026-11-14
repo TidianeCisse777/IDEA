@@ -823,6 +823,11 @@ def ingest(
             log(f"projet {ep_id}: {type(exc).__name__}: {str(exc)[:200]}")
             failures.append(ep_id)
         save_json(path, state)
+    # New profiles: source position kept, cited CTD position applied and reference EcoTaxa copy flagged
+    # (uvp_ecotaxa.is_reference), so the explore views show them before the next deployment.
+    if conn.execute("SELECT to_regprocedure('warehouse.apply_uvp_cited_ctd_positions()')").fetchone()[0]:
+        conn.execute("SELECT warehouse.apply_uvp_cited_ctd_positions()")
+        conn.commit()
     if failures:
         raise SystemExit(f"Projets incomplets: {failures}; relancer pour reprendre")
 

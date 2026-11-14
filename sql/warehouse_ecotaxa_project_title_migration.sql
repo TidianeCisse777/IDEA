@@ -51,11 +51,10 @@ FROM warehouse.uvp_profile u
 JOIN warehouse.uvp_ecotaxa l ON l.uvp_profile_id = u.id
 JOIN warehouse.ecotaxa_sample e ON e.id = l.ecotaxa_sample_id
 LEFT JOIN warehouse.ecotaxa_project ep ON ep.project_id = e.project_id
-WHERE EXISTS (
-    -- Copies: a profile linked to several EcoTaxa samples (199 GreenEdge 2016 profiles: projects 149 and 20880 /
-    -- 20890, same images) keeps one, warehouse.uvp_canonical_sample: the copy whose position agrees with the
-    -- profile's (cited CTD), the smallest project on a tie. Nothing counts twice.
-    SELECT 1 FROM warehouse.uvp_canonical_sample k WHERE k.uvp_profile_id = u.id AND k.ecotaxa_sample_id = e.id);
+-- Copies: a profile linked to several EcoTaxa samples (199 GreenEdge 2016 profiles: projects 149 and 20880 /
+-- 20890, same images) keeps one, flagged uvp_ecotaxa.is_reference (warehouse.refresh_uvp_reference_copies):
+-- the copy whose position agrees with the profile's (cited CTD), the smallest project on a tie.
+WHERE l.is_reference;
 
 -- Kept identical to its copy in warehouse_ecopart_migration.sql (tests/test_warehouse_schema.py checks it):
 -- populate_ecopart.py replays the EcoPart migration at load time, after the always-applied migrations.

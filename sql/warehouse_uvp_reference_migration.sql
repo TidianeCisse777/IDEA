@@ -26,21 +26,53 @@ ALTER TABLE warehouse.uvp_profile ADD COLUMN IF NOT EXISTS source_marine_zone_ve
 ALTER TABLE warehouse.uvp_profile ADD COLUMN IF NOT EXISTS source_marine_zone_assignment_status text;
 ALTER TABLE warehouse.uvp_profile ADD COLUMN IF NOT EXISTS position_source text;
 ALTER TABLE warehouse.uvp_profile ADD COLUMN IF NOT EXISTS position_ctd_profile_id bigint;
+ALTER TABLE warehouse.uvp_ecotaxa ADD COLUMN IF NOT EXISTS is_reference boolean;
 CREATE OR REPLACE VIEW warehouse.uvp_canonical_sample AS
-SELECT DISTINCT ON (l.uvp_profile_id) l.uvp_profile_id, e.id AS ecotaxa_sample_id, e.project_id
+SELECT l.uvp_profile_id, e.id AS ecotaxa_sample_id, e.project_id
 FROM warehouse.uvp_ecotaxa l
 JOIN warehouse.ecotaxa_sample e ON e.id = l.ecotaxa_sample_id
-JOIN warehouse.uvp_profile u ON u.id = l.uvp_profile_id
-ORDER BY l.uvp_profile_id,
-    round((2 * 6371.0088 * asin(least(1, sqrt(power(sin(radians(e.lat_avg - u.latitude) / 2), 2)
-        + cos(radians(u.latitude)) * cos(radians(e.lat_avg)) * power(sin(radians(e.lon_avg - u.longitude) / 2), 2)))))::numeric, 1)
-        NULLS LAST,
-    e.project_id;
+WHERE l.is_reference;
 
 COMMENT ON COLUMN warehouse.uvp_profile.position_source IS
     'ctd_cite : latitude, longitude et zone du profil CTD cité dans EcoTaxa (position_ctd_profile_id); source : celles de la source (EcoPart). Les valeurs de la source restent dans source_latitude, source_longitude, source_marine_zone_*.';
 COMMENT ON VIEW warehouse.uvp_canonical_sample IS
-    'Sample EcoTaxa de référence de chaque profil UVP (un seul) : la copie la plus proche de la position du profil, le plus petit projet à égalité.';
+    'Sample EcoTaxa de référence de chaque profil UVP (un seul, uvp_ecotaxa.is_reference) : la copie la plus proche de la position du profil, le plus petit projet à égalité.';
+COMMENT ON COLUMN warehouse.uvp_ecotaxa.is_reference IS
+    'Vrai pour le seul sample EcoTaxa retenu pour ce profil UVP (warehouse.refresh_uvp_reference_copies); les vues explore UVP ne lisent que lui.';
+
+-- Great-circle distance in km (haversine, R = 6371.0088). NULL as soon as one coordinate is missing (STRICT): the
+-- previous inline formula turned a missing longitude into π·R = 20 015 km, because least(1, NULL) is 1.
+CREATE OR REPLACE FUNCTION warehouse.haversine_km(lat1 double precision, lon1 double precision,
+                                                  lat2 double precision, lon2 double precision)
+RETURNS double precision LANGUAGE sql IMMUTABLE STRICT AS $$
+    SELECT 2 * 6371.0088 * asin(least(1, sqrt(power(sin(radians(lat2 - lat1) / 2), 2)
+        + cos(radians(lat1)) * cos(radians(lat2)) * power(sin(radians(lon2 - lon1) / 2), 2))))
+$$;
+
+-- One reference EcoTaxa sample per profile: the copy closest to the profile's position (to 0.1 km), the smallest
+-- project on a tie or without position. Returns the number of links whose flag changed.
+CREATE OR REPLACE FUNCTION warehouse.refresh_uvp_reference_copies()
+RETURNS integer LANGUAGE plpgsql AS $$
+DECLARE
+    changed integer;
+BEGIN
+    WITH chosen AS (
+        SELECT DISTINCT ON (l.uvp_profile_id) l.uvp_profile_id, l.ecotaxa_sample_id
+        FROM warehouse.uvp_ecotaxa l
+        JOIN warehouse.ecotaxa_sample e ON e.id = l.ecotaxa_sample_id
+        JOIN warehouse.uvp_profile u ON u.id = l.uvp_profile_id
+        ORDER BY l.uvp_profile_id,
+                 round(warehouse.haversine_km(u.latitude, u.longitude, e.lat_avg, e.lon_avg)::numeric, 1) NULLS LAST,
+                 e.project_id)
+    UPDATE warehouse.uvp_ecotaxa l
+    SET is_reference = (c.ecotaxa_sample_id = l.ecotaxa_sample_id)
+    FROM chosen c
+    WHERE c.uvp_profile_id = l.uvp_profile_id
+      AND l.is_reference IS DISTINCT FROM (c.ecotaxa_sample_id = l.ecotaxa_sample_id);
+    GET DIAGNOSTICS changed = ROW_COUNT;
+    RETURN changed;
+END
+$$;
 
 CREATE OR REPLACE FUNCTION warehouse.apply_uvp_cited_ctd_positions()
 RETURNS integer LANGUAGE plpgsql AS $$
@@ -86,6 +118,8 @@ BEGIN
            OR p.marine_zone_key IS DISTINCT FROM c.marine_zone_key
            OR p.marine_zone_assignment_status IS DISTINCT FROM c.marine_zone_assignment_status);
     GET DIAGNOSTICS changed = ROW_COUNT;
+    -- The reference copy depends on the position: chosen again now.
+    PERFORM warehouse.refresh_uvp_reference_copies();
     RETURN changed + reverted;    -- profiles whose position changed, either way
 END
 $$;
