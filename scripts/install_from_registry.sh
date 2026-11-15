@@ -72,8 +72,19 @@ done
 check=$(docker exec "$CONTAINER" neolab-check 2>&1 || true)
 printf '%s\n' "$check" | grep -q PASS || { printf '%s\n' "$check" | tail -12; fail "le serveur MCP ne répond pas (message ci-dessus)."; }
 echo "base prête, serveur MCP : PASS"
+# Latest code (small package :code, a few MB): an installation is up to date even when the image with data
+# is older. The update script ships next to this installer.
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+if [ -f "$here/update_warehouse.sh" ]; then
+    echo "dernière version du code…"
+    bash "$here/update_warehouse.sh" \
+        || echo "code non mis à jour pour l'instant : relancer plus tard  bash ~/neolab/update_warehouse.sh"
+fi
 
-step "5/5 Assistants"
+step "5/5 Assistants et mise à jour"
+mkdir -p "$HOME/neolab"
+docker cp "$CONTAINER:/opt/neolab/IDEA/scripts/update_warehouse.sh" "$HOME/neolab/update_warehouse.sh" >/dev/null 2>&1 \
+    || cp "$here/update_warehouse.sh" "$HOME/neolab/update_warehouse.sh" 2>/dev/null || true
 mkdir -p "$HOME/neolab-travail"
 docker cp "$CONTAINER:/opt/neolab/workspace/." "$HOME/neolab-travail/" >/dev/null
 echo "dossier de travail : $HOME/neolab-travail"
@@ -116,3 +127,4 @@ else
     printf 'Aucun assistant en ligne de commande : installer Claude Code, Codex ou OpenCode, puis relancer ce script.\n'
 fi
 printf 'VS Code (Copilot) et Claude Desktop : branchés s’ils sont installés; les redémarrer.\n'
+printf 'Mettre à jour plus tard :  bash ~/neolab/update_warehouse.sh\n'

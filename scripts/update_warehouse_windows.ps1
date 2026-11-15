@@ -6,10 +6,15 @@
 #     powershell -ExecutionPolicy Bypass -File mettre_a_jour_windows.ps1 -Auto      # + à chaque ouverture de session
 #     powershell -ExecutionPolicy Bypass -File mettre_a_jour_windows.ps1 -NoAuto    # retirer l'automatique
 #
-# Dépôt privé : un jeton GitHub en lecture seule (fine-grained, « Contents: Read-only » sur ce dépôt) est
-# demandé une fois, puis gardé chiffré pour cet utilisateur Windows (DPAPI) dans %LOCALAPPDATA%\neolab.
+# Deux sources du code (-Source auto par défaut : github si un jeton de dépôt est enregistré, sinon registry) :
+#  - registry : le petit paquet « code seul » (étiquette :code, quelques Mo) publié à côté de l'image, avec la
+#    connexion read:packages faite à l'installation; aucun accès au dépôt n'est nécessaire (collègues);
+#  - github : le dépôt privé, avec un jeton GitHub en lecture seule (fine-grained, « Contents: Read-only » sur ce
+#    dépôt) demandé une fois, puis gardé chiffré pour cet utilisateur Windows (DPAPI) dans %LOCALAPPDATA%\neolab.
 param([switch]$Auto, [switch]$NoAuto, [switch]$Quiet,
-      [string]$Repo = 'TidianeCisse777/IDEA', [string]$Branch = 'mcp-neolab')
+      [string]$Repo = 'TidianeCisse777/IDEA', [string]$Branch = 'mcp-neolab',
+      [ValidateSet('auto', 'github', 'registry')][string]$Source = 'auto',
+      [string]$CodeImage = 'ghcr.io/tidianecisse777/neolab-warehouse:code')
 $ErrorActionPreference = 'Continue'
 $container = 'neolab-warehouse'
 $state = Join-Path $env:LOCALAPPDATA 'neolab'
@@ -68,95 +73,130 @@ do {
 } while ($waited -lt 180)
 if ($LASTEXITCODE -ne 0) { Fail "la base du conteneur ne répond pas." }
 
-# --- Latest version on GitHub (anonymous first; private repository: saved token)
-function Read-Token {
-    if (-not (Test-Path $tokenFile)) { return $null }
-    try {
-        $secure = Get-Content $tokenFile | ConvertTo-SecureString
-        return [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
-    } catch { return $null }
-}
-function Get-GitHub($url, $token, $outFile, $accept) {
-    $headers = @{ 'User-Agent' = 'neolab-update'; 'Accept' = $accept }
-    if ($token) { $headers['Authorization'] = "Bearer $token" }
-    if ($outFile) { Invoke-WebRequest -UseBasicParsing -Uri $url -Headers $headers -OutFile $outFile -ErrorAction Stop; return $null }
-    $content = (Invoke-WebRequest -UseBasicParsing -Uri $url -Headers $headers -ErrorAction Stop).Content
-    # Windows PowerShell 5.1 hands non-text media types (application/vnd.github.sha) back as bytes.
-    if ($content -is [byte[]]) { $content = [System.Text.Encoding]::ASCII.GetString($content) }
-    return $content
-}
-function Save-GitHubArchive($url, $token, $outFile) {
-    # GitHub answers with a redirect to codeload.github.com carrying its own temporary access: follow it by
-    # hand, without our token (Windows PowerShell 5.1 forwarded it and got a 404).
-    $request = [System.Net.HttpWebRequest]::Create($url)
-    $request.AllowAutoRedirect = $false
-    $request.UserAgent = 'neolab-update'
-    if ($token) { $request.Headers['Authorization'] = "Bearer $token" }
-    $response = $request.GetResponse()
-    $location = $response.Headers['Location']
-    if (-not $location) {   # served directly
-        $file = [System.IO.File]::Create($outFile)
-        try { $response.GetResponseStream().CopyTo($file) } finally { $file.Close(); $response.Close() }
-        return
-    }
-    $response.Close()
-    $client = New-Object System.Net.WebClient
-    $client.Headers['User-Agent'] = 'neolab-update'
-    $client.DownloadFile($location, $outFile)
-}
-$api = "https://api.github.com/repos/$Repo"
-$token = Read-Token
-$latest = $null
-for ($try = 0; $try -lt 2 -and -not $latest; $try++) {
-    try {
-        $latest = ([string](Get-GitHub "$api/commits/$Branch" $token $null 'application/vnd.github.sha')).Trim()
-    } catch {
-        $code = 0
-        if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode }
-        if ($code -notin 401, 403, 404) { Fail "GitHub injoignable ($($_.Exception.Message))." }
-        if ($Quiet) { Fail "accès GitHub refusé : lancer mettre_a_jour_windows.bat à la main pour donner un jeton." }
-        if ($try -gt 0) { Fail "jeton refusé par GitHub (dépôt $Repo) : vérifier ses droits, puis relancer." }
-        Write-Host "`nDépôt privé : jeton GitHub en lecture seule nécessaire (une seule fois)." -ForegroundColor Yellow
-        Write-Host "  github.com > Settings > Developer settings > Fine-grained tokens > Generate new token"
-        Write-Host "  Repository access : Only select repositories > $Repo ; Permissions > Contents : Read-only"
-        $secure = Read-Host "Coller le jeton (il ne s'affiche pas)" -AsSecureString
-        $secure | ConvertFrom-SecureString | Set-Content $tokenFile
-        $token = Read-Token
-    }
-}
-if ($latest -notmatch '^[0-9a-f]{40}$') { Fail "version GitHub illisible ($latest)." }
+if ($Source -eq 'auto') { $Source = if (Test-Path $tokenFile) { 'github' } else { 'registry' } }
 $current = ((& $docker exec $container sh -c 'cat /opt/neolab/version 2>/dev/null') | Out-String).Trim()
-if ($current -eq $latest) {
-    Say "Déjà à jour ($($latest.Substring(0, 7)))." Green
-    if (-not $Quiet -and -not $Auto) { Write-Host "Pour une mise à jour automatique à chaque session : mettre_a_jour_windows.bat -Auto" }
-    exit 0
-}
-# Never go back: an old copy of this script once fetched an older branch and its migrations removed links.
-if ($current -match '^[0-9a-f]{40}$') {
-    $status = $null
-    try { $status = (Get-GitHub "$api/compare/$current...$latest" $token $null 'application/vnd.github+json' | ConvertFrom-Json).status }
-    catch { Say "comparaison des versions impossible ($($_.Exception.Message)) : mise à jour faite quand même." Yellow }
-    if ($status -in 'behind', 'diverged') {
-        Fail ("la branche $Branch ($($latest.Substring(0, 7))) n'est pas plus récente que le code du conteneur " +
-              "($($current.Substring(0, 7))) : rien n'est changé. Branche à suivre : mcp-neolab.")
+if ($Source -eq 'registry') {
+    # --- Code from the private package (tag :code, a few MB), with the read:packages login of the installation
+    & $docker pull $CodeImage *> $null
+    if ($LASTEXITCODE -ne 0) {
+        & $docker image inspect $CodeImage *> $null
+        if ($LASTEXITCODE -ne 0) {
+            Fail "code inaccessible ($CodeImage) : vérifier Internet, ou refaire « docker login ghcr.io » avec le jeton read:packages."
+        }
+        Say "registre injoignable : dernière copie téléchargée du code utilisée." Yellow
     }
-}
-Say "Mise à jour : $(if ($current) { $current.Substring(0, 7) } else { 'version d''installation' }) -> $($latest.Substring(0, 7))"
+    $latest = ((& $docker image inspect -f '{{index .Config.Labels "neolab.commit"}}' $CodeImage) | Out-String).Trim()
+    if ($latest -notmatch '^[0-9a-f]{40}$') { Fail "version du code publié illisible ($latest)." }
+    if ($current -eq $latest) { Say "Déjà à jour ($($latest.Substring(0, 7)))." Green; exit 0 }
+    $work = Join-Path $env:TEMP ("neolab-maj-" + $latest.Substring(0, 12))
+    Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force $work | Out-Null
+    & $docker rm -f neolab-code-tmp *> $null
+    & $docker create --name neolab-code-tmp $CodeImage *> $null
+    & $docker cp "neolab-code-tmp:/IDEA" "$work" *> $null
+    $copied = $LASTEXITCODE
+    & $docker rm -f neolab-code-tmp *> $null
+    $source = Get-Item (Join-Path $work 'IDEA') -ErrorAction SilentlyContinue
+    if ($copied -ne 0 -or -not $source -or -not (Test-Path (Join-Path $source.FullName 'docker\allinone\neolab-update'))) {
+        Fail "code publié incomplet."
+    }
+    # Never go back: the published code lists every earlier version of its branch (.neolab_commits).
+    $earlier = Get-Content (Join-Path $source.FullName '.neolab_commits') -ErrorAction SilentlyContinue
+    if ($current -match '^[0-9a-f]{40}$' -and $earlier -notcontains $current) {
+        Fail ("le code publié ($($latest.Substring(0, 7))) n'est pas plus récent que celui du conteneur " +
+              "($($current.Substring(0, 7))) : rien n'est changé.")
+    }
+    Say "Mise à jour : $(if ($current) { $current.Substring(0, 7) } else { 'version d''installation' }) -> $($latest.Substring(0, 7)) (registre)"
+} else {
+    # --- Latest version on GitHub (anonymous first; private repository: saved token)
+    function Read-Token {
+        if (-not (Test-Path $tokenFile)) { return $null }
+        try {
+            $secure = Get-Content $tokenFile | ConvertTo-SecureString
+            return [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
+        } catch { return $null }
+    }
+    function Get-GitHub($url, $token, $outFile, $accept) {
+        $headers = @{ 'User-Agent' = 'neolab-update'; 'Accept' = $accept }
+        if ($token) { $headers['Authorization'] = "Bearer $token" }
+        if ($outFile) { Invoke-WebRequest -UseBasicParsing -Uri $url -Headers $headers -OutFile $outFile -ErrorAction Stop; return $null }
+        $content = (Invoke-WebRequest -UseBasicParsing -Uri $url -Headers $headers -ErrorAction Stop).Content
+        # Windows PowerShell 5.1 hands non-text media types (application/vnd.github.sha) back as bytes.
+        if ($content -is [byte[]]) { $content = [System.Text.Encoding]::ASCII.GetString($content) }
+        return $content
+    }
+    function Save-GitHubArchive($url, $token, $outFile) {
+        # GitHub answers with a redirect to codeload.github.com carrying its own temporary access: follow it by
+        # hand, without our token (Windows PowerShell 5.1 forwarded it and got a 404).
+        $request = [System.Net.HttpWebRequest]::Create($url)
+        $request.AllowAutoRedirect = $false
+        $request.UserAgent = 'neolab-update'
+        if ($token) { $request.Headers['Authorization'] = "Bearer $token" }
+        $response = $request.GetResponse()
+        $location = $response.Headers['Location']
+        if (-not $location) {   # served directly
+            $file = [System.IO.File]::Create($outFile)
+            try { $response.GetResponseStream().CopyTo($file) } finally { $file.Close(); $response.Close() }
+            return
+        }
+        $response.Close()
+        $client = New-Object System.Net.WebClient
+        $client.Headers['User-Agent'] = 'neolab-update'
+        $client.DownloadFile($location, $outFile)
+    }
+    $api = "https://api.github.com/repos/$Repo"
+    $token = Read-Token
+    $latest = $null
+    for ($try = 0; $try -lt 2 -and -not $latest; $try++) {
+        try {
+            $latest = ([string](Get-GitHub "$api/commits/$Branch" $token $null 'application/vnd.github.sha')).Trim()
+        } catch {
+            $code = 0
+            if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode }
+            if ($code -notin 401, 403, 404) { Fail "GitHub injoignable ($($_.Exception.Message))." }
+            if ($Quiet) { Fail "accès GitHub refusé : lancer mettre_a_jour_windows.bat à la main pour donner un jeton." }
+            if ($try -gt 0) { Fail "jeton refusé par GitHub (dépôt $Repo) : vérifier ses droits, puis relancer." }
+            Write-Host "`nDépôt privé : jeton GitHub en lecture seule nécessaire (une seule fois)." -ForegroundColor Yellow
+            Write-Host "  github.com > Settings > Developer settings > Fine-grained tokens > Generate new token"
+            Write-Host "  Repository access : Only select repositories > $Repo ; Permissions > Contents : Read-only"
+            $secure = Read-Host "Coller le jeton (il ne s'affiche pas)" -AsSecureString
+            $secure | ConvertFrom-SecureString | Set-Content $tokenFile
+            $token = Read-Token
+        }
+    }
+    if ($latest -notmatch '^[0-9a-f]{40}$') { Fail "version GitHub illisible ($latest)." }
+    if ($current -eq $latest) {
+        Say "Déjà à jour ($($latest.Substring(0, 7)))." Green
+        if (-not $Quiet -and -not $Auto) { Write-Host "Pour une mise à jour automatique à chaque session : mettre_a_jour_windows.bat -Auto" }
+        exit 0
+    }
+    # Never go back: an old copy of this script once fetched an older branch and its migrations removed links.
+    if ($current -match '^[0-9a-f]{40}$') {
+        $status = $null
+        try { $status = (Get-GitHub "$api/compare/$current...$latest" $token $null 'application/vnd.github+json' | ConvertFrom-Json).status }
+        catch { Say "comparaison des versions impossible ($($_.Exception.Message)) : mise à jour faite quand même." Yellow }
+        if ($status -in 'behind', 'diverged') {
+            Fail ("la branche $Branch ($($latest.Substring(0, 7))) n'est pas plus récente que le code du conteneur " +
+                  "($($current.Substring(0, 7))) : rien n'est changé. Branche à suivre : mcp-neolab.")
+        }
+    }
+    Say "Mise à jour : $(if ($current) { $current.Substring(0, 7) } else { 'version d''installation' }) -> $($latest.Substring(0, 7))"
 
-# --- Download, copy into the container, apply
-$work = Join-Path $env:TEMP ("neolab-maj-" + $latest.Substring(0, 12))
-Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force $work | Out-Null
-$archive = Join-Path $work 'code.tar.gz'
-try { Save-GitHubArchive "$api/tarball/$latest" $token $archive }
-catch { Fail "téléchargement du code impossible ($($_.Exception.Message))." }
-# Windows' own tar: launched from Git Bash, Git's tar comes first in PATH and reads "C:\..." as a remote host.
-$tar = Join-Path $env:SystemRoot 'System32\tar.exe'
-if (-not (Test-Path $tar)) { $tar = 'tar.exe' }
-& $tar -xzf $archive -C $work
-$source = Get-ChildItem $work -Directory | Select-Object -First 1
-if ($LASTEXITCODE -ne 0 -or -not $source -or -not (Test-Path (Join-Path $source.FullName 'docker\allinone\neolab-update'))) {
-    Fail "archive du code incomplète."
+    # --- Download, copy into the container, apply
+    $work = Join-Path $env:TEMP ("neolab-maj-" + $latest.Substring(0, 12))
+    Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force $work | Out-Null
+    $archive = Join-Path $work 'code.tar.gz'
+    try { Save-GitHubArchive "$api/tarball/$latest" $token $archive }
+    catch { Fail "téléchargement du code impossible ($($_.Exception.Message))." }
+    # Windows' own tar: launched from Git Bash, Git's tar comes first in PATH and reads "C:\..." as a remote host.
+    $tar = Join-Path $env:SystemRoot 'System32\tar.exe'
+    if (-not (Test-Path $tar)) { $tar = 'tar.exe' }
+    & $tar -xzf $archive -C $work
+    $source = Get-ChildItem $work -Directory | Select-Object -First 1
+    if ($LASTEXITCODE -ne 0 -or -not $source -or -not (Test-Path (Join-Path $source.FullName 'docker\allinone\neolab-update'))) {
+        Fail "archive du code incomplète."
+    }
 }
 & $docker cp "$($source.FullName)\." "${container}:/opt/neolab/IDEA/" *> $null
 if ($LASTEXITCODE -ne 0) { Fail "copie du code dans le conteneur impossible." }
@@ -173,6 +213,7 @@ New-Item -ItemType Directory -Force $travail | Out-Null
 # This script and its companions in this folder are replaced by the new ones, so an old copy never lingers;
 # the maintenance skill goes to Claude Code if it is installed.
 foreach ($name in 'update_warehouse_windows.ps1', 'update_warehouse_windows.bat', 'publish_prebuilt_image.ps1',
+                  'publish_code_image.ps1',
                   'connect_assistants_windows.ps1', 'connect_assistants_windows.bat') {
     $fresh = Join-Path $source.FullName "scripts\$name"
     $mine = Join-Path $PSScriptRoot $name

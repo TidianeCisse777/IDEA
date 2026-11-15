@@ -89,12 +89,29 @@ if ($LASTEXITCODE -ne 0) { Fail "la base ne démarre pas : « docker logs $conta
 $check = (& $docker exec $container neolab-check 2>&1) -join "`n"
 if ($check -notmatch 'PASS') { Write-Host $check; Fail "le serveur MCP ne répond pas (message ci-dessus)." }
 Write-Host "base prête, serveur MCP : PASS"
+# Latest code (small package :code, a few MB): an installation is up to date even when the image with data
+# is older. The update script ships next to this installer.
+$updater = Join-Path $PSScriptRoot 'update_warehouse_windows.ps1'
+$codeUpdated = $false
+if (Test-Path $updater) {
+    Write-Host "dernière version du code…"
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $updater -Source registry
+    $codeUpdated = ($LASTEXITCODE -eq 0)
+    if (-not $codeUpdated) { Write-Host "code non mis à jour pour l'instant : relancer plus tard update_warehouse_windows.bat (Documents\neolab)." -ForegroundColor Yellow }
+}
 
 Step "5/5 Assistants et mise à jour"
 $tools = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'neolab'
 New-Item -ItemType Directory -Force $tools | Out-Null
 foreach ($name in 'connect_assistants_windows.ps1', 'connect_assistants_windows.bat', 'update_warehouse_windows.ps1', 'update_warehouse_windows.bat') {
     & $docker cp "${container}:/opt/neolab/IDEA/scripts/$name" (Join-Path $tools $name) *> $null
+}
+# Without the code update, the image's copies may predate the registry source: keep the installer's own.
+if (-not $codeUpdated) {
+    foreach ($name in 'update_warehouse_windows.ps1', 'update_warehouse_windows.bat') {
+        $mine = Join-Path $PSScriptRoot $name
+        if (Test-Path $mine) { Copy-Item $mine (Join-Path $tools $name) -Force }
+    }
 }
 $connect = Join-Path $tools 'connect_assistants_windows.ps1'
 if (-not (Test-Path $connect)) { Fail "script de branchement absent de l'image : demander une image plus récente." }

@@ -76,6 +76,23 @@ MSYS_NO_PATHCONV=1 docker exec neolab-warehouse neolab-load-ctd
 
 Succès : « [neolab] CTD RELIÉES ». Revérifier ensuite `neolab-status` et `neolab-check`.
 
+## Publier le code pour les collègues (rapide, quelques Mo)
+
+Pour qu'une correction arrive chez les collègues sans republier l'image : après une mise à jour réussie de ce PC
+(code poussé sur mcp-neolab par le développeur), depuis le dépôt IDEA (git nécessaire) :
+
+```
+powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\<nom>\IDEA\scripts\publish_code_image.ps1"
+```
+
+- Succès : « PUBLIÉ : ghcr.io/…/neolab-warehouse:code (xxxxxxx) ». Même paquet privé que l'image : les collègues
+  y ont déjà accès, avec leur jeton read:packages, sans accès au dépôt.
+- Chez un collègue : Windows `update_warehouse_windows.bat` (dossier Documents\neolab), Mac et Linux
+  `bash ~/neolab/update_warehouse.sh`. L'installeur applique aussi ce code juste après l'installation.
+- Jamais de retour en arrière : le paquet liste les versions antérieures (`.neolab_commits`); un conteneur plus
+  récent que le code publié est laissé tel quel.
+- Republier la grosse image seulement pour de nouvelles données, pas pour une correction de code.
+
 ## Publier l'image pour les collègues
 
 Prérequis, dans l'ordre : mise à jour réussie, `neolab-check` PASS, liens CTD présents des deux côtés, environ
