@@ -6,14 +6,14 @@
 #     powershell -ExecutionPolicy Bypass -File mettre_a_jour_windows.ps1 -Auto      # + à chaque ouverture de session
 #     powershell -ExecutionPolicy Bypass -File mettre_a_jour_windows.ps1 -NoAuto    # retirer l'automatique
 #
-# Deux sources du code (-Source auto par défaut : github si un jeton de dépôt est enregistré, sinon registry) :
+# Deux sources du code (-From auto par défaut : github si un jeton de dépôt est enregistré, sinon registry) :
 #  - registry : le petit paquet « code seul » (étiquette :code, quelques Mo) publié à côté de l'image, avec la
 #    connexion read:packages faite à l'installation; aucun accès au dépôt n'est nécessaire (collègues);
 #  - github : le dépôt privé, avec un jeton GitHub en lecture seule (fine-grained, « Contents: Read-only » sur ce
 #    dépôt) demandé une fois, puis gardé chiffré pour cet utilisateur Windows (DPAPI) dans %LOCALAPPDATA%\neolab.
 param([switch]$Auto, [switch]$NoAuto, [switch]$Quiet,
       [string]$Repo = 'TidianeCisse777/IDEA', [string]$Branch = 'mcp-neolab',
-      [ValidateSet('auto', 'github', 'registry')][string]$Source = 'auto',
+      [ValidateSet('auto', 'github', 'registry')][string]$From = 'auto',   # not $Source: same variable as $source
       [string]$CodeImage = 'ghcr.io/tidianecisse777/neolab-warehouse:code')
 $ErrorActionPreference = 'Continue'
 $container = 'neolab-warehouse'
@@ -73,9 +73,9 @@ do {
 } while ($waited -lt 180)
 if ($LASTEXITCODE -ne 0) { Fail "la base du conteneur ne répond pas." }
 
-if ($Source -eq 'auto') { $Source = if (Test-Path $tokenFile) { 'github' } else { 'registry' } }
+if ($From -eq 'auto') { $From = if (Test-Path $tokenFile) { 'github' } else { 'registry' } }
 $current = ((& $docker exec $container sh -c 'cat /opt/neolab/version 2>/dev/null') | Out-String).Trim()
-if ($Source -eq 'registry') {
+if ($From -eq 'registry') {
     # --- Code from the private package (tag :code, a few MB), with the read:packages login of the installation
     & $docker pull $CodeImage *> $null
     if ($LASTEXITCODE -ne 0) {

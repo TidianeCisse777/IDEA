@@ -95,7 +95,7 @@ $updater = Join-Path $PSScriptRoot 'update_warehouse_windows.ps1'
 $codeUpdated = $false
 if (Test-Path $updater) {
     Write-Host "dernière version du code…"
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $updater -Source registry
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $updater -From registry
     $codeUpdated = ($LASTEXITCODE -eq 0)
     if (-not $codeUpdated) { Write-Host "code non mis à jour pour l'instant : relancer plus tard update_warehouse_windows.bat (Documents\neolab)." -ForegroundColor Yellow }
 }

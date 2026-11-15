@@ -4,6 +4,37 @@
 
 **Dernière mise à jour :** 14 novembre 2026
 
+### 14 novembre 2026 — Paquet « code seul » pour mettre à jour les collègues
+
+- But : faire arriver une correction de code chez les collègues sans republier l'image de 9 Go et sans leur donner
+  accès au dépôt.
+- Paquet `ghcr.io/tidianecisse777/neolab-warehouse:code` (et `:code-<version>`), dans le même paquet privé que l'image,
+  donc lisible avec le jeton read:packages des collègues. Il est publié par `scripts/publish_code_image.ps1` à partir de
+  `origin/mcp-neolab` (`git archive` : fichiers suivis seulement, jamais `data/`). Il contient `/IDEA`, l'étiquette
+  `neolab.commit` et `.neolab_commits` (versions antérieures de la branche), qui interdit tout retour en arrière.
+- Mises à jour :
+  - `update_warehouse_windows.ps1 -From auto|github|registry` : `github` s'il existe un jeton de dépôt, sinon
+    `registry` ;
+  - nouveau `update_warehouse.sh` pour Mac et Linux, compatible bash 3.2 ;
+  - les installeurs appliquent le dernier code juste après l'installation et laissent le script de mise à jour dans
+    `Documents
+eolab` ou `~/neolab`.
+- Bugs trouvés par les essais réels, tous corrigés avant les collègues :
+  1. `git archive` suit `core.autocrlf` sous Windows : le paquet sortait en CRLF (`set: pipefail: invalid option
+     name`). Il est désormais publié avec `-c core.autocrlf=false`. Publication et mises à jour refusent un paquet en
+     CRLF **avant** toute copie. Le premier essai avait écrasé le code du conteneur sans toucher à la base
+     (`neolab-check` PASS) ; il a été réparé par le paquet suivant.
+  2. Windows PowerShell 5.1 retire les guillemets intérieurs d'un modèle Go : l'étiquette est maintenant lue en JSON.
+  3. PowerShell ne distingue pas `$Source` (le paramètre) de `$source` (le dossier du code). L'affectation était
+     refusée, ce qui aurait aussi cassé la mise à jour par GitHub. Le paramètre s'appelle désormais `-From`.
+- Essais réels de bout en bout sur ce PC :
+  - Mac et Linux (`update_warehouse.sh` lancé depuis un conteneur Linux) : `2695ed8 → 085a4e2`, puis « Déjà à
+    jour », PASS ;
+  - Windows (copie du script dans un dossier de collègue, `-From registry`) : `085a4e2 → 73715d5`, puis « Déjà à
+    jour », PASS ;
+  - le paquet contient 1 024 versions antérieures, aucun CR, aucun `data/`.
+- Tests : 224 réussis.
+
 ### 14 novembre 2026 — Image des collègues republiée (code 2695ed8)
 
 - Place : le cache de construction (3,96 Go) et une copie locale inutilisée de l'ancienne image publiée (14,8 Go,

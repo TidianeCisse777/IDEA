@@ -76,8 +76,10 @@ class CodePackage(unittest.TestCase):
 
     def test_windows_update_uses_the_package_without_repository_token(self):
         script = text('scripts', 'update_warehouse_windows.ps1')
-        self.assertIn("[ValidateSet('auto', 'github', 'registry')][string]$Source = 'auto'", script)
-        self.assertIn("if (Test-Path $tokenFile) { 'github' } else { 'registry' }", script)
+        self.assertIn("[ValidateSet('auto', 'github', 'registry')][string]$From = 'auto'", script)
+        # PowerShell variables ignore case: a $Source parameter would be the script's $source folder.
+        self.assertNotRegex(script, r'(?i)\[string\]\$source\b')
+        self.assertIn("$From = if (Test-Path $tokenFile) { 'github' } else { 'registry' }", script)
         self.assertIn("neolab-warehouse:code", script)
         # PowerShell 5.1 strips inner quotes of native arguments: no quoted Go template here.
         self.assertIn("-f '{{json .Config.Labels}}'", script)
@@ -105,7 +107,7 @@ class CodePackage(unittest.TestCase):
 
     def test_installers_apply_latest_code_and_leave_the_updater(self):
         windows = text('scripts', 'install_from_registry_windows.ps1')
-        self.assertIn("-File $updater -Source registry", windows)
+        self.assertIn("-File $updater -From registry", windows)
         mac = text('scripts', 'install_from_registry.sh')
         self.assertIn('bash "$here/update_warehouse.sh"', mac)
         self.assertIn('$HOME/neolab/update_warehouse.sh', mac)
