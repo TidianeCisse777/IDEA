@@ -34,8 +34,18 @@
      projet LOKI 11469 : 292 objets y ont une aire source négative. Reproduit avec `lecture_mcp`. Une aire négative
      donne désormais une taille NULL (inconnue) dans `explore.ecotaxa_objects` et `explore.uvp_object_sizes`, et
      l'aire brute est conservée. Ajout de `tests/test_object_size_guard.py`.
-  2. Règle d'interprétation : « facteur » et « hypothèse » sont interdits. À un « pourquoi », l'agent donne les
-     mesures et renvoie aux chercheurs, sans rapprocher les variables ni discuter d'un lien possible.
+  2. Pas de règle au cas par cas : les ajouts de mots interdits (« facteur », « hypothèse ») et la consigne de
+     comportement « copépodes » de `e1f8b2a` sont retirés. Pour les FILET, seul le fait reste documenté : copépodes
+     seulement, catégories larges dont l'exclusivité n'est pas documentée.
+  3. Analyse des deux écarts. Test 5 : la règle était une liste de mots, donc respectée à la lettre, et rien ne
+     définissait le rôle de l'agent. Test 4 : le principe commun aux cas existants (validé et prédit, profondeur et
+     débitmètre, stade agrégé, filet et UVP) n'était écrit nulle part, et le protocole de test interdisait de
+     poser une question. Trois PRINCIPES (RÔLE, COMBINAISON, CHOIX) sont définis une seule fois
+     (`warehouse_connect.PRINCIPLES`). Ils sont servis dans les instructions du serveur MCP, les fichiers du
+     dossier de travail et la fiche overview, et ils priment sur les listes de cas, qui n'en sont que des
+     exemples (test `Principles`). 219 tests réussis.
+  4. Méthode : une règle ne change que si un principe manque, jamais pour faire passer un test. Revérifier ensuite
+     avec de nouvelles questions, et laisser l'agent demander une précision.
 - Constats non corrigés :
   - 18 projets sur 23 dépassent les 30 s pour un simple `count(*)` par projet sur `ecotaxa_objects`, et
     `ORDER BY ecotaxa_object_id` est lent alors que `ORDER BY ecotaxa_object_id + 0` répond en 1 s : performance à

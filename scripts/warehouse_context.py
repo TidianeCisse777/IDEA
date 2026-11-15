@@ -150,14 +150,12 @@ GRAPHICS = view(
     'valeurs ni d’intervalles. Séries de statuts différents dans une même figure : distinguées par le trait (STATUT : '
     'confirmed #007B88 plein, exploratory #B87514 tirets, uncertain #737C86 pointillés) avec un libellé dans la légende, '
     'jamais par la couleur seule. '
-    'AUCUNE INTERPRÉTATION SCIENTIFIQUE, ni dans la figure, ni dans la légende, ni dans la réponse : ni biologique, ni '
+    'AUCUNE INTERPRÉTATION SCIENTIFIQUE (principe RÔLE des instructions du serveur), ni dans la figure, ni dans la légende, ni dans la réponse : ni biologique, ni '
     'écologique, ni physique, ni causale. Décrire ce qui est mesuré (valeurs, profondeurs, dates, écarts, comptes), '
     'jamais ce que cela signifie. Permis : « abondance maximale à 10-20 m (4 997 ind./m³) », « fluorescence maximale à '
-    '52 m ». Interdit : « domine », « bloom », « efflorescence », « thermocline », « halocline », « maximum de chlorophylle '
-    'profond », « migration », « favorise », « explique », « suggère », « lié à », « en raison de », « typique de », « facteur », « hypothèse ». Si '
-    'l’utilisateur demande une interprétation ou un « pourquoi », donner les mesures et dire que l’interprétation revient aux '
-    'chercheurs, sans plus : ne pas rapprocher deux variables (« les deux sont fortes au-dessus de 60 m »), ni chercher '
-    'd’autres variables qui changent au même endroit, ni discuter ce qui permettrait ou non de tester un lien. '
+    '52 m ». Exemples de mots qui signalent une interprétation : « domine », « bloom », « efflorescence », « thermocline », « halocline », « maximum de chlorophylle '
+    'profond », « migration », « favorise », « explique », « suggère », « lié à », « en raison de », « typique de ». Si '
+    'l’utilisateur demande une interprétation, donner les mesures et dire que l’interprétation revient aux chercheurs. '
     'Aucun ajustement statistique ni intervalle d’incertitude inventé. Signaler toute limite restante. '
     'LIVRABLES (enregistrer() pour PNG, SVG et PDF) : tous dans le dossier de la question, analyses/AAAA-MM-JJ_sujet-court/ '
     '(RANGEMENT des instructions du serveur : rien à la racine du dossier de travail), avec des chemins relatifs (jamais un chemin absolu '
@@ -450,7 +448,7 @@ TOW_AND_COMMENTS = (
     'COMMENTAIRES (sample_comments, analysis_comments, et dans filet_samples deployment_comments, net_comments) : les '
     'lire avant de comparer, ils signalent des échantillons non quantitatifs, des filets regroupés ou échappés. ')
 COPEPODS_ONLY = (
-    'COPÉPODES SEULEMENT : les abondances et biomasses FILET viennent de l’export « copepod abund&biomass » (copépodites, adultes et nauplii; document filet-copepod-metadata); aucun autre groupe du zooplancton : nommer « copépodes » dans les titres, axes et légendes, jamais « abondance » ou « zooplancton » seuls. taxon_id est le libellé source : des catégories larges (Copepoda, Calanus spp., Cyclopoida) coexistent avec des espèces du même groupe et leur exclusivité n’est pas documentée; un total de plusieurs taxon_id le dit dans les LIMITES, avec la liste des taxon_id sommés. ')
+    'COPÉPODES SEULEMENT : les abondances et biomasses FILET viennent de l’export « copepod abund&biomass » (copépodites, adultes et nauplii; document filet-copepod-metadata); aucun autre groupe du zooplancton. taxon_id est le libellé source : des catégories larges (Copepoda, Calanus spp., Cyclopoida, Calanus glacialis/finmarchicus) coexistent avec des espèces du même groupe; leur exclusivité n’est pas documentée. ')
 for _name in ('filet_data', 'filet_totals', 'filet_samples', 'filet_deployments'):
     VIEWS[_name]['caveats'] = TOW_AND_COMMENTS + VIEWS[_name]['caveats']
 VIEWS['filet_data']['caveats'] = (

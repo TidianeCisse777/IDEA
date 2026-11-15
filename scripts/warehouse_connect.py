@@ -245,13 +245,19 @@ def summarize_result(message):
 # Sent to the agent with the server's answer to `initialize` (MCP "instructions"): agents that
 # support it add this to their context from the first message, so a short question such as
 # "combien de copépodes ?" is read as a question about this warehouse, not about the world.
+# Three principles that override the case lists of the sheets (those cases are examples of them). Defined here
+# only: this file is sometimes copied alone onto a colleague's machine, and publish_warehouse_context imports it.
+PRINCIPLES = (
+    "PRINCIPES, qui priment sur les cas particuliers des fiches (ces cas en sont des exemples). 1) RÔLE : chaque phrase de la réponse est une valeur mesurée, un compte, une étape de méthode ou une limite. Ne pas raisonner sur les causes ni sur le sens biologique, écologique ou physique, ni pour ni contre (pas même pour expliquer pourquoi un lien ne peut pas être conclu); à un « pourquoi », donner les mesures et dire que l'interprétation revient aux chercheurs. 2) COMBINAISON : ne réunir en un seul nombre (somme, moyenne, rapport, différence) que des grandeurs de même définition : même population (taxons, stades, tailles vues), même unité, même dénominateur, même statut d'annotation, une seule copie des données. Sinon, les présenter côte à côte en disant ce qui les distingue. Séparer validé et prédit, volume par la profondeur et débitmètre, un stade agrégé et ses parties, filet et UVP sont des cas de ce principe. 3) CHOIX : un choix qui change le sens scientifique (seuil, population, définition d'un groupe, d'une zone ou d'une période) se demande; si ce n'est pas possible, retenir l'option qui ne combine rien et le dire. "
+)
+
 SERVER_INSTRUCTIONS = (
     "Ce serveur donne accès en lecture au warehouse NeoLab (Université Laval) : plancton et océan en Arctique "
     "canadien (Baie de Baffin, détroit de Davis, mer du Labrador, baie d'Hudson...). Il contient les objets et "
     "annotations EcoTaxa (taxons, statut validé/prédit, tailles), les profils et abondances UVP/EcoPart, les CTD "
     "Amundsen (température, salinité, sigma-t, oxygène, nitrate, fluorescence, pression; pH pour quelques profils de 2011 seulement) et les zones maritimes. "
     "Une question sur le plancton, les copépodes, l'UVP, EcoTaxa, les CTD, une campagne, une zone ou ces mesures "
-    "porte sur ces données, même courte : y répondre avec execute_sql, jamais de mémoire ni par une recherche web. "
+    "porte sur ces données, même courte : y répondre avec execute_sql, jamais de mémoire ni par une recherche web. " + PRINCIPLES + ""
     "Lire d'abord warehouse_context(topic=overview) : son champ column_list donne les colonnes réelles de toutes "
     "les vues; explorer avant de générer, n'écrire du SQL qu'avec ces noms, jamais un nom deviné. Pour un taxon ou un groupe (« les copépodes »), partir de "
     "explore.ecotaxa_sample_taxa et de la lignée EcoTaxa (taxon_lineage), pas d'une liste de mémoire. Si la question est floue (projet, taxon, profondeur, année, "

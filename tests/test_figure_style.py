@@ -70,8 +70,20 @@ class FiletIsCopepods(unittest.TestCase):
         from warehouse_context import VIEWS
         for name in ('filet_data', 'filet_totals'):
             text = ' '.join(VIEWS[name].values())
-            for part in ('COPÉPODES SEULEMENT', 'nauplii', 'liste des taxon_id sommés', 'Calanus spp.'):
+            for part in ('COPÉPODES SEULEMENT', 'nauplii', 'exclusivité n’est pas documentée', 'Calanus spp.'):
                 self.assertIn(part, text)
+
+
+class Principles(unittest.TestCase):
+    def test_three_principles_served_once_everywhere(self):
+        import warehouse_connect
+        from publish_warehouse_context import OVERVIEW
+        p = warehouse_connect.PRINCIPLES
+        for name in ('1) RÔLE', '2) COMBINAISON', '3) CHOIX', 'ni pour ni contre', 'même définition',
+                     'priment sur les cas particuliers'):
+            self.assertIn(name, p)
+        for text in (warehouse_connect.SERVER_INSTRUCTIONS, warehouse_connect.workspace_text(), OVERVIEW):
+            self.assertEqual(text.count(p), 1)
 
 
 class AnswerRules(unittest.TestCase):
@@ -81,10 +93,9 @@ class AnswerRules(unittest.TestCase):
         self.assertIn('AUCUNE INTERPRÉTATION SCIENTIFIQUE', text)
         for scope in ('ni dans la figure, ni dans la légende, ni dans la réponse', 'ni physique, ni causale'):
             self.assertIn(scope, text)
-        for word in ('« thermocline »', '« domine »', '« explique »', '« suggère »', '« facteur »', '« hypothèse »'):
+        for word in ('« thermocline »', '« domine »', '« explique »', '« suggère »'):
             self.assertIn(word, text)                                # listed as forbidden
-        self.assertIn('Aucune interprétation scientifique', OVERVIEW)
-        self.assertIn('ne pas rapprocher deux variables', text)
+        self.assertIn('principe RÔLE', text)                           # the sheet points to the principle
 
     def test_data_method_and_limits_template(self):
         text = ' '.join(GRAPHICS.values())
