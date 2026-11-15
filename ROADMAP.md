@@ -17,8 +17,11 @@
 - Les copies locales de l'image publiée ont été supprimées ensuite (elles restent dans le registre).
 - Effet : les collègues qui installent maintenant reçoivent la version corrigée, avec le même zip et le même jeton.
   Aucun n'avait installé l'ancienne version.
+- Compactage de `docker_data.vhdx` : Docker Desktop arrêté, `wsl --shutdown`, puis `diskpart compact vdisk` en
+  administrateur. Le disque passe de 39,2 Go à 14,7 Go et `C:` de 8,8 Go à 33,3 Go libres. Après redémarrage, le
+  conteneur est healthy, `neolab-check` PASS, code `2695ed8`.
 - Reste à faire : un artefact « code seul » pour mettre à jour sans republier ni donner accès au dépôt, avec un
-  script de mise à jour Mac ; le compactage de `docker_data.vhdx` en administrateur.
+  script de mise à jour Mac.
 
 ### 14 novembre 2026 — Mise à jour 2695ed8 appliquée, vérification de l'installeur des collègues
 
