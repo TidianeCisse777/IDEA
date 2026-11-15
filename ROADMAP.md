@@ -4,6 +4,29 @@
 
 **Dernière mise à jour :** 14 novembre 2026
 
+### 14 novembre 2026 — Mise à jour 2695ed8 appliquée, vérification de l'installeur des collègues
+
+- Mise à jour : « À JOUR (2695ed8) », `neolab-check` PASS. La base sert les PRINCIPES (fiche overview) et la
+  COUVERTURE FILET (fiche filet_totals), et `~/neolab-travail/CLAUDE.md` contient les principes. La lecture de
+  `esd_um` sur le projet 11469 répond (24 566 tailles NULL, aucune erreur).
+- Installeur (zip `neolab_installeur.zip` du Bureau) :
+  - les scripts sont identiques octet pour octet à la version committée sur GitHub ;
+  - `install_from_registry.sh` a des fins de ligne LF, donc il est utilisable sur Mac ; seule la copie de travail
+    Windows est en CRLF ;
+  - le `.ps1` a un BOM UTF-8 (lecture correcte par PowerShell 5.1) et le `.bat` est en CRLF ;
+  - syntaxe vérifiée : parseur PowerShell sans erreur, `bash -n` OK ; la construction `||` sous `set -e` de la ligne
+    24 a été testée dans un bash réel, sans arrêt intempestif ;
+  - logique relue (Docker, pull puis login, conteneur, attente de la base, `neolab-check`, branchement). Pas
+    d'exécution de bout en bout sur ce poste : le conteneur et le volume portent le même nom que ceux en service.
+- Écarts pour les collègues :
+  1. L'image publiée (`:donnees`, 12 novembre) précède les corrections des 13 et 14 novembre : positions CTD citées,
+     abondance, principes, rangement, correctif 11469.
+  2. La mise à jour Windows demande un jeton GitHub en lecture sur le dépôt privé `TidianeCisse777/IDEA` : un collègue
+     qui n'a que l'accès au paquet ne peut pas mettre à jour.
+  3. Mac et Linux n'ont aucun script de mise à jour.
+  4. Republier l'image corrigerait les trois écarts d'un coup, mais il faut environ 25 Go libres et il n'y en a que
+     8,5 (relevé du 14 novembre).
+
 ### 14 novembre 2026 — Re-test avec les trois principes (6 agents neufs, questions nouvelles)
 
 - Montage : un dossier de travail de test généré par le code `90b20a9`, dont le `CLAUDE.md` contient les PRINCIPES.
