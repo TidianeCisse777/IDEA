@@ -115,7 +115,7 @@ SELECT
     -- ESD: source value, else the diameter of the disc of the same area (its definition). Most recent UVP6
     -- projects give the area but no ESD (11.4 M objects, 11 November 2026). Where both exist they are equal
     -- (ratio 1.0000 on 200 000 objects). Without this, a filter on esd_um silently dropped those projects.
-    (coalesce(o.esd_px, 2 * sqrt(o.area_px / pi())) * ac.pixel_size_mm * 1000) AS esd_um,
+    (coalesce(o.esd_px, CASE WHEN o.area_px >= 0 THEN 2 * sqrt(o.area_px / pi()) END) * ac.pixel_size_mm * 1000) AS esd_um,
     (o.major_px * ac.pixel_size_mm * 1000) AS major_um,
     (o.minor_px * ac.pixel_size_mm * 1000) AS minor_um,
     (o.area_px * (ac.pixel_size_mm * 1000) ^ 2) AS area_um2,

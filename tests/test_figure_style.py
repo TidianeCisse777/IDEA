@@ -81,9 +81,10 @@ class AnswerRules(unittest.TestCase):
         self.assertIn('AUCUNE INTERPRÉTATION SCIENTIFIQUE', text)
         for scope in ('ni dans la figure, ni dans la légende, ni dans la réponse', 'ni physique, ni causale'):
             self.assertIn(scope, text)
-        for word in ('« thermocline »', '« domine »', '« explique »', '« suggère »'):
+        for word in ('« thermocline »', '« domine »', '« explique »', '« suggère »', '« facteur »', '« hypothèse »'):
             self.assertIn(word, text)                                # listed as forbidden
         self.assertIn('Aucune interprétation scientifique', OVERVIEW)
+        self.assertIn('ne pas rapprocher deux variables', text)
 
     def test_data_method_and_limits_template(self):
         text = ' '.join(GRAPHICS.values())

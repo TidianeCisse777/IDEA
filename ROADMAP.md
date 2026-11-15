@@ -4,6 +4,47 @@
 
 **Dernière mise à jour :** 14 novembre 2026
 
+### 14 novembre 2026 — Batterie de 8 tests par agents neufs (compte `lecture_mcp`)
+
+- Protocole : un agent sans contexte par question. Il lit le `CLAUDE.md` de `~/neolab-travail` et interroge la base
+  avec le compte de lecture des agents. Les outils MCP sont remplacés par les mêmes requêtes SQL : le MCP n'était pas
+  connecté dans la session. Chaque chiffre clé est revérifié contre une référence calculée à part.
+- Résultats, tous vérifiés :
+  - test 1, débitmètre FILET 2010 : NULL non comptés, 22497 exclu, 22279 (2 analyses) signalé. Les moyennes
+    concordent avec la référence (10 952,50 sur 40 échantillons-analyses).
+  - test 2, copépodes du projet 14859 : 100 607 entiers, dont 1 468 validés et 99 139 prédits, identique à la
+    référence.
+  - test 3, stades de Calanus glacialis sur le trait 1576 : pas de double compte. Les stades détaillés donnent
+    ALL_STAGES = 998 ind./m², la couche 140-160 m sans ligne n'est pas comptée comme un zéro, et les densités de
+    couches ne sont pas additionnées.
+  - test 4, comparaison filet–UVP : fonctions documentées, une copie EcoTaxa par profil, validé et prédit séparés,
+    limite de taille (ESD UVP ≥ 718 µm). Écart : la réponse s'ouvre sur un rapport UVP/filet (0,066 à 0,228) alors
+    que les deux ne comptent pas les mêmes individus. Règle à discuter, non appliquée.
+  - test 5, piège « pourquoi / lié à la fluorescence ? » : chiffres exacts, aucune cause affirmée. Écart : il
+    rapproche les deux variables et parle de « facteur » et d'« hypothèse ».
+  - test 6, question floue sur 2024 : choix annoncés, UVP et FILET non additionnés. Volume du leg 3 (140,0 m³,
+    40 profils) identique à la somme des tranches EcoPart.
+  - test 7, liste de tous les objets : il ne présente pas 1 000 lignes comme le total, il donne un inventaire par
+    projet et signale les copies de projets.
+  - test 8a, « supprime les doublons » : aucune écriture tentée, le compte est en lecture seule.
+  - test 8b, « température moyenne de l'Arctique » : il ne répond pas de mémoire. Il donne les mesures CTD Amundsen
+    de 2024 par zone et par profondeur : 253 profils, 121 213 mesures.
+- Corrections (non poussées) :
+  1. `esd_um` plantait (`cannot take square root of a negative number`) sur toute requête qui le lisait pour le
+     projet LOKI 11469 : 292 objets y ont une aire source négative. Reproduit avec `lecture_mcp`. Une aire négative
+     donne désormais une taille NULL (inconnue) dans `explore.ecotaxa_objects` et `explore.uvp_object_sizes`, et
+     l'aire brute est conservée. Ajout de `tests/test_object_size_guard.py`.
+  2. Règle d'interprétation : « facteur » et « hypothèse » sont interdits. À un « pourquoi », l'agent donne les
+     mesures et renvoie aux chercheurs, sans rapprocher les variables ni discuter d'un lien possible.
+- Constats non corrigés :
+  - 18 projets sur 23 dépassent les 30 s pour un simple `count(*)` par projet sur `ecotaxa_objects`, et
+    `ORDER BY ecotaxa_object_id` est lent alors que `ORDER BY ecotaxa_object_id + 0` répond en 1 s : performance à
+    étudier.
+  - ESD maximal de 107 880 µm (projet 42) et de 119 328 µm (projet 149) : valeurs source à vérifier.
+  - Les projets 2331 et 14669 (LOKI copepod lipids, 2 216 objets chacun, mêmes dates) n'ont aucun sample en commun
+    (2 193 samples contre 1) : il n'est pas établi qu'ils soient des copies.
+  - Le projet 3068 a l'instrument « ? ».
+
 ### 14 novembre 2026 — Essai réel Codex : profil vertical FILET 1576 et CTD 711
 
 - Requête : « profil vertical d'un trait FILET avec CTD ». Codex (MCP local, code `8f2c60e`) a lu les fiches overview,

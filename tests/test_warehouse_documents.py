@@ -88,7 +88,7 @@ class FiletUvpCompareTests(unittest.TestCase):
     def test_missing_size_is_unknown_not_zero(self):
         # Amundsen 2023 gives no ESD: the size filter must not turn those objects into « 0 too small ».
         for name in ('warehouse_ecotaxa_object_size_migration.sql', 'warehouse_explore_catalog_migration.sql'):
-            self.assertIn('coalesce(o.esd_px, 2 * sqrt(o.area_px / pi()))',
+            self.assertIn('coalesce(o.esd_px, CASE WHEN o.area_px >= 0 THEN 2 * sqrt(o.area_px / pi()) END)',
                           (ROOT / 'sql' / name).read_text(encoding='utf-8'), name)
         self.assertIn('uvp_n_objects_no_size', self.SQL)
         self.assertIn('CASE WHEN coalesce(o.no_size, 0) = 0 THEN', self.SQL)

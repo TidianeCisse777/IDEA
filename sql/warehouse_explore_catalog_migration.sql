@@ -93,7 +93,7 @@ SELECT
     o.area_px, o.esd_px, o.major_px, o.minor_px,
     a.pixel_size_mm,
     -- source ESD, else the diameter of the disc of the same area (see explore.uvp_object_sizes)
-    (coalesce(o.esd_px, 2 * sqrt(o.area_px / pi())) * a.pixel_size_mm * 1000) AS esd_um,
+    (coalesce(o.esd_px, CASE WHEN o.area_px >= 0 THEN 2 * sqrt(o.area_px / pi()) END) * a.pixel_size_mm * 1000) AS esd_um,
     (o.major_px * a.pixel_size_mm * 1000) AS major_um,
     (o.minor_px * a.pixel_size_mm * 1000) AS minor_um,
     (o.area_px * (a.pixel_size_mm * 1000) ^ 2) AS area_um2,
