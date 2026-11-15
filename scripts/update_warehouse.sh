@@ -52,6 +52,10 @@ docker rm -f "$TMP_CONTAINER" >/dev/null 2>&1 || true
 docker create --name "$TMP_CONTAINER" "$CODE_IMAGE" >/dev/null
 docker cp "$TMP_CONTAINER:/IDEA" "$work/IDEA" >/dev/null
 [ -f "$work/IDEA/docker/allinone/neolab-update" ] || fail "code publié incomplet."
+# Shell scripts with Windows line endings would break the container: refuse before copying anything.
+if grep -q "$(printf '\r')" "$work/IDEA/docker/allinone/neolab-update"; then
+    fail "code publié abîmé (fins de ligne Windows) : rien n'est changé, prévenir la personne qui l'a publié."
+fi
 if [[ "$current" =~ ^[0-9a-f]{40}$ ]] && ! grep -qx "$current" "$work/IDEA/.neolab_commits"; then
     fail "le code publié (${latest:0:7}) n'est pas plus récent que celui du conteneur (${current:0:7}) : rien n'est changé."
 fi

@@ -100,6 +100,10 @@ if ($Source -eq 'registry') {
     if ($copied -ne 0 -or -not $source -or -not (Test-Path (Join-Path $source.FullName 'docker\allinone\neolab-update'))) {
         Fail "code publié incomplet."
     }
+    # Shell scripts with Windows line endings would break the container: refuse before copying anything.
+    if (([IO.File]::ReadAllBytes((Join-Path $source.FullName 'docker\allinone\neolab-update'))) -contains 13) {
+        Fail "code publié abîmé (fins de ligne Windows) : rien n'est changé, prévenir la personne qui l'a publié."
+    }
     # Never go back: the published code lists every earlier version of its branch (.neolab_commits).
     $earlier = Get-Content (Join-Path $source.FullName '.neolab_commits') -ErrorAction SilentlyContinue
     if ($current -match '^[0-9a-f]{40}$' -and $earlier -notcontains $current) {

@@ -67,7 +67,7 @@ class CodePackage(unittest.TestCase):
 
     def test_publisher_ships_tracked_code_its_history_and_version_label(self):
         script = text('scripts', 'publish_code_image.ps1')
-        self.assertIn('git -C $root archive', script)          # tracked files only: never ignored data/
+        self.assertIn('git -C $root -c core.autocrlf=false archive', script)   # tracked files only, LF
         self.assertIn('rev-parse "origin/$Branch"', script)     # what is on GitHub, not local work
         self.assertIn('.neolab_commits', script)
         self.assertIn('LABEL neolab.commit=$sha', script)
@@ -90,6 +90,15 @@ class CodePackage(unittest.TestCase):
         self.assertNotIn('declare -A', script)
         self.assertNotIn('mapfile', script)
         self.assertNotIn(b'\r\n', subprocess_free_bytes('scripts', 'update_warehouse.sh'))
+
+    def test_no_windows_line_endings_reach_the_container(self):
+        # git archive follows core.autocrlf: on Windows it wrote CRLF and broke neolab-update (14 November 2026).
+        self.assertIn('-c core.autocrlf=false archive', text('scripts', 'publish_code_image.ps1'))
+        self.assertIn('$probe -contains 13', text('scripts', 'publish_code_image.ps1'))
+        windows = text('scripts', 'update_warehouse_windows.ps1')
+        self.assertLess(windows.index('-contains 13'), windows.index('docker cp "$($source.FullName)'))
+        mac = text('scripts', 'update_warehouse.sh')
+        self.assertLess(mac.index("printf '\\r'"), mac.index('docker cp "$work/IDEA/."'))
 
     def test_installers_apply_latest_code_and_leave_the_updater(self):
         windows = text('scripts', 'install_from_registry_windows.ps1')

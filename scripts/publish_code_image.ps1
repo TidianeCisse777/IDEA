@@ -24,7 +24,9 @@ $short = $sha.Substring(0, 7)
 $work = Join-Path $env:TEMP "neolab-code-$short"
 Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $work | Out-Null
-& git -C $root archive --format=tar --prefix=IDEA/ -o (Join-Path $work 'code.tar') $sha
+# core.autocrlf=false: on Windows, git archive otherwise writes CRLF and the container's shell scripts break
+# ("set: pipefail: invalid option name", seen on 14 November 2026).
+& git -C $root -c core.autocrlf=false archive --format=tar --prefix=IDEA/ -o (Join-Path $work 'code.tar') $sha
 if ($LASTEXITCODE -ne 0) { Fail "extraction du code impossible (git archive)." }
 # Windows' own tar: from Git Bash, Git's tar reads "C:\..." as a remote host.
 $tar = Join-Path $env:SystemRoot 'System32\tar.exe'
@@ -32,6 +34,8 @@ if (-not (Test-Path $tar)) { $tar = 'tar.exe' }
 & $tar -xf (Join-Path $work 'code.tar') -C $work
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path (Join-Path $work 'IDEA\docker\allinone\neolab-update'))) { Fail "code extrait incomplet." }
 Remove-Item (Join-Path $work 'code.tar')
+$probe = [IO.File]::ReadAllBytes((Join-Path $work 'IDEA\docker\allinone\neolab-update'))
+if ($probe -contains 13) { Fail "fins de ligne Windows dans le code extrait : rien n'est publié." }
 # Every version of the branch up to this one, LF line endings (read by bash on Mac and by PowerShell).
 $commits = (& git -C $root rev-list $sha) -join "`n"
 [IO.File]::WriteAllText((Join-Path $work 'IDEA\.neolab_commits'), "$commits`n", (New-Object Text.UTF8Encoding $false))
