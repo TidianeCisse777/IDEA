@@ -34,6 +34,10 @@ eolab` ou `~/neolab`.
     jour », PASS ;
   - le paquet contient 1 024 versions antérieures, aucun CR, aucun `data/`.
 - Tests : 224 réussis.
+- Clôture : paquet `:code` republié en `3f43a94` et appliqué sur ce PC par le registre (« À JOUR (3f43a94) »,
+  PASS). Nouveau zip `neolab_installeur.zip` sur le Bureau : installeurs, scripts de mise à jour Windows et Mac,
+  tous tirés de HEAD (`.sh` sans CR, `.ps1` avec BOM, `.bat` en CRLF). Le LISEZMOI explique la mise à jour.
+  À renvoyer aux collègues : l'ancien zip ne sait pas appliquer le paquet de code.
 
 ### 14 novembre 2026 — Image des collègues republiée (code 2695ed8)
 
