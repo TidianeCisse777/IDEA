@@ -4,6 +4,22 @@
 
 **Dernière mise à jour :** 14 novembre 2026
 
+### 14 novembre 2026 — Image des collègues republiée (code 2695ed8)
+
+- Place : le cache de construction (3,96 Go) et une copie locale inutilisée de l'ancienne image publiée (14,8 Go,
+  téléchargée par erreur) ont été supprimés, ce qui fait passer le disque Docker de 24,6 Go utilisés à 13,7 Go. Aucun
+  volume, conteneur ni image en service n'a été touché. `docker_data.vhdx` reste à 39,2 Go et `C:` à 8,5 Go libres,
+  faute de compactage (droits administrateur nécessaires).
+- Publication : `publish_prebuilt_image.ps1 -Owner TidianeCisse777`, avec la veille bloquée, de 22:33 à 23:15.
+  Résultat « PUBLIÉE », digest `sha256:b91471b9…`. Les étiquettes `:20261114-donnees` et `:donnees` ont le même
+  manifeste. L'image contient le code `2695ed8`, les principes dans `CLAUDE.md` et la base. La base locale a
+  redémarré et `neolab-check` est PASS.
+- Les copies locales de l'image publiée ont été supprimées ensuite (elles restent dans le registre).
+- Effet : les collègues qui installent maintenant reçoivent la version corrigée, avec le même zip et le même jeton.
+  Aucun n'avait installé l'ancienne version.
+- Reste à faire : un artefact « code seul » pour mettre à jour sans republier ni donner accès au dépôt, avec un
+  script de mise à jour Mac ; le compactage de `docker_data.vhdx` en administrateur.
+
 ### 14 novembre 2026 — Mise à jour 2695ed8 appliquée, vérification de l'installeur des collègues
 
 - Mise à jour : « À JOUR (2695ed8) », `neolab-check` PASS. La base sert les PRINCIPES (fiche overview) et la
