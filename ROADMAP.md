@@ -2,7 +2,30 @@
 
 **Période proposée :** du 14 septembre au 30 novembre 2026
 
-**Dernière mise à jour :** 14 novembre 2026
+**Dernière mise à jour :** 15 novembre 2026
+
+### 15 novembre 2026 — Fiabilité de l'agent : notes en tête des résultats SQL
+
+- Constat (base locale à jour `2aa8ce0`, compte `lecture_mcp`, par le vrai relais `neolab-mcp`) : un résultat de plus
+  de 1 000 lignes n'est signalé par DbHub qu'à la toute fin d'un JSON de 76 Ko (`"count": 1000, "truncated": true`).
+  Un agent dont le client coupe les longues sorties ne le voit pas, ou lit `count` comme un total.
+- Relais (`warehouse_connect.with_result_notes`) : la réponse à `run_sql_query` commence par un champ `notes`, puis
+  le JSON compact (même contenu ; 76 Ko → 38 Ko pour 1 000 lignes). Notes, toutes calculées sur le résultat ou la
+  requête :
+  - TRONQUÉ : les N premières lignes seulement, `count` n'est pas un compte ;
+  - 0 ligne : un vide ne prouve pas l'absence (valeurs des filtres, périmètre, fiche) ;
+  - LIMIT sans ORDER BY : lignes quelconques ;
+  - valeurs NULL par colonne (n/N), inconnu ≠ zéro ;
+  - rappel d'un piège des fiches vu dans le SQL (rappel à vérifier, jamais un refus) : somme sur `filet_data` sans
+    filtre `is_aggregate`/`stage` (vérifié : stades détaillés et NAUPLIUS, COPEPODID, ALL_STAGES y coexistent ;
+    déploiement 1576, échantillon 8884 : 10 523 ind./m³ en sommant tout) ; total `ecotaxa_*` sans
+    `ecotaxa_project_id` (copies UVP5HD 149, 20880, 20890, 13224 ; pas de rappel pour un filtre d'instrument non
+    UVP) ; `COALESCE(mesure, 0)` ; profondeur et débitmètre combinés.
+- Instructions du serveur : une phrase demande de vérifier ces notes avant d'écrire un chiffre.
+- Vérifié : sur le vrai relais (tronqué, vide, FILET 1576, total copépodes tous projets) ; aucune fausse alerte
+  sur les 68 requêtes de référence de la batterie (une évitée, LOKI) ; déploiement rejoué « À JOUR » ; 234 tests.
+- Limites : rappels par motifs dans le texte SQL, ils peuvent manquer un piège écrit autrement ou en signaler un
+  déjà traité ; leur effet sur les réponses n'est pas encore mesuré par une batterie d'agents.
 
 ### 14 novembre 2026 — Paquet « code seul » pour mettre à jour les collègues
 

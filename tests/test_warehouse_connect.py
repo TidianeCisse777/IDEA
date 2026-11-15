@@ -536,6 +536,111 @@ class ErrorHintTests(unittest.TestCase):
             self.assertIs(self.module.with_hint(line), line)
 
 
+class ResultNoteTests(unittest.TestCase):
+    """An SQL answer starts with the facts that limit what may be said from it (DbHub said « truncated » only at
+    the end of a 76 kB JSON, after « "count": 1000 »), in compact JSON; other answers pass unchanged."""
+
+    def answer(self, rows, truncated=False, call_id=7, statements=None):
+        statements = statements or [{'sql': 'SELECT 1', 'rows': rows, 'count': len(rows), 'truncated': truncated}]
+        text = json.dumps({'success': True, 'data': {'statements': statements, 'source_id': 'neolab'}}, indent=2)
+        return json.dumps({'jsonrpc': '2.0', 'id': call_id, 'result': {'content': [{'type': 'text', 'text': text}]}}).encode() + b'\n'
+
+    def payload(self, line):
+        return json.loads(json.loads(line)['result']['content'][0]['text'])
+
+    def test_truncated_result_says_so_first_and_count_is_not_a_total(self):
+        line = connect.with_result_notes(self.answer([{'n': i} for i in range(1000)], truncated=True), {7})
+        payload = self.payload(line)
+        self.assertEqual(list(payload)[0], 'notes')
+        self.assertIn('TRONQUÉ : seules les 1000 premières lignes', payload['notes'][0])
+        self.assertIn("n'est pas un compte", payload['notes'][0])
+        self.assertEqual(len(payload['data']['statements'][0]['rows']), 1000)   # data untouched
+        self.assertNotIn('\n  ', json.loads(line)['result']['content'][0]['text'])    # compact
+        self.assertLess(len(line), len(self.answer([{'n': i} for i in range(1000)], truncated=True)) * 0.6)
+
+    def test_empty_result_is_not_an_absence(self):
+        notes = self.payload(connect.with_result_notes(self.answer([]), {7}))['notes']
+        self.assertEqual(len(notes), 1)
+        self.assertIn("ne prouve pas l'absence", notes[0])
+
+    def test_nulls_are_counted_per_column_never_as_zero(self):
+        rows = [{'depth_m': 5, 'value': None}, {'depth_m': None, 'value': None}, {'depth_m': 10, 'value': 0}]
+        notes = self.payload(connect.with_result_notes(self.answer(rows), {7}))['notes']
+        self.assertEqual(len(notes), 1)
+        self.assertIn('value 2/3', notes[0])
+        self.assertIn('depth_m 1/3', notes[0])
+        self.assertIn("Inconnu n'est pas zéro", notes[0])
+
+    def test_limit_without_order_by_is_not_the_first_rows(self):
+        def notes(sql):
+            statement = [{'sql': sql, 'rows': [{'n': 1}], 'count': 1}]
+            return self.payload(connect.with_result_notes(self.answer([], statements=statement), {7})).get('notes', [])
+        self.assertEqual(notes('SELECT n FROM t LIMIT 10'), [connect.NOTE_UNORDERED])
+        self.assertEqual(notes('SELECT n FROM t ORDER BY n\n LIMIT 10'), [])
+        self.assertEqual(notes('SELECT count(*) AS unlimited FROM t'), [])
+
+    def test_clean_result_has_no_notes_and_several_statements_are_numbered(self):
+        payload = self.payload(connect.with_result_notes(self.answer([{'n': 1}]), {7}))
+        self.assertNotIn('notes', payload)
+        two = [{'sql': 'a', 'rows': [{'n': 1}], 'count': 1}, {'sql': 'b', 'rows': [], 'count': 0}]
+        notes = self.payload(connect.with_result_notes(self.answer([], statements=two), {7}))['notes']
+        self.assertEqual(len(notes), 1)
+        self.assertTrue(notes[0].startswith('requête 2 : 0 ligne'))
+
+    def test_only_pending_sql_calls_are_touched_and_each_once(self):
+        ids = {7}
+        line = self.answer([])
+        self.assertIs(connect.with_result_notes(line, {8}), line)            # another tool's answer
+        self.assertIsNot(connect.with_result_notes(line, ids), line)
+        self.assertEqual(ids, set())
+        self.assertIs(connect.with_result_notes(line, ids), line)
+        error = b'{"jsonrpc": "2.0", "id": 9, "error": {"code": -32000, "message": "x"}}\n'
+        ids = {9}
+        self.assertIs(connect.with_result_notes(error, ids), error)
+        self.assertEqual(ids, set())
+        failed = json.dumps({'jsonrpc': '2.0', 'id': 3, 'result': {'isError': True, 'content': [
+            {'type': 'text', 'text': '{"success": false, "error": "boom"}'}]}}).encode() + b'\n'
+        self.assertIs(connect.with_result_notes(failed, {3}), failed)
+
+    def test_traps_of_the_sheets_are_recalled_from_the_sql(self):
+        def traps(sql):
+            return [note.split(' ')[0] for note in connect.sql_trap_notes(sql)]
+        # filet_data mixes detailed stages and their aggregates (NAUPLIUS, COPEPODID, ALL_STAGES)
+        self.assertEqual(traps('SELECT sample_id, sum(abundance_depth_ind_m3) FROM explore.filet_data GROUP BY 1'), ['filet_data'])
+        self.assertEqual(traps('SELECT sum(abundance_depth_ind_m3) FROM explore.filet_data WHERE NOT is_aggregate'), [])
+        self.assertEqual(traps('SELECT sum(abundance_depth_ind_m3) FROM explore.filet_totals'), [])
+        # EcoTaxa copies of the UVP GreenEdge projects
+        self.assertEqual(traps("SELECT sum(n_objects) FROM explore.ecotaxa_sample_taxa WHERE 'Copepoda' = ANY(taxon_lineage)"), ['Les'])
+        self.assertEqual(traps('SELECT ecotaxa_project_id, sum(n_objects) FROM explore.ecotaxa_sample_taxa GROUP BY 1'), [])
+        self.assertEqual(traps("SELECT count(major_um) FROM explore.ecotaxa_objects WHERE instrument ILIKE 'loki'"), [])
+        self.assertEqual(traps("SELECT count(*) FROM explore.ecotaxa_objects WHERE instrument ILIKE 'uvp%'"), ['Les'])
+        self.assertEqual(traps('SELECT count(*) FROM explore.uvp_objects'), [])
+        # unknown made zero, two denominators
+        self.assertEqual(traps('SELECT avg(COALESCE(m.value, 0)) FROM explore.uvp_ctd m'), ['COALESCE(mesure,'])
+        self.assertEqual(traps('SELECT coalesce(n, 0) FROM x'), [])
+        self.assertEqual(traps('SELECT COALESCE(abundance_depth_ind_m3, abundance_flowmeter_ind_m3) FROM explore.filet_totals'), ['Volume'])
+        self.assertEqual(traps('SELECT abundance_depth_ind_m3 - abundance_flowmeter_ind_m3 FROM explore.filet_totals'), ['Volume'])
+        self.assertEqual(traps('SELECT abundance_depth_ind_m3, abundance_flowmeter_ind_m3 FROM explore.filet_totals'), [])
+        self.assertEqual(traps(''), [])
+
+    def test_reference_queries_of_the_agent_battery_raise_no_false_alarm(self):
+        queries = []
+        for path in sorted((ROOT / 'tests' / 'agent_battery').glob('*.json')):
+            for case in json.loads(path.read_text(encoding='utf-8'))['cases']:
+                for turn in case.get('turns') or [case]:
+                    sql = turn.get('expect_sql') or []
+                    queries += [sql] if isinstance(sql, str) else sql
+        self.assertGreater(len(queries), 50)
+        self.assertEqual([q for q in queries if connect.sql_trap_notes(q)], [])
+
+    def test_sql_calls_are_recognised_under_both_names(self):
+        for name in ('run_sql_query', 'execute_sql'):
+            raw = json.dumps({'jsonrpc': '2.0', 'id': 4, 'method': 'tools/call', 'params': {'name': name}}).encode()
+            self.assertEqual(connect.sql_call_id(raw), 4)
+        other = json.dumps({'jsonrpc': '2.0', 'id': 5, 'method': 'tools/call', 'params': {'name': 'read_data_guide'}})
+        self.assertIsNone(connect.sql_call_id(other.encode()))
+
+
 class RegisterAppsTests(unittest.TestCase):
     """The installer registers the server in the desktop applications found, without touching the rest
     of their configuration (Codex CLI/extension/app, VS Code Copilot, Claude Desktop; Windows via wsl.exe)."""

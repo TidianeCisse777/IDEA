@@ -262,6 +262,9 @@ SERVER_INSTRUCTIONS = (
     "les vues; explorer avant de générer, n'écrire du SQL qu'avec ces noms, jamais un nom deviné. Pour un taxon ou un groupe (« les copépodes »), partir de "
     "explore.ecotaxa_sample_taxa et de la lignée EcoTaxa (taxon_lineage), pas d'une liste de mémoire. Si la question est floue (projet, taxon, profondeur, année, "
     "objets validés ou non), dire le choix retenu ou demander une précision. "
+    "Les notes en tête d'un résultat SQL (tronqué, vide, LIMIT sans ORDER BY, valeurs NULL, piège des fiches vu dans "
+    "la requête) disent ce que ce résultat permet d'affirmer : les vérifier avant d'écrire un chiffre (corriger la "
+    "requête si le piège s'applique) et reporter les limites. "
     "Pour une question de méthode, de protocole, d'unité ou de provenance, chercher aussi dans les documents écrits "
     "(search_documents, puis read_document) et citer le document et la section. "
     "RANGEMENT des fichiers produits : rien à la racine du dossier de travail. Chaque question a son dossier analyses/AAAA-MM-JJ_sujet-court/ (date du jour, minuscules et tirets, ex. analyses/2026-11-14_profil-filet-1576/), créé avant le premier fichier; tout ce que la question produit y va (scripts .py, requêtes .sql, CSV, JSON, figures PNG/SVG/PDF, provenance.md), sans sous-dossier inutile. Une suite de la même question réutilise son dossier; une nouvelle question en crée un autre. Fichiers intermédiaires supprimés à la fin. Donner le chemin du dossier dans la réponse. Commencer la réponse par une courte section « Raisonnement » "
@@ -394,6 +397,131 @@ def with_hint(line):
     return (json.dumps(message, ensure_ascii=False) + '\n').encode('utf-8') if changed else line
 
 
+# Facts about an SQL result that change what may be said from it, put first in the answer: DbHub only says
+# « "count": 1000, "truncated": true » at the very end of a long JSON, which agents misread as the total or never
+# see when their client cuts long tool outputs.
+NOTE_TRUNCATED = ("TRONQUÉ : seules les {count} premières lignes sont renvoyées (limite du serveur); ce n'est pas le "
+                  "total et « count » n'est pas un compte. Pour un total, agréger dans la requête (count, sum); pour "
+                  "toutes les lignes, paginer (ORDER BY une clé, LIMIT, OFFSET).")
+NOTE_EMPTY = ("0 ligne. Un résultat vide ne prouve pas l'absence de données : vérifier les valeurs exactes des filtres "
+              "(SELECT DISTINCT sur la colonne), le périmètre de lecture (catalogue.my_access) et la fiche de la vue; "
+              "le dire dans la réponse.")
+NOTE_UNORDERED = ("LIMIT sans ORDER BY : lignes quelconques (ni les premières, ni un échantillon représentatif), "
+                  "et une autre exécution peut en donner d'autres. Ajouter ORDER BY pour un choix défini.")
+NOTE_NULLS = ("Valeurs inconnues (NULL) : {columns}. Inconnu n'est pas zéro : ne pas les compter comme 0 ni les "
+              "remplacer; les citer en limite.")
+
+
+# Traps of the sheets, recalled when the SQL itself shows one (a reminder to check, never a refusal: the query
+# may handle the trap in a way these patterns do not see).
+_AGGREGATE = re.compile(r'\b(sum|avg|count)\s*\(', re.I)
+_COPY_VIEWS = re.compile(r'\becotaxa_(objects|samples|sample_taxa|projects)\b', re.I)
+_MEASURE = r'[\w.]*(abundance|biomass|value|concentration|vol|volume|esd|area)[\w]*'
+_ZERO_FOR_UNKNOWN = re.compile(r'\b(coalesce|ifnull|nvl)\s*\(\s*' + _MEASURE + r'\s*,\s*0+(\.0*)?\s*\)', re.I)
+_TWO_DENOMINATORS = re.compile(r'\b(coalesce|greatest|least)\s*\([^()]*(depth[\w]*[^()]*flowmeter|flowmeter[\w]*[^()]*depth)'
+                               r'|(depth\w*_ind_m3|depth\w*_m3)\s*[-+/*]\s*[\w.]*flowmeter|flowmeter\w*_m3\s*[-+/*]\s*[\w.]*depth', re.I)
+SQL_TRAPS = (
+    (lambda sql: re.search(r'\bfilet_data\b', sql, re.I) and _AGGREGATE.search(sql)
+     and not re.search(r'\b(is_aggregate|stage)\b', sql, re.I),
+     "filet_data contient à la fois les stades détaillés et leurs agrégats (NAUPLIUS, COPEPODID, ALL_STAGES; "
+     "is_aggregate) : une somme ou un compte sans filtre sur is_aggregate ou stage les additionne."),
+    (lambda sql: _COPY_VIEWS.search(sql) and _AGGREGATE.search(sql)
+     and not re.search(r'\becotaxa_project_id\b', sql, re.I)
+     and not re.search(r"\binstrument\s*(=|i?like)\s*'(?!%?uvp)", sql, re.I),   # the copies are UVP5HD projects
+     "Les vues ecotaxa_* gardent les copies de projets UVP (149, 20880, 20890, 13224 : mêmes images) : un total sans "
+     "filtre ni regroupement par ecotaxa_project_id compte des objets deux fois."),
+    (lambda sql: _ZERO_FOR_UNKNOWN.search(sql),
+     "COALESCE(mesure, 0) change une valeur inconnue en zéro : ne le faire que si l'absence de ligne veut vraiment "
+     "dire zéro (un compte d'objets dans une tranche échantillonnée), jamais pour une mesure manquante."),
+    (lambda sql: _TWO_DENOMINATORS.search(sql),
+     "Volume par la profondeur et volume du débitmètre sont deux dénominateurs : ne pas les combiner dans une "
+     "même valeur (COALESCE, moyenne, différence); les présenter côte à côte."),
+)
+
+
+def sql_trap_notes(sql):
+    return [note for applies, note in SQL_TRAPS if sql and applies(sql)]
+
+
+def result_notes(statement):
+    """Notes for one DbHub statement result {'rows': [...], 'count': n, 'truncated': bool}."""
+    rows = statement.get('rows')
+    if not isinstance(rows, list):
+        return []
+    notes = []
+    if statement.get('truncated') is True:
+        notes.append(NOTE_TRUNCATED.format(count=len(rows)))
+    if not rows:
+        notes.append(NOTE_EMPTY)
+    sql = statement.get('sql') if isinstance(statement.get('sql'), str) else ''
+    if rows and re.search(r'\blimit\b', sql, re.I) and not re.search(r'\border\s+by\b', sql, re.I):
+        notes.append(NOTE_UNORDERED)
+    notes += sql_trap_notes(sql)
+    nulls = {}
+    for row in rows:
+        if isinstance(row, dict):
+            for column, value in row.items():
+                if value is None:
+                    nulls[column] = nulls.get(column, 0) + 1
+    if nulls:
+        listed = ', '.join('%s %d/%d' % (column, n, len(rows)) for column, n in list(nulls.items())[:8])
+        more = len(nulls) - 8
+        notes.append(NOTE_NULLS.format(columns=listed + (' (+%d colonnes)' % more if more > 0 else '')))
+    return notes
+
+
+def with_result_notes(line, sql_ids):
+    """Answer to a run_sql_query call (its id in sql_ids): notes first, compact JSON; any other line unchanged."""
+    if not sql_ids or b'"id"' not in line:
+        return line
+    try:
+        message = json.loads(line)
+        if message.get('id') not in sql_ids or 'method' in message:
+            return line
+        sql_ids.discard(message['id'])
+        result = message.get('result')
+        if not isinstance(result, dict) or result.get('isError'):
+            return line
+        changed = False
+        for item in result.get('content') or []:
+            text = item.get('text') if isinstance(item, dict) else None
+            if not isinstance(text, str):
+                continue
+            try:
+                payload = json.loads(text)
+            except ValueError:
+                continue
+            if not isinstance(payload, dict) or payload.get('success') is False:
+                continue
+            statements = (payload.get('data') or {}).get('statements')
+            if not isinstance(statements, list):
+                continue
+            notes = []
+            for index, statement in enumerate(statements):
+                prefix = 'requête %d : ' % (index + 1) if len(statements) > 1 else ''
+                notes += [prefix + note for note in result_notes(statement if isinstance(statement, dict) else {})]
+            if notes:
+                payload = {'notes': notes, **payload}
+            item['text'] = json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
+            changed = True
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return line
+    return (json.dumps(message, ensure_ascii=False) + '\n').encode('utf-8') if changed else line
+
+
+def sql_call_id(raw):
+    """Id of a tools/call to run_sql_query (public or DbHub name), else None."""
+    if b'tools/call' not in raw:
+        return None
+    try:
+        message = json.loads(raw)
+        if message.get('method') == 'tools/call' and (message.get('params') or {}).get('name') in ('run_sql_query', 'execute_sql'):
+            return message.get('id')
+    except (ValueError, AttributeError):
+        pass
+    return None
+
+
 def relay(command, values, trace_file=None):
     """Pass MCP messages between the agent (stdin/stdout) and DbHub, line by line
     (MCP stdio messages are newline-delimited JSON). DbHub starts once the agent's
@@ -437,11 +565,16 @@ def relay(command, values, trace_file=None):
                 pending[message['id']] = (time.monotonic(), message['method'], params.get('name'),
                                           params.get('arguments'))
 
+    sql_ids = set()  # run_sql_query calls waiting for their answer (set.add/discard are atomic)
+
     def to_server():
         line = first
         try:
             while line:
                 note_request(line)
+                call_id = sql_call_id(line)
+                if call_id is not None:
+                    sql_ids.add(call_id)
                 child.stdin.write(with_internal_name(line))
                 child.stdin.flush()
                 line = sys.stdin.buffer.readline()
@@ -460,7 +593,7 @@ def relay(command, values, trace_file=None):
             if updated is not line:
                 initialize_id = None  # done: only the answer to initialize carries the instructions
             line = updated
-        line = with_public_names(with_titles(with_hint(line)))
+        line = with_public_names(with_titles(with_result_notes(with_hint(line), sql_ids)))
         sys.stdout.buffer.write(line)
         sys.stdout.buffer.flush()
         if trace_file is None:
