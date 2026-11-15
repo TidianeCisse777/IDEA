@@ -85,7 +85,9 @@ if ($Source -eq 'registry') {
         }
         Say "registre injoignable : dernière copie téléchargée du code utilisée." Yellow
     }
-    $latest = ((& $docker image inspect -f '{{index .Config.Labels "neolab.commit"}}' $CodeImage) | Out-String).Trim()
+    # Labels as JSON: Windows PowerShell 5.1 strips the inner quotes of a Go template ("neolab.commit").
+    $labels = ((& $docker image inspect -f '{{json .Config.Labels}}' $CodeImage) | Out-String) | ConvertFrom-Json
+    $latest = [string]$labels.'neolab.commit'
     if ($latest -notmatch '^[0-9a-f]{40}$') { Fail "version du code publié illisible ($latest)." }
     if ($current -eq $latest) { Say "Déjà à jour ($($latest.Substring(0, 7)))." Green; exit 0 }
     $work = Join-Path $env:TEMP ("neolab-maj-" + $latest.Substring(0, 12))

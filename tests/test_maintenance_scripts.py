@@ -79,6 +79,9 @@ class CodePackage(unittest.TestCase):
         self.assertIn("[ValidateSet('auto', 'github', 'registry')][string]$Source = 'auto'", script)
         self.assertIn("if (Test-Path $tokenFile) { 'github' } else { 'registry' }", script)
         self.assertIn("neolab-warehouse:code", script)
+        # PowerShell 5.1 strips inner quotes of native arguments: no quoted Go template here.
+        self.assertIn("-f '{{json .Config.Labels}}'", script)
+        self.assertNotIn('Labels "neolab.commit"', script)
         guard = script.index('$earlier -notcontains $current')
         self.assertLess(guard, script.index('docker cp "$($source.FullName)'))   # checked before any copy
 
