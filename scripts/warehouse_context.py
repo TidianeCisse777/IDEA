@@ -448,7 +448,7 @@ TOW_AND_COMMENTS = (
     'COMMENTAIRES (sample_comments, analysis_comments, et dans filet_samples deployment_comments, net_comments) : les '
     'lire avant de comparer, ils signalent des échantillons non quantitatifs, des filets regroupés ou échappés. ')
 COPEPODS_ONLY = (
-    'COPÉPODES SEULEMENT : les abondances et biomasses FILET viennent de l’export « copepod abund&biomass » (copépodites, adultes et nauplii; document filet-copepod-metadata); aucun autre groupe du zooplancton. taxon_id est le libellé source : des catégories larges (Copepoda, Calanus spp., Cyclopoida, Calanus glacialis/finmarchicus) coexistent avec des espèces du même groupe; leur exclusivité n’est pas documentée. ')
+    'COPÉPODES SEULEMENT : les abondances et biomasses FILET viennent de l’export « copepod abund&biomass » (copépodites, adultes et nauplii; document filet-copepod-metadata); aucun autre groupe du zooplancton. taxon_id est le libellé source : des catégories larges (Copepoda, Calanus spp., Cyclopoida, Calanus glacialis/finmarchicus) coexistent avec des espèces du même groupe; leur exclusivité n’est pas documentée. COUVERTURE : l’export d’abondances ne contient pas les analyses des contrats KEBABB (708) et DFO-D. Côté (381), exclues par le labo (document filet-copepod-metadata); 26 autres analyses déclarées n’y figurent pas (Student-L. Brunner 25, Student-Z. Garmirian 1), sans cause documentée (relevé du 14 novembre 2026, version 37). Un échantillon analysé sans ligne d’abondance n’est donc pas une absence de copépodes. ')
 for _name in ('filet_data', 'filet_totals', 'filet_samples', 'filet_deployments'):
     VIEWS[_name]['caveats'] = TOW_AND_COMMENTS + VIEWS[_name]['caveats']
 VIEWS['filet_data']['caveats'] = (

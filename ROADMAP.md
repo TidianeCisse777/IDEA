@@ -4,6 +4,34 @@
 
 **Dernière mise à jour :** 14 novembre 2026
 
+### 14 novembre 2026 — Re-test avec les trois principes (6 agents neufs, questions nouvelles)
+
+- Montage : un dossier de travail de test généré par le code `90b20a9`, dont le `CLAUDE.md` contient les PRINCIPES.
+  Les fiches de la base sont encore celles de `8f2c60e`. Les agents ont le droit de poser une question.
+- Résultats :
+  - re-test 4, filet–UVP : aucun rapport, aucune moyenne ni différence, valeurs côte à côte. Les chiffres sont
+    identiques au premier passage (station 133 : 420,9 / 502,2 au filet, 63,2 à l'UVP).
+  - re-test 5, « pourquoi / fluorescence » : chaque phrase est une valeur, une méthode ou une limite. Il ne rapproche
+    pas les variables et ne raisonne pas sur la cause. Valeurs par couche identiques à la vérification.
+  - nouveau, « moyenne débitmètre + profondeur, plus fiable » (trait 2250) : il refuse la moyenne parce que les
+    volumes diffèrent (240 / 202,2 m³), donne les valeurs côte à côte et demande lesquelles utiliser.
+  - nouveau, « gros copépodes à la station 133 » : il explore, puis demande la définition (taxon, stade, carbone ou
+    taille) et dit ce qu'il fera sans réponse.
+  - nouveau, « un seul chiffre pour Calanus en Baie de Baffin 2024, toutes sources » : il refuse de combiner filet et
+    UVP, donne les mesures côte à côte et demande la source et la définition de « total ».
+  - nouveau, « plus de copépodes la nuit en 2024 ? pourquoi ? » : pas de cause, renvoi aux chercheurs. Le jour et la
+    nuit sont définis par le code `sun_position` d'EcoTaxa, ce choix est annoncé, et 112 profils sur 228 n'ont pas de
+    code, ce qu'il signale. À surveiller : son constat « la nuit n'est pas plus élevée » s'appuie sur des
+    concentrations regroupées de profils aux profondeurs maximales différentes (médianes 445 m contre 348 m). Il le
+    dit et donne aussi les valeurs par couche. Aucune règle ajoutée.
+  - Cohérence entre agents : les totaux de copépodes par leg (70 924, 100 607, 32 598, 23 813) correspondent à ceux du
+    test 6, aux objets sans tranche près (4, 0, 2, 16).
+- Constat expliqué : des échantillons FILET analysés n'ont aucune abondance (relevé dans 4 tests). Sur 1 502 analyses
+  de la version 37, 396 ont des abondances. Le labo a exclu de l'export les contrats KEBABB (708) et DFO-D. Côté
+  (381), comme le dit la notice. 26 analyses restent sans cause documentée (Student-L. Brunner 25, Student-Z.
+  Garmirian 1). Ce fait est ajouté à la fiche FILET (rubrique COUVERTURE), sans consigne de comportement.
+- 219 tests réussis. Rien n'est poussé.
+
 ### 14 novembre 2026 — Batterie de 8 tests par agents neufs (compte `lecture_mcp`)
 
 - Protocole : un agent sans contexte par question. Il lit le `CLAUDE.md` de `~/neolab-travail` et interroge la base

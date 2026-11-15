@@ -70,7 +70,7 @@ class FiletIsCopepods(unittest.TestCase):
         from warehouse_context import VIEWS
         for name in ('filet_data', 'filet_totals'):
             text = ' '.join(VIEWS[name].values())
-            for part in ('COPÉPODES SEULEMENT', 'nauplii', 'exclusivité n’est pas documentée', 'Calanus spp.'):
+            for part in ('COPÉPODES SEULEMENT', 'nauplii', 'exclusivité n’est pas documentée', 'Calanus spp.', 'KEBABB'):
                 self.assertIn(part, text)
 
 
