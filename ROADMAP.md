@@ -27,6 +27,33 @@
 - Limites : rappels par motifs dans le texte SQL, ils peuvent manquer un piège écrit autrement ou en signaler un
   déjà traité ; leur effet sur les réponses n'est pas encore mesuré par une batterie d'agents.
 
+### 16 novembre 2026 — Batterie lot 2 : 14 conversations neuves, attendus fixés avant lancement
+
+- `tests/agent_battery/conversation_cases_lot2.json` (commit 0020fae, avant tout lancement) : 14 conversations,
+  35 tours, sur des sujets absents du lot 1. Mailles 200 et 50 µm sur la même couche (trait 838), biomasse
+  COPEPODID et nauplii sans biomasse, zones IHO et MEOW qui se recouvrent, volume UVP par tranche et deux politiques,
+  seuil de détection des tailles de particules, CTD moins profonde que l'UVP puis « pourquoi », effort contre
+  abondance, question floue, prédit compté comme validé, couples filet–UVP, accès limité à 2016. Les 35 requêtes
+  d'attendu tournent sans erreur. Le compte limité à 2016 voit 189 déploiements en 2016 et 0 en 2018 (essai MCP
+  avant lancement).
+- Résultat noté sans retouche des attendus : **14 sur 14**. 220 tours, 74 requêtes SQL, 24,22 $ au tarif API. Aucun
+  compte `battery_` restant.
+- Relecture des réponses, au-delà de la note :
+  - Bon : refuse d'additionner les deux mailles et l'agrégat avec ses stades ; union de zones 2 436 (et non 3 117) ;
+    moyenne pondérée par le volume (51,40 part./L) ; nauplii « NULL, inconnu, pas zéro » ; validé et prédit
+    gardés séparés ; « pourquoi » renvoyé aux chercheurs ; masqué ≠ absent. Figure du spectre propre : classes
+    sous le seuil non tracées, un 0 mesuré marqué à part, pas de double axe, un seul dossier `analyses/`.
+  - Imprécisions que la note ne voit pas :
+    - citation mal attribuée : « les agrégats sont la somme exacte de leurs parties » est donné comme venant de
+      `filet-organisation` §2, alors qu'il vient de `filet-uvp-comparaison` §6 ;
+    - stades : « le dictionnaire FILET du labo n'est pas chargé », alors que `filet-copepod-metadata` est chargé
+      (l'agent l'a cité au tour précédent) ;
+    - CTD et copépodes : en plus des valeurs et de ρ de Spearman (0,348 et 0,261, 35 tranches, sans test), une
+      phrase de lecture (« plus l'eau est chaude, plus l'abondance tend à être forte ») ;
+    - particules sous le seuil : sur demande expresse, un agent met des 0 dans un tableau affiché, chaque ligne
+      marquée « sous le seuil : oui » et sans moyenne ; l'agent de la figure, lui, refuse. Question laissée à
+      l'utilisateur (accepter un 0 signalé quand on le demande, ou refuser), sans règle ajoutée.
+
 ### 16 novembre 2026 — Batterie : cas à compte restreint en mode tout-en-un
 
 - `scripts/agent_battery.py --docker` : un cas avec `account` reçoit un compte temporaire créé dans le conteneur par
