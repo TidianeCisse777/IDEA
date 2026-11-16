@@ -4,29 +4,6 @@
 
 **Dernière mise à jour :** 15 novembre 2026
 
-### 15 novembre 2026 — Fiabilité de l'agent : notes en tête des résultats SQL
-
-- Constat (base locale à jour `2aa8ce0`, compte `lecture_mcp`, par le vrai relais `neolab-mcp`) : un résultat de plus
-  de 1 000 lignes n'est signalé par DbHub qu'à la toute fin d'un JSON de 76 Ko (`"count": 1000, "truncated": true`).
-  Un agent dont le client coupe les longues sorties ne le voit pas, ou lit `count` comme un total.
-- Relais (`warehouse_connect.with_result_notes`) : la réponse à `run_sql_query` commence par un champ `notes`, puis
-  le JSON compact (même contenu ; 76 Ko → 38 Ko pour 1 000 lignes). Notes, toutes calculées sur le résultat ou la
-  requête :
-  - TRONQUÉ : les N premières lignes seulement, `count` n'est pas un compte ;
-  - 0 ligne : un vide ne prouve pas l'absence (valeurs des filtres, périmètre, fiche) ;
-  - LIMIT sans ORDER BY : lignes quelconques ;
-  - valeurs NULL par colonne (n/N), inconnu ≠ zéro ;
-  - rappel d'un piège des fiches vu dans le SQL (rappel à vérifier, jamais un refus) : somme sur `filet_data` sans
-    filtre `is_aggregate`/`stage` (vérifié : stades détaillés et NAUPLIUS, COPEPODID, ALL_STAGES y coexistent ;
-    déploiement 1576, échantillon 8884 : 10 523 ind./m³ en sommant tout) ; total `ecotaxa_*` sans
-    `ecotaxa_project_id` (copies UVP5HD 149, 20880, 20890, 13224 ; pas de rappel pour un filtre d'instrument non
-    UVP) ; `COALESCE(mesure, 0)` ; profondeur et débitmètre combinés.
-- Instructions du serveur : une phrase demande de vérifier ces notes avant d'écrire un chiffre.
-- Vérifié : sur le vrai relais (tronqué, vide, FILET 1576, total copépodes tous projets) ; aucune fausse alerte
-  sur les 68 requêtes de référence de la batterie (une évitée, LOKI) ; déploiement rejoué « À JOUR » ; 234 tests.
-- Limites : rappels par motifs dans le texte SQL, ils peuvent manquer un piège écrit autrement ou en signaler un
-  déjà traité ; leur effet sur les réponses n'est pas encore mesuré par une batterie d'agents.
-
 ### 16 novembre 2026 — Fiche graphs : rubrique CLARTÉ et gabarit R
 
 - Revue des 33 figures produites par les agents (PDF hors dépôt : `~/neolab_agent_battery/revue_figures_20261116.pdf`).
@@ -59,6 +36,15 @@
   fonction) et `values = couleurs(...)` (couleurs nommées). Le test `CopiedAsIsInR` fixe ce point avec des données
   hors de l'ordre alphabétique (il est sauté si R est absent).
 - Tests : 226 réussis. La fiche n'atteint les agents qu'après un déploiement : poussée, puis mise à jour du conteneur.
+- Essai R de départ, avant le déploiement : un agent neuf, avec l'ancienne fiche sans gabarit R, a reçu la question
+  « En R avec ggplot2, fais-moi un profil vertical de température et de salinité de la CTD 711, propre et prêt à mettre
+  dans un rapport. » Résultat : 147 s, 27 tours, 1,13 $ au tarif API.
+  - Bon : figure propre en deux panneaux, axe des valeurs en haut, profondeur TEOS-10 (`gsw_z_from_p`) et pas la
+    pression, nombres à la française, PNG, SVG, PDF, CSV, script et provenance dans un seul dossier `analyses/`, et un
+    contrôle des totaux de l'extraction.
+  - Écarts : unité « PSU » pour la salinité pratique ; une couleur différente par panneau pour une seule série ;
+    latitude recopiée à la main ; style réécrit par l'agent au lieu d'être copié.
+  - Ce cas sera rejoué après le déploiement, pour comparer.
 
 ### 16 novembre 2026 — Batterie lot 2 : 14 conversations neuves, attendus fixés avant lancement
 
@@ -107,6 +93,29 @@
 - Limite : une batterie coupée en cours (arrêt de Docker ou de la session) peut laisser un compte `battery_…` ;
   vérifier avec `SELECT rolname FROM pg_roles WHERE rolname LIKE 'battery_%'`. Après la coupure du 16 novembre :
   aucun.
+
+### 15 novembre 2026 — Fiabilité de l'agent : notes en tête des résultats SQL
+
+- Constat (base locale à jour `2aa8ce0`, compte `lecture_mcp`, par le vrai relais `neolab-mcp`) : un résultat de plus
+  de 1 000 lignes n'est signalé par DbHub qu'à la toute fin d'un JSON de 76 Ko (`"count": 1000, "truncated": true`).
+  Un agent dont le client coupe les longues sorties ne le voit pas, ou lit `count` comme un total.
+- Relais (`warehouse_connect.with_result_notes`) : la réponse à `run_sql_query` commence par un champ `notes`, puis
+  le JSON compact (même contenu ; 76 Ko → 38 Ko pour 1 000 lignes). Notes, toutes calculées sur le résultat ou la
+  requête :
+  - TRONQUÉ : les N premières lignes seulement, `count` n'est pas un compte ;
+  - 0 ligne : un vide ne prouve pas l'absence (valeurs des filtres, périmètre, fiche) ;
+  - LIMIT sans ORDER BY : lignes quelconques ;
+  - valeurs NULL par colonne (n/N), inconnu ≠ zéro ;
+  - rappel d'un piège des fiches vu dans le SQL (rappel à vérifier, jamais un refus) : somme sur `filet_data` sans
+    filtre `is_aggregate`/`stage` (vérifié : stades détaillés et NAUPLIUS, COPEPODID, ALL_STAGES y coexistent ;
+    déploiement 1576, échantillon 8884 : 10 523 ind./m³ en sommant tout) ; total `ecotaxa_*` sans
+    `ecotaxa_project_id` (copies UVP5HD 149, 20880, 20890, 13224 ; pas de rappel pour un filtre d'instrument non
+    UVP) ; `COALESCE(mesure, 0)` ; profondeur et débitmètre combinés.
+- Instructions du serveur : une phrase demande de vérifier ces notes avant d'écrire un chiffre.
+- Vérifié : sur le vrai relais (tronqué, vide, FILET 1576, total copépodes tous projets) ; aucune fausse alerte
+  sur les 68 requêtes de référence de la batterie (une évitée, LOKI) ; déploiement rejoué « À JOUR » ; 234 tests.
+- Limites : rappels par motifs dans le texte SQL, ils peuvent manquer un piège écrit autrement ou en signaler un
+  déjà traité ; leur effet sur les réponses n'est pas encore mesuré par une batterie d'agents.
 
 ### 15 novembre 2026 — Catalogue de conversations multi-tours pour tester un agent
 
