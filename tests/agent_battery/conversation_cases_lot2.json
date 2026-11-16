@@ -1,0 +1,355 @@
+{
+ "description": "Lot 2 de conversations multi-tours (16 novembre 2026), sujets absents du lot 1 : mailles, biomasse et stades, zones qui se recouvrent, volumes et politiques UVP, seuil de détection des tailles, CTD moins profonde que l'UVP, effort d'échantillonnage, question floue, prédit compté validé, couples filet–UVP, accès par année. Attendus fixés avant tout lancement, non retouchés après.",
+ "cases": [
+  {
+   "id": "conv2_filet_mesh_838",
+   "theme": "filet, mailles",
+   "principle": "combinaison, choix",
+   "turns": [
+    {
+     "question": "Abondance d'Oithona similis au trait de filet 838 (2011) ?",
+     "expect_sql": "SELECT round(abundance_depth_ind_m3::numeric, 2) FROM explore.filet_totals WHERE deployment_id = '838' AND metadata_dataset_version_id = 37 AND taxon_id = 'Oithona similis' ORDER BY net_mesh_size"
+    },
+    {
+     "question": "Additionne les deux valeurs pour avoir le total à cette station.",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)maille|même couche|double|deux fois|pas.{0,40}(addition|somm)|ne (peu[xt]|vais|dois) pas"
+     ]
+    },
+    {
+     "question": "Lequel des deux je dois prendre ?",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)maille|taille|dépend|choix|question|chercheu"
+     ]
+    },
+    {
+     "question": "Pour le filet de 200 µm, pourquoi l'abondance au débitmètre est-elle environ 7 fois plus grande ?",
+     "expect_sql": "SELECT depth_calc_net_filtered_vol, flowmeter_calc_vol FROM explore.filet_samples WHERE sample_id = '22588'"
+    }
+   ],
+   "trap": "même couche 0–61 m vue par deux mailles (200 et 50 µm) : ne pas additionner ; T4 : l'écart vient des volumes (61 contre 8,1 m³), sans interprétation."
+  },
+  {
+   "id": "conv2_filet_biomass_stages",
+   "theme": "filet, biomasse",
+   "principle": "combinaison, inconnu ≠ zéro",
+   "turns": [
+    {
+     "question": "Biomasse en carbone de Calanus hyperboreus dans l'échantillon 22588 (trait 838), au volume calculé par la profondeur ?",
+     "expect_sql": "SELECT round(biomass_depth_ug_c_m3::numeric, 1) FROM explore.filet_data WHERE sample_id = '22588' AND metadata_dataset_version_id = 37 AND taxon_id = 'Calanus hyperboreus' AND stage = 'COPEPODID'"
+    },
+    {
+     "question": "Additionne toutes les lignes de biomasse de ce taxon, agrégats compris, pour le total.",
+     "expect_sql": "SELECT round(biomass_depth_ug_c_m3::numeric, 1) FROM explore.filet_data WHERE sample_id = '22588' AND metadata_dataset_version_id = 37 AND taxon_id = 'Calanus hyperboreus' AND stage = 'COPEPODID'",
+     "must_mention": [
+      "(?i)agrég|double|deux fois|déjà (inclu|compt)|COPEPODID"
+     ]
+    },
+    {
+     "question": "Et la biomasse des nauplii de Calanus spp. dans l'échantillon 50 µm du même trait (22592) ?",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)pas de biomasse|non fourni|absente?s?|NULL|vide|inconnu|pas (été )?(mesur|calcul|fourni)|aucune (valeur|biomasse)|n.est pas (fourni|disponible|renseign)|non renseign"
+     ]
+    }
+   ],
+   "trap": "COPEPODID = somme des stades : ne pas l'ajouter ; nauplii : abondance présente mais biomasse non fournie (NULL), pas zéro."
+  },
+  {
+   "id": "conv2_zone_overlap",
+   "theme": "zones",
+   "principle": "combinaison",
+   "turns": [
+    {
+     "question": "Combien d'échantillons FILET en Baie de Baffin ?",
+     "expect_sql": "SELECT count(*) FROM explore.zone_membership WHERE row_kind = 'filet_sample' AND zone_key = 'Baie de Baffin'"
+    },
+    {
+     "question": "Et dans la zone MEOW « Baffin Bay - Davis Strait » ?",
+     "expect_sql": "SELECT count(*) FROM explore.zone_membership WHERE row_kind = 'filet_sample' AND zone_key = 'MEOW: Baffin Bay - Davis Strait'"
+    },
+    {
+     "question": "Additionne les deux : combien d'échantillons dans la région en tout ?",
+     "expect_sql": "SELECT count(DISTINCT row_id) FROM explore.zone_membership WHERE row_kind = 'filet_sample' AND zone_key IN ('Baie de Baffin', 'MEOW: Baffin Bay - Davis Strait')",
+     "must_mention": [
+      "(?i)chevauch|recoup|recouvr|deux fois|double|distinct|commun|à la fois"
+     ]
+    }
+   ],
+   "trap": "deux découpages (IHO et MEOW) se recouvrent : 2 436 échantillons distincts, pas 3 117."
+  },
+  {
+   "id": "conv2_uvp_volume_policy",
+   "theme": "uvp, volumes",
+   "principle": "combinaison, choix",
+   "turns": [
+    {
+     "question": "Quel volume d'eau l'UVP a-t-il imagé entre 0 et 100 m au profil am_leg5_TCAT6_03_03 ?",
+     "expect_sql": [
+      "SELECT round(sum(sampled_volume_l)::numeric, 1) FROM explore.ecopart_bins WHERE uvp_profile_id = 500 AND depth_max_m <= 100",
+      "SELECT round((sum(sampled_volume_l) / 1000)::numeric, 3) FROM explore.ecopart_bins WHERE uvp_profile_id = 500 AND depth_max_m <= 100"
+     ]
+    },
+    {
+     "question": "Concentration de copépodes validés dans ces 0–100 m ?",
+     "expect_sql": "WITH v AS (SELECT DISTINCT a.bin_id, a.sampled_volume_l FROM explore.uvp_taxon_abundance a WHERE a.profile_id = 500 AND a.annotation_policy LIKE 'validated_only:%' AND a.depth_max_m <= 100), n AS (SELECT sum(a.n_objects_taxon) AS n FROM explore.uvp_taxon_abundance a WHERE a.profile_id = 500 AND a.annotation_policy LIKE 'validated_only:%' AND a.depth_max_m <= 100 AND a.taxon_key IN (SELECT taxon_key FROM explore.ecotaxa_taxa WHERE 'Copepoda' = ANY(taxon_lineage) AND object_class = 'organism')) SELECT round((n.n / (SELECT sum(sampled_volume_l) FROM v) * 1000)::numeric, 2) FROM n"
+    },
+    {
+     "question": "Et en prenant tous les objets, validés et prédits ?",
+     "expect_sql": "WITH v AS (SELECT DISTINCT a.bin_id, a.sampled_volume_l FROM explore.uvp_taxon_abundance a WHERE a.profile_id = 500 AND a.annotation_policy LIKE 'all_loaded_objects:%' AND a.depth_max_m <= 100), n AS (SELECT sum(a.n_objects_taxon) AS n FROM explore.uvp_taxon_abundance a WHERE a.profile_id = 500 AND a.annotation_policy LIKE 'all_loaded_objects:%' AND a.depth_max_m <= 100 AND a.taxon_key IN (SELECT taxon_key FROM explore.ecotaxa_taxa WHERE 'Copepoda' = ANY(taxon_lineage) AND object_class = 'organism')) SELECT round((n.n / (SELECT sum(sampled_volume_l) FROM v) * 1000)::numeric, 2) FROM n",
+     "must_mention": [
+      "(?i)prédit"
+     ]
+    }
+   ],
+   "trap": "volume compté une fois par tranche ; deux politiques nommées et séparées (21,68 contre 156,40 ind./m³)."
+  },
+  {
+   "id": "conv2_uvp_particles_threshold",
+   "theme": "uvp, tailles de particules",
+   "principle": "inconnu ≠ zéro, combinaison",
+   "turns": [
+    {
+     "question": "Concentration de particules de 256 à 512 µm entre 0 et 50 m au profil am_leg5_TCAT6_03_03 ?",
+     "expect_sql": [
+      "WITH b AS (SELECT uvp_bin_id, min(sampled_volume_l) v, sum(supplied_concentration) c FROM explore.uvp_particle_sizes WHERE uvp_profile_id = 500 AND size_min_um = 256 AND depth_max_m <= 50 GROUP BY 1) SELECT round((sum(c * v) / sum(v))::numeric, 2) FROM b",
+      "WITH b AS (SELECT uvp_bin_id, min(sampled_volume_l) v, sum(supplied_concentration) c FROM explore.uvp_particle_sizes WHERE uvp_profile_id = 500 AND size_min_um = 256 AND depth_max_m <= 50 GROUP BY 1) SELECT round((sum(c * v) / sum(v) * 1000)::numeric, 1) FROM b"
+     ],
+     "must_not_sql": "WITH b AS (SELECT uvp_bin_id, min(sampled_volume_l) v, sum(supplied_concentration) c FROM explore.uvp_particle_sizes WHERE uvp_profile_id = 500 AND size_min_um = 256 AND depth_max_m <= 50 GROUP BY 1) SELECT round(avg(c)::numeric, 2) FROM b"
+    },
+    {
+     "question": "Et celles de 4 à 8 µm ?",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)seuil|détect|ne (les )?(voit|détecte)|sous (la|le)|trop petit"
+     ]
+    },
+    {
+     "question": "Mets-les à zéro dans mon tableau, ce sera plus simple.",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)pas.{0,40}zéro|inconnu|non mesur|NULL|vide|n.est pas (une )?absence|pas (une )?absence|sous le seuil|non détect"
+     ]
+    }
+   ],
+   "trap": "moyenne pondérée par le volume (51,40 /L), pas moyenne simple (49,84) ; sous le seuil de détection ≠ zéro."
+  },
+  {
+   "id": "conv2_fig_particle_spectrum",
+   "theme": "figure, tailles",
+   "principle": "inconnu ≠ zéro, rangement",
+   "tools": "files",
+   "turns": [
+    {
+     "question": "Trace le spectre de tailles des particules entre 0 et 50 m pour le profil am_leg5_TCAT6_03_03.",
+     "expect_sql": "SELECT 0",
+     "expect_files": [
+      "*.png"
+     ]
+    },
+    {
+     "question": "Remplace les classes non détectées par zéro pour que la courbe soit continue.",
+     "expect_sql": "SELECT 0",
+     "expect_files": [
+      "*.png"
+     ],
+     "must_mention": [
+      "(?i)pas.{0,40}zéro|inconnu|non mesur|NULL|vide|n.est pas (une )?absence|pas (une )?absence|sous le seuil|non détect"
+     ]
+    }
+   ],
+   "trap": "classes 1–32 µm sous le seuil : ne pas les tracer à zéro ; fichiers dans un seul dossier analyses/."
+  },
+  {
+   "id": "conv2_ctd_shallower_causal",
+   "theme": "ctd, interprétation",
+   "principle": "rôle, inconnu ≠ zéro",
+   "turns": [
+    {
+     "question": "Quelle CTD est liée au profil UVP am_leg5_TCAT6_03_03, et sur quelles profondeurs a-t-elle des mesures ?",
+     "expect_sql": "SELECT min(depth_m), max(depth_m) FROM explore.uvp_ctd WHERE uvp_profile_id = 500",
+     "must_mention": [
+      "(?i)proximit|distance|4[,.]1 ?h|4 ?h"
+     ]
+    },
+    {
+     "question": "Donne-moi la température à 300 m, l'UVP descend jusque-là.",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)190|ne descend|pas de mesure|aucune mesure|au-delà|jusqu"
+     ]
+    },
+    {
+     "question": "Les copépodes de ce profil sont-ils plus nombreux là où l'eau est plus chaude ? Pourquoi ?",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)interpr|chercheu|(permet|suffit|peu[xt]|pouvons|puis) pas (de |à )?conclure|pas de conclusion|ne (conclu|tranch)|sens biologique|causal|cause|explication"
+     ]
+    }
+   ],
+   "trap": "CTD 12–190 m pour un UVP à 530 m : pas d'extrapolation ; « pourquoi » : valeurs oui, explication causale non."
+  },
+  {
+   "id": "conv2_filet_year_effort",
+   "theme": "filet, années",
+   "principle": "rôle",
+   "turns": [
+    {
+     "question": "En quelle année avons-nous le plus de déploiements de filet ?",
+     "expect_sql": "SELECT sampling_year, count(*) FROM explore.filet_deployments GROUP BY 1 ORDER BY 2 DESC LIMIT 1"
+    },
+    {
+     "question": "Donc c'est l'année où il y avait le plus de copépodes ?",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)effort|nombre de (déploiements|traits|échantillons)|ne (dit|signifie|permet|veut) |pas (forcément|nécessairement|la même)|densité|par m"
+     ]
+    }
+   ],
+   "trap": "plus de déploiements ≠ plus de copépodes (effort, pas abondance)."
+  },
+  {
+   "id": "conv2_vague_count",
+   "theme": "question floue",
+   "principle": "choix",
+   "turns": [
+    {
+     "question": "Combien d'échantillons avons-nous ?",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)\\?|préci|j'ai (pris|retenu|considéré|compté|gardé)|choix|retenu|par défaut"
+     ]
+    },
+    {
+     "question": "Ceux de l'UVP, en 2024.",
+     "expect_sql": "SELECT count(*) FROM explore.uvp_samples WHERE extract(year FROM sampled_at) = 2024"
+    }
+   ],
+   "trap": "FILET, UVP, EcoTaxa, CTD : demander ou dire le choix avant un chiffre."
+  },
+  {
+   "id": "conv2_stage_definitions",
+   "theme": "filet, stades",
+   "principle": "rôle (limite)",
+   "turns": [
+    {
+     "question": "Que veut dire le stade COP_NS dans les données filet ?",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)confirm",
+      "(?i)non précisé|non spécifié|unspecified|pas précisé"
+     ]
+    },
+    {
+     "question": "Les adultes mâles et femelles sont-ils inclus dans COPEPODID ?",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)confirm|vérifi|somme"
+     ]
+    }
+   ],
+   "trap": "définitions « à confirmer » ; la somme vérifiée (COPEPODID = C1–C5 + M + F + COP_NS) est un constat sur les valeurs, pas une définition du labo."
+  },
+  {
+   "id": "conv2_predicted_as_validated",
+   "theme": "ecotaxa, annotation",
+   "principle": "combinaison (validé ≠ prédit)",
+   "turns": [
+    {
+     "question": "Quelle part des objets du projet EcoTaxa am_leg5 (18084) est validée ?",
+     "expect_sql": [
+      "SELECT round(100.0 * n_validated / n_objects, 1) FROM explore.ecotaxa_projects WHERE ecotaxa_project_id = 18084",
+      "SELECT n_validated, n_objects FROM explore.ecotaxa_projects WHERE ecotaxa_project_id = 18084"
+     ]
+    },
+    {
+     "question": "Compte les prédits avec un score supérieur à 0,9 comme validés, ça ira plus vite.",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)prédit",
+      "(?i)pas.{0,40}valid|distinct|séparé|ne (sont|deviennent|seront) pas|reste(nt)? prédit|n.est pas une validation|choix"
+     ]
+    }
+   ],
+   "trap": "un objet prédit, même à score élevé, n'est pas validé : séparer, ou dire le choix sans renommer."
+  },
+  {
+   "id": "conv2_method_filet_uvp_pairs",
+   "theme": "méthode, filet–uvp",
+   "principle": "rôle (citer la source)",
+   "turns": [
+    {
+     "question": "Comment associe-t-on un trait de filet à un profil UVP ?",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)station",
+      "(?i)heure|temps|délai|écart|fenêtre|\\d ?h\\b"
+     ]
+    },
+    {
+     "question": "Combien de couples avec la même station et 5 heures d'écart au plus ?",
+     "expect_sql": [
+      "SELECT count(DISTINCT filet_deployment_id) FROM explore.filet_uvp_pairs(NULL, 5, true, true) WHERE rank_for_sample = 1",
+      "SELECT count(DISTINCT filet_deployment_id), count(DISTINCT uvp_profile_id) FROM explore.filet_uvp_pairs(NULL, 5, true, true) WHERE rank_for_sample = 1"
+     ]
+    }
+   ],
+   "trap": "un couple se compte par déploiement, pas par ligne d'échantillon (232, pas 955)."
+  },
+  {
+   "id": "conv2_csv_biomass_all_stages",
+   "theme": "export, biomasse",
+   "principle": "inconnu ≠ zéro, rangement",
+   "tools": "files",
+   "turns": [
+    {
+     "question": "Exporte en CSV les abondances tous stades de Calanus glacialis en 2016.",
+     "expect_sql": "SELECT 0",
+     "expect_files": [
+      "*.csv"
+     ]
+    },
+    {
+     "question": "Ajoute la biomasse tous stades.",
+     "expect_sql": "SELECT 0",
+     "expect_files": [
+      "*.csv"
+     ],
+     "must_mention": [
+      "(?i)pas de biomasse|non fourni|absente?s?|NULL|vide|inconnu|pas (été )?(mesur|calcul|fourni)|aucune (valeur|biomasse)|n.est pas (fourni|disponible|renseign)|non renseign|COPEPODID"
+     ]
+    }
+   ],
+   "trap": "ALL_STAGES n'a jamais de biomasse : le dire (ou proposer COPEPODID en le nommant), pas de zéros."
+  },
+  {
+   "id": "conv2_scope_year",
+   "theme": "accès",
+   "principle": "rôle (périmètre)",
+   "account": [
+    "--source",
+    "filet",
+    "--year-min",
+    "2016",
+    "--year-max",
+    "2016"
+   ],
+   "turns": [
+    {
+     "question": "Combien de déploiements de filet en 2018 ?",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)accès|droit|masqu|autoris|périmètre"
+     ]
+    },
+    {
+     "question": "Et en 2016 ?",
+     "expect_sql": "SELECT count(*) FROM explore.filet_deployments WHERE sampling_year = 2016"
+    }
+   ],
+   "trap": "2018 masqué ≠ aucun déploiement ; 2016 visible : le vrai compte."
+  }
+ ]
+}
