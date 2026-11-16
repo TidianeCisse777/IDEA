@@ -10,6 +10,12 @@ aucun mot de passe de la base n'est dans son environnement. Il travaille dans un
     python scripts/agent_battery.py --only baffin_samples      # un seul cas
     (dossiers de travail et rapport : ~/neolab_agent_battery/<date>, hors du dépôt)
     python scripts/agent_battery.py --cases tests/agent_battery/ecotaxa_cases.json --parallel 3
+    python scripts/agent_battery.py --docker neolab-warehouse --workspace --cases tests/agent_battery/conversation_cases.json
+
+Installation tout-en-un (--docker <conteneur>) : la base ne sort pas du conteneur. Les attendus sont calculés par
+« docker exec … psql » en lecture seule, et l'agent est branché comme un utilisateur (docker exec -i <conteneur>
+neolab-mcp, compte de lecture du conteneur). Aucun port ouvert, aucun mot de passe lu. Les cas avec « account »
+(compte restreint) demandent de créer un rôle dans la base : ils sont notés non exécutés dans ce mode.
 
 Note d'un cas : chaque nombre attendu (non nul) doit apparaître dans la réponse (entier exact; décimal à
 `tolerance` près), chaque motif `must_mention` doit être trouvé, et les nombres de `must_not_sql` ne doivent
@@ -38,7 +44,8 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CASES = ROOT / 'tests/agent_battery/ecotaxa_cases.json'
 MCP_TOOLS = ('mcp__neolab-warehouse__run_sql_query', 'mcp__neolab-warehouse__find_tables_and_columns',
-             'mcp__neolab-warehouse__read_data_guide')
+             'mcp__neolab-warehouse__read_data_guide', 'mcp__neolab-warehouse__search_documents',
+             'mcp__neolab-warehouse__read_document')
 # A case with "tools": "files" (charts, maps) may also write and run code in its own empty folder.
 FILE_TOOLS = ('Bash', 'Write', 'Read', 'Edit', 'Glob')
 DATA_SUFFIXES = ('.csv', '.tsv', '.json', '.md', '.txt')
@@ -118,8 +125,46 @@ def owner_connection():
 def values(conn, query: str | None) -> list[float]:
     if not query:
         return []
+    if isinstance(conn, DockerConnection):
+        return conn.values(query)
     rows = conn.execute(query).fetchall()
     return [float(v) for row in rows for v in row if v is not None]
+
+
+class DockerConnection:
+    """Expected values through « docker exec … psql », read-only, for the all-in-one container (no published port)."""
+
+    def __init__(self, container: str, user: str = 'neolab', database: str = 'neolab_warehouse'):
+        self.command = ['docker', 'exec', '-i', container, 'psql', '-U', user, '-d', database, '-At', '-F', '\t',
+                        '-v', 'ON_ERROR_STOP=1', '-c', 'SET default_transaction_read_only = on']
+
+    def values(self, query: str) -> list[float]:
+        done = subprocess.run(self.command + ['-c', query], capture_output=True, text=True, encoding='utf-8',
+                              env=dict(os.environ, MSYS_NO_PATHCONV='1'))
+        if done.returncode != 0:
+            raise RuntimeError(f'attendu impossible à calculer : {done.stderr.strip()[-300:]}')
+        found = []
+        for row in done.stdout.splitlines()[1:]:          # first line: SET
+            for cell in row.split('\t'):
+                try:
+                    found.append(float(cell))
+                except ValueError:
+                    continue
+        return found
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def docker_mcp_config(tmp: Path, container: str) -> Path:
+    """The agent reaches the warehouse as a user does: docker exec -i <container> neolab-mcp."""
+    mcp = tmp / 'mcp_docker.json'
+    mcp.write_text(json.dumps({'mcpServers': {'neolab-warehouse': {
+        'command': shutil.which('docker') or 'docker', 'args': ['exec', '-i', container, 'neolab-mcp']}}}))
+    return mcp
 
 
 def agent_env() -> dict:
@@ -143,7 +188,7 @@ def turns_of(case: dict) -> list[dict]:
 
 def read_stream(path: Path) -> dict:
     run = {'answer': '', 'turns': None, 'cost_usd': None, 'sql_queries': 0, 'session_id': None}
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding='utf-8', errors='replace').splitlines():
         try:
             event = json.loads(line)
         except json.JSONDecodeError:
@@ -253,7 +298,7 @@ def report(out: Path, results: list[dict]) -> str:
             ('fichier absent : ' + ', '.join(g['missing_files'])) if g.get('missing_files') else '',
             'répondu sans interroger la base' if g.get('answered_without_querying') else '',
             ('interdit trouvé : ' + ', '.join(show(v) for v in g['forbidden_values_found'])) if g['forbidden_values_found'] else '']))
-        verdict = 'non exécuté (limite d\'usage)' if r.get('not_run') else ('✓' if g['passed'] else '✗')
+        verdict = f"non exécuté ({r.get('not_run_reason') or 'limite d’usage'})" if r.get('not_run') else ('✓' if g['passed'] else '✗')
         if r.get('not_run'):
             manque = '—'
         lines.append(f"| {r['id']} | {verdict} | {', '.join(show(v) for v in r['expected'])} | "
@@ -282,6 +327,9 @@ def main(argv=None) -> int:
     ap.add_argument('--workspace', action='store_true',
                     help='poser les questions dans un dossier de travail NeoLab (warehouse_connect.py workspace) '
                     'plutôt que dans un dossier vide')
+    ap.add_argument('--docker', metavar='CONTENEUR',
+                    help='installation tout-en-un : attendus par docker exec (lecture seule), agent branché par '
+                    'docker exec -i CONTENEUR neolab-mcp; les cas « account » sont notés non exécutés')
     args = ap.parse_args(argv)
     if not shutil.which('claude'):
         print('Claude Code (commande claude) est introuvable.', file=sys.stderr)
@@ -296,7 +344,7 @@ def main(argv=None) -> int:
         print('--out doit être hors du dépôt : un agent pourrait y lire le code et les réglages locaux.', file=sys.stderr)
         return 2
     out.mkdir(parents=True, exist_ok=True)
-    with owner_connection() as conn:
+    with (DockerConnection(args.docker) if args.docker else owner_connection()) as conn:
         # expect_sql may list alternatives (several right answers, e.g. a map with or without the profiles
         # placed from their EcoTaxa sample): the answer passes if it carries all values of one of them.
         expected = {c['id']: [([values(conn, q) for q in (t['expect_sql'] if isinstance(t['expect_sql'], list) else [t.get('expect_sql')])],
@@ -305,13 +353,25 @@ def main(argv=None) -> int:
     os.chmod(tmp, 0o700)
     accounts = {}  # one temporary account per distinct "account" of the cases (all-access by default)
     try:
-        for case in cases:
-            key = json.dumps(case.get('account'))
-            if key not in accounts:
-                accounts[key] = temporary_account(tmp, case.get('account'))
+        if args.docker:
+            mcp = docker_mcp_config(tmp, args.docker)
+
+            def run_one(c):
+                if c.get('account'):
+                    return {'id': c['id'], 'exit': None, 'seconds': 0, 'not_run': True, 'answer': '', 'turns': 0,
+                            'not_run_reason': 'compte restreint : non créé en mode --docker',
+                            'cost_usd': 0, 'sql_queries': 0, 'conversation': []}
+                return run_case(c, out, mcp, args.model, args.timeout, args.workspace)
+        else:
+            for case in cases:
+                key = json.dumps(case.get('account'))
+                if key not in accounts:
+                    accounts[key] = temporary_account(tmp, case.get('account'))
+
+            def run_one(c):
+                return run_case(c, out, accounts[json.dumps(c.get('account'))][2], args.model, args.timeout, args.workspace)
         with ThreadPoolExecutor(max_workers=max(1, args.parallel)) as pool:
-            results = list(pool.map(lambda c: run_case(c, out, accounts[json.dumps(c.get('account'))][2], args.model,
-                                                       args.timeout, args.workspace), cases))
+            results = list(pool.map(run_one, cases))
     finally:
         for name, _, _ in accounts.values():
             subprocess.run([sys.executable, str(ROOT / 'scripts/warehouse_user.py'), 'remove', name, '--yes'],
