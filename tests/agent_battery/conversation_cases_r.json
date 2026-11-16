@@ -1,0 +1,137 @@
+{
+ "description": "Lot R (16 novembre 2026) : figures et calculs en R après déploiement du gabarit R et de la rubrique CLARTÉ. Attendus fixés avant lancement, non retouchés ensuite. La notation ne juge pas le rendu : chaque figure est relue.",
+ "cases": [
+  {
+   "id": "r_ctd711_profile",
+   "theme": "R, figure simple",
+   "principle": "clarté",
+   "tools": "files",
+   "question": "En R avec ggplot2, fais-moi un profil vertical de température et de salinité de la CTD 711, propre et prêt à mettre dans un rapport.",
+   "expect_sql": "SELECT max(depth_m) FROM explore.ctd_measurements WHERE ctd_profile_id = 711",
+   "values_in": "answer_and_files",
+   "tolerance": 2,
+   "expect_files": [
+    "*.png",
+    "*.R"
+   ],
+   "trap": "rejeu du cas de départ : gabarit R copié (couleurs, nombres, police), une série par panneau en PALETTE[1]."
+  },
+  {
+   "id": "r_filet_1576_gaps",
+   "theme": "R, filet, couches",
+   "principle": "clarté, inconnu ≠ zéro",
+   "tools": "files",
+   "question": "En R, trace l'abondance de Calanus hyperboreus couche par couche au trait de filet 1576, pour un rapport.",
+   "expect_sql": "SELECT round(abundance_depth_ind_m3::numeric, 2) FROM explore.filet_data WHERE deployment_id = '1576' AND dataset_version_id = 37 AND metadata_dataset_version_id = 37 AND taxon_id = 'Calanus hyperboreus' AND stage = 'ALL_STAGES' ORDER BY min_sample_depth",
+   "values_in": "answer_and_files",
+   "tolerance": 0.05,
+   "expect_files": [
+    "*.png",
+    "*.R"
+   ],
+   "must_mention": [
+    "(?i)non renseign|absente?s?|manqu|pas de (ligne|donnée|valeur|mesure)|NULL|vide|hachur|100.{1,3}120"
+   ],
+   "trap": "couches 100–120 et 140–160 m sans ligne : barres, couches vides ou hachurées, jamais 0 ni une ligne qui les traverse."
+  },
+  {
+   "id": "r_map_filet_2016",
+   "theme": "R, carte",
+   "principle": "clarté",
+   "tools": "files",
+   "question": "En R, fais une carte des déploiements de filet de 2016, colorés par engin, pour un rapport.",
+   "expect_sql": [
+    "SELECT count(*) FROM explore.filet_deployments WHERE sampling_year = 2016",
+    "SELECT count(*) FROM explore.filet_deployments WHERE sampling_year = 2016 GROUP BY gear ORDER BY 1 DESC"
+   ],
+   "values_in": "answer_and_files",
+   "expect_files": [
+    "*.png",
+    "*.R"
+   ],
+   "trap": "sf + rnaturalearth, CRS 4326, cadrage sur les points, graduations uniques, légende des 4 engins avec effectifs."
+  },
+  {
+   "id": "r_na_flowmeter_mean",
+   "theme": "R, NA",
+   "principle": "inconnu ≠ zéro",
+   "tools": "files",
+   "question": "En R, calcule l'abondance moyenne de Metridia longa au débitmètre sur tous les échantillons de filet de 2010.",
+   "expect_sql": [
+    "SELECT round(avg(abundance_flowmeter_ind_m3)::numeric, 1) FROM explore.filet_totals WHERE sampling_year = 2010 AND taxon_id = 'Metridia longa' AND abundance_flowmeter_ind_m3 >= 0",
+    "SELECT round(avg(abundance_flowmeter_ind_m3)::numeric, 1) FROM explore.filet_totals WHERE sampling_year = 2010 AND taxon_id = 'Metridia longa' AND abundance_flowmeter_ind_m3 >= 0 AND sample_id <> '22279'",
+    "SELECT round(avg(abundance_flowmeter_ind_m3)::numeric, 1) FROM explore.filet_totals WHERE sampling_year = 2010 AND taxon_id = 'Metridia longa' AND abundance_flowmeter_ind_m3 >= 0 AND NOT (sample_id = '22279' AND analysis_id = '112')",
+    "SELECT round(avg(abundance_flowmeter_ind_m3)::numeric, 1) FROM explore.filet_totals WHERE sampling_year = 2010 AND taxon_id = 'Metridia longa' AND abundance_flowmeter_ind_m3 >= 0 AND NOT (sample_id = '22279' AND analysis_id = '111')"
+   ],
+   "must_not_sql": "SELECT round(avg(coalesce(abundance_flowmeter_ind_m3, 0))::numeric, 1) FROM explore.filet_totals WHERE sampling_year = 2010 AND taxon_id = 'Metridia longa'",
+   "must_mention": [
+    "(?i)\\bNA\\b|NULL|manquant|sans volume|non renseign",
+    "(?i)négati|22497"
+   ],
+   "trap": "mean() sans na.rm renvoie NA, avec na.rm écarte en silence : compter et nommer les NA et le volume négatif."
+  },
+  {
+   "id": "r_many_categories",
+   "theme": "R, catégories nombreuses",
+   "principle": "clarté, rôle",
+   "tools": "files",
+   "question": "En R, fais un graphique des 20 catégories EcoTaxa les plus nombreuses parmi les objets validés du projet 10101, détritus compris.",
+   "expect_sql": "SELECT sum(n_validated) FROM explore.ecotaxa_sample_taxa WHERE ecotaxa_project_id = 10101 GROUP BY taxon_name ORDER BY 1 DESC LIMIT 1",
+   "values_in": "answer_and_files",
+   "expect_files": [
+    "*.png",
+    "*.R"
+   ],
+   "trap": "détritus 1,6 million contre 7 964 copépodes : barres horizontales triées, libellés entiers, échelle lisible (log explicitée ou panneau séparé), non vivant distingué."
+  },
+  {
+   "id": "r_review_mean_of_bins",
+   "theme": "R, relecture de code",
+   "principle": "combinaison",
+   "turns": [
+    {
+     "question": "Relis ce script R, il calcule l'abondance moyenne des copépodes validés entre 0 et 100 m au profil UVP am_leg5_TCAT6_03_03. Le résultat est-il juste ?\n\n```r\nd <- read.csv(\"copepodes_par_tranche.csv\")   # colonnes : tranche, n_objets, volume_l (profil am_leg5_TCAT6_03_03, validés, 0-100 m)\nd$abondance <- d$n_objets / d$volume_l * 1000\nmoyenne <- mean(d$abondance, na.rm = TRUE)\ncat(\"Abondance moyenne 0-100 m :\", round(moyenne, 2), \"ind./m3\\n\")\n```",
+     "expect_sql": "WITH v AS (SELECT DISTINCT a.bin_id, a.sampled_volume_l FROM explore.uvp_taxon_abundance a WHERE a.profile_id = 500 AND a.annotation_policy LIKE 'validated_only:%' AND a.depth_max_m <= 100), n AS (SELECT sum(a.n_objects_taxon) AS n FROM explore.uvp_taxon_abundance a WHERE a.profile_id = 500 AND a.annotation_policy LIKE 'validated_only:%' AND a.depth_max_m <= 100 AND a.taxon_key IN (SELECT taxon_key FROM explore.ecotaxa_taxa WHERE 'Copepoda' = ANY(taxon_lineage) AND object_class = 'organism')) SELECT round((n.n / (SELECT sum(sampled_volume_l) FROM v) * 1000)::numeric, 2) FROM n",
+     "must_mention": [
+      "(?i)somme|pondér|volume total|Σ|sum\\("
+     ]
+    }
+   ],
+   "trap": "moyenne des concentrations par tranche (20,91) au lieu de Σ objets / Σ volume (21,68); na.rm écarte des tranches sans le dire."
+  },
+  {
+   "id": "r_ts_diagram",
+   "theme": "R, gsw",
+   "principle": "clarté, unités",
+   "tools": "files",
+   "question": "En R avec gsw, fais un diagramme T–S TEOS-10 de la CTD 711 pour un rapport.",
+   "expect_sql": "SELECT count(*) FROM explore.ctd_measurements WHERE ctd_profile_id = 711 AND variable_key = 'TE90'",
+   "expect_files": [
+    "*.png",
+    "*.R"
+   ],
+   "must_mention": [
+    "(?i)absolue",
+    "(?i)conservative"
+   ],
+   "trap": "SA = gsw_SA_from_SP(SP, p, lon, lat), CT = gsw_CT_from_t(SA, t, p) : salinité absolue et température conservative nommées."
+  },
+  {
+   "id": "r_two_policies_bins",
+   "theme": "R, deux séries d'échelles différentes",
+   "principle": "clarté, combinaison",
+   "tools": "files",
+   "question": "En R, trace les abondances de copépodes par tranche, validés seulement et tous objets chargés, pour le profil UVP am_leg5_TCAT6_03_03 entre 0 et 200 m.",
+   "expect_sql": "SELECT 0",
+   "expect_files": [
+    "*.png",
+    "*.R"
+   ],
+   "must_mention": [
+    "(?i)valid",
+    "(?i)prédit|tous (les )?objets"
+   ],
+   "trap": "deux politiques nommées et séparées; la série validée (peu d'objets) ne doit pas être écrasée ni confondue; tranches à zéro tracées en barres ou marches."
+  }
+ ]
+}
