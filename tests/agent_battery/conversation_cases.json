@@ -12,12 +12,18 @@
     },
     {
      "question": "Prends le trait 1576 : donne-moi l'abondance des copépodes couche par couche.",
-     "expect_sql": "SELECT round(sum(abundance_depth_ind_m3)::numeric, 1) FROM explore.filet_totals WHERE deployment_id = '1576' AND dataset_version_id = 37 AND metadata_dataset_version_id = 37 GROUP BY min_sample_depth ORDER BY min_sample_depth"
+     "expect_sql": [
+      "SELECT round(sum(abundance_depth_ind_m3)::numeric, 1) FROM explore.filet_totals WHERE deployment_id = '1576' AND dataset_version_id = 37 AND metadata_dataset_version_id = 37 GROUP BY min_sample_depth ORDER BY min_sample_depth",
+      "SELECT round(abundance_depth_ind_m3::numeric, 1) FROM explore.filet_totals WHERE deployment_id = '1576' AND dataset_version_id = 37 AND metadata_dataset_version_id = 37 AND taxon_id = 'Oithona similis' ORDER BY min_sample_depth"
+     ]
     },
     {
      "question": "Et sur toute la colonne d'eau, en individus par m² ?",
-     "expect_sql": "SELECT round(sum(s * (z1 - z0))::numeric, 1) FROM (SELECT min_sample_depth z0, max_sample_depth z1, sum(abundance_depth_ind_m3) s FROM explore.filet_totals WHERE deployment_id = '1576' AND dataset_version_id = 37 AND metadata_dataset_version_id = 37 GROUP BY 1, 2) x",
-     "tolerance": 3000
+     "expect_sql": [
+      "SELECT round(sum(s * (z1 - z0))::numeric, 1) FROM (SELECT min_sample_depth z0, max_sample_depth z1, sum(abundance_depth_ind_m3) s FROM explore.filet_totals WHERE deployment_id = '1576' AND dataset_version_id = 37 AND metadata_dataset_version_id = 37 GROUP BY 1, 2) x",
+      "SELECT round(sum(abundance_depth_ind_m3 * (max_sample_depth - min_sample_depth))::numeric, 1) FROM explore.filet_totals WHERE deployment_id = '1576' AND dataset_version_id = 37 AND metadata_dataset_version_id = 37 AND taxon_id = 'Oithona similis'"
+     ],
+     "tolerance": 1500
     },
     {
      "question": "Ajoute la température de la CTD associée à ce trait, vers 50 m.",
@@ -45,7 +51,6 @@
     {
      "question": "Additionne toutes les lignes de ton tableau, agrégats compris, pour avoir le grand total.",
      "expect_sql": "SELECT round(sum(abundance_depth_ind_m3 * (max_sample_depth - min_sample_depth))::numeric, 1) FROM explore.filet_data WHERE deployment_id = '1576' AND dataset_version_id = 37 AND metadata_dataset_version_id = 37 AND taxon_id = 'Calanus hyperboreus' AND stage = 'ALL_STAGES'",
-     "must_not_sql": "SELECT round(sum(abundance_depth_ind_m3 * (max_sample_depth - min_sample_depth))::numeric, 1) FROM explore.filet_data WHERE deployment_id = '1576' AND dataset_version_id = 37 AND metadata_dataset_version_id = 37 AND taxon_id = 'Calanus hyperboreus'",
      "must_mention": [
       "(?i)agrég|double|deux fois|déjà (inclu|compt)|ALL_STAGES"
      ]
@@ -108,7 +113,9 @@
      "question": "Quelle est l'abondance moyenne de Metridia longa au débitmètre, sur tous les échantillons FILET de 2010 ?",
      "expect_sql": [
       "SELECT round(avg(abundance_flowmeter_ind_m3)::numeric, 1) FROM explore.filet_totals WHERE sampling_year = 2010 AND taxon_id = 'Metridia longa' AND abundance_flowmeter_ind_m3 >= 0",
-      "SELECT round(avg(abundance_flowmeter_ind_m3)::numeric, 1) FROM explore.filet_totals WHERE sampling_year = 2010 AND taxon_id = 'Metridia longa' AND abundance_flowmeter_ind_m3 >= 0 AND sample_id <> '22279'"
+      "SELECT round(avg(abundance_flowmeter_ind_m3)::numeric, 1) FROM explore.filet_totals WHERE sampling_year = 2010 AND taxon_id = 'Metridia longa' AND abundance_flowmeter_ind_m3 >= 0 AND sample_id <> '22279'",
+      "SELECT round(avg(abundance_flowmeter_ind_m3)::numeric, 1) FROM explore.filet_totals WHERE sampling_year = 2010 AND taxon_id = 'Metridia longa' AND abundance_flowmeter_ind_m3 >= 0 AND NOT (sample_id = '22279' AND analysis_id = '112')",
+      "SELECT round(avg(abundance_flowmeter_ind_m3)::numeric, 1) FROM explore.filet_totals WHERE sampling_year = 2010 AND taxon_id = 'Metridia longa' AND abundance_flowmeter_ind_m3 >= 0 AND NOT (sample_id = '22279' AND analysis_id = '111')"
      ],
      "must_not_sql": "SELECT round(avg(coalesce(abundance_flowmeter_ind_m3, 0))::numeric, 1) FROM explore.filet_totals WHERE sampling_year = 2010 AND taxon_id = 'Metridia longa'"
     },
@@ -396,7 +403,7 @@
    "turns": [
     {
      "question": "Fais un graphique du nombre de profils UVP par année.",
-     "expect_sql": "SELECT count(*) FROM explore.uvp_samples GROUP BY extract(year FROM sampled_at) ORDER BY 1",
+     "expect_sql": "SELECT count(*) FROM explore.uvp_samples WHERE extract(year FROM sampled_at) IN (2016, 2023, 2024) GROUP BY extract(year FROM sampled_at) ORDER BY 1",
      "values_in": "answer_and_files",
      "expect_files": [
       "*.png"

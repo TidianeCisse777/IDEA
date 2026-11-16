@@ -42,8 +42,26 @@
 - Vérification : les 51 requêtes d'attendu et les 4 requêtes d'interdit tournent sur la base, en lecture seule. Chaque
   attendu non nul renvoie un nombre et chaque interdit diffère de son attendu (double compte 366 contre 122, copies
   102 045 contre 51 859, NULL comptés comme zéro 230,2 contre 253,8). Tests : 224 réussis.
-- Pas encore joué. La batterie crée un compte temporaire par cas (`warehouse_user.py`) et lance `claude` en ligne de
-  commande ; elle n'a pas été exécutée.
+- Exécution du 15 novembre, en mode `--docker neolab-warehouse --workspace`, 4 conversations à la fois. Ce mode est
+  ajouté parce que l'installation tout-en-un ne publie aucun port : les attendus passent par `docker exec … psql` en
+  lecture seule, et l'agent est branché par `docker exec -i neolab-warehouse neolab-mcp`, comme un utilisateur.
+  Corrections faites au passage : outils `search_documents` et `read_document` autorisés (ils manquaient), flux lu en
+  UTF-8, motif de non-exécution affiché.
+- Premier passage : 18 réussis sur 22, 2 non exécutés (comptes restreints, non créés dans ce mode). Les 4 échecs
+  venaient des attendus, pas de l'agent, et les réponses le montrent :
+  - trait 1576 : il refuse d'additionner les 14 taxon_id, faute d'exclusivité documentée, et donne les taxons côte à
+    côte ;
+  - double compte : il cite 366 seulement pour le refuser ;
+  - débitmètre 2010 : il ne garde qu'une des deux analyses de 22279 (259,6), ce qui est juste ;
+  - profils par année : il compte depuis EcoPart (2022 : 31) et l'explique.
+  Les attendus sont corrigés (variantes acceptées, l'interdit 366 retiré), sans règle ajoutée pour l'agent. En
+  renotant les mêmes réponses : 22 sur 22.
+- Figure « double axe demandé » : l'agent a mis UVP et CTD côte à côte sur un même axe (même unité), sans double axe.
+- Question au labo, sans règle ajoutée : pour intégrer sur la colonne, un agent a compté comme zéro une couche sans
+  ligne pour un taxon, et l'a dit. L'export FILET omet-il les zéros ? Aucune ligne ALL_STAGES ne vaut 0 dans la
+  version 37.
+- Coût : 394 tours, 146 requêtes SQL, 42,39 $ au tarif API (sur le quota Claude Code de l'utilisateur). Les 2 cas à
+  compte restreint attendent l'accord pour créer des comptes temporaires dans la base.
 
 ### 14 novembre 2026 — Paquet « code seul » pour mettre à jour les collègues
 

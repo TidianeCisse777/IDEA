@@ -283,10 +283,12 @@ def show(value) -> str:
 def report(out: Path, results: list[dict]) -> str:
     passed = sum(r['grade']['passed'] for r in results)
     not_run = sum(bool(r.get('not_run')) for r in results)
+    reasons = sorted({r.get('not_run_reason') or 'limite d’usage de l’agent atteinte, à relancer'
+                      for r in results if r.get('not_run')})
     cost = sum(r['cost_usd'] or 0 for r in results)
     lines = [f'# Batterie agent — {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC', '',
              f'**{passed}/{len(results) - not_run} réussis**'
-             + (f' · **{not_run} non exécuté(s) : limite d\'usage de l\'agent atteinte, à relancer**' if not_run else '')
+             + (f' · **{not_run} non exécuté(s) : {"; ".join(reasons)}**' if not_run else '')
              + f' · {sum(r["turns"] or 0 for r in results)} tours · '
              f'{sum(r["sql_queries"] for r in results)} requêtes SQL · coût estimé {cost:.2f} $ (tarif API)', '',
              '| Cas | Résultat | Attendu | Manque | Durée | Tours |', '|---|---|---|---|---|---|']
