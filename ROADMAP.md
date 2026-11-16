@@ -4,6 +4,38 @@
 
 **Dernière mise à jour :** 15 novembre 2026
 
+### 16 novembre 2026 — Déploiement 9cc5973 et lot R (8 conversations)
+
+- Poussée de `mcp-neolab` après rebasage sur 7877efb (notes en tête des résultats SQL, autre session), sans conflit.
+  Tests : 235 réussis. Paquet code `9cc5973` publié sur le registre privé, puis conteneur mis à jour (`3f43a94` →
+  `9cc5973`, « À JOUR ») ; `neolab-check` affiche PASS. Avec le compte `lecture_mcp`, la fiche graphs contient le
+  gabarit R, `labels = taxon` et la rubrique CLARTÉ (colonne relations).
+- Lot R `tests/agent_battery/conversation_cases_r.json` (commit 58d0eac, avant le lancement) : 8 conversations. Résultat
+  noté sans retouche : **8 sur 8**. 178 tours, 39 requêtes SQL, 8,42 $ au tarif API. R est installé sur ce PC ; la
+  batterie a ajouté `C:\Program Files\R\R-4.6.2\bin` au PATH des agents.
+- Relecture des 6 figures, toutes lisibles et prêtes pour un rapport :
+  - profil CTD 711 : le gabarit est appliqué (une couleur, lettres, ITS-90). Ce n'était pas le cas avant le
+    déploiement (une couleur par panneau, style réécrit) ;
+  - trait 1576 : les couches 100–120 et 140–160 m, sans ligne pour *C. hyperboreus*, sont grisées et légendées
+    « couche analysée, aucune ligne dans l'export », sans zéro ni ligne qui les traverse ; les deux volumes sont côte
+    à côte ;
+  - carte des filets 2016 (sf) : symboles ouverts pour les superpositions, cadrage serré, graduations uniques ; pas
+    d'effectif par engin dans la légende ;
+  - 20 catégories du projet 10101 : points triés, échelle logarithmique annoncée, noms entiers, couleur par classe
+    (organisme, non vivant, technique) ;
+  - diagramme T–S : salinité absolue et température conservative (gsw), isopycnes σ0 étiquetées, palette cmocean ;
+  - validés et tous objets : deux panneaux à la même échelle, en barres par tranche.
+- Sans figure :
+  - NA : 259,6 ind./m³ sur 38 échantillons ; 22497 exclu et nommé (volume débitmètre −4 181,4 m³) ; NA comptés,
+    `na.rm` utilisé seulement pour compter ;
+  - relecture du script R : les trois défauts sont trouvés (moyenne des tranches au lieu de Σ objets / Σ volume,
+    tranches à zéro absentes du CSV, `na.rm` qui cache des tranches), et la bonne valeur 21,68 est donnée.
+- PDF de revue regénéré avec les figures R (hors dépôt).
+- Limites :
+  - la note ne juge pas le rendu : la clarté ci-dessus vient de ma relecture des images ;
+  - 8 cas seulement ;
+  - les figures du 10 et du 11 novembre n'ont pas été refaites.
+
 ### 16 novembre 2026 — Fiche graphs : rubrique CLARTÉ et gabarit R
 
 - Revue des 33 figures produites par les agents (PDF hors dépôt : `~/neolab_agent_battery/revue_figures_20261116.pdf`).
