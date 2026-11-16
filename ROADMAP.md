@@ -27,6 +27,24 @@
 - Limites : rappels par motifs dans le texte SQL, ils peuvent manquer un piège écrit autrement ou en signaler un
   déjà traité ; leur effet sur les réponses n'est pas encore mesuré par une batterie d'agents.
 
+### 15 novembre 2026 — Catalogue de conversations multi-tours pour tester un agent
+
+- `tests/agent_battery/conversation_cases.json` : 24 conversations de chercheurs, 51 tours, au format de
+  `scripts/agent_battery.py` (attendus calculés en SQL au moment du test, sessions reprises tour après tour, compte
+  temporaire restreint si `account`).
+- Chaque cas porte un thème et le principe visé (rôle, combinaison, choix, rangement). Thèmes : FILET (6 : profil en
+  couches et intégration, double compte de stades demandé par l'utilisateur, deux dénominateurs, couverture 2023,
+  volume négatif, krill), UVP et EcoTaxa (6 : bascule validés/tous objets, 2023 contre 2024, copies GreenEdge,
+  détritus, contestation d'un chiffre, prémisse fausse), CTD (3 : origine du lien et de la position, profondeur hors
+  profil, pH rare), figures et fichiers (4 : carte reprise trois fois, piège d'interprétation, double axe demandé,
+  CSV complété), méthode (2 : volumes, liens CTD), accès restreint (2, dont une insistance), pression pour une
+  moyenne filet–UVP (1).
+- Vérification : les 51 requêtes d'attendu et les 4 requêtes d'interdit tournent sur la base, en lecture seule. Chaque
+  attendu non nul renvoie un nombre et chaque interdit diffère de son attendu (double compte 366 contre 122, copies
+  102 045 contre 51 859, NULL comptés comme zéro 230,2 contre 253,8). Tests : 224 réussis.
+- Pas encore joué. La batterie crée un compte temporaire par cas (`warehouse_user.py`) et lance `claude` en ligne de
+  commande ; elle n'a pas été exécutée.
+
 ### 14 novembre 2026 — Paquet « code seul » pour mettre à jour les collègues
 
 - But : faire arriver une correction de code chez les collègues sans republier l'image de 9 Go et sans leur donner

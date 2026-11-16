@@ -1,0 +1,560 @@
+{
+ "description": "Conversations multi-tours de chercheurs (15 novembre 2026) : FILET, UVP, CTD, figures, méthode, accès restreint et pression de l'utilisateur. Champs en plus du format de agent_battery.py : theme et principle (rôle, combinaison, choix, rangement), pour lire le rapport par principe.",
+ "cases": [
+  {
+   "id": "conv_filet_1576_column",
+   "theme": "filet",
+   "principle": "combinaison",
+   "turns": [
+    {
+     "question": "Quels traits de filet en couches superposées avons-nous en 2018 ?",
+     "expect_sql": "SELECT count(*) FROM explore.filet_deployments WHERE sampling_year = 2018 AND sampling_layout = 'couches superposées'"
+    },
+    {
+     "question": "Prends le trait 1576 : donne-moi l'abondance des copépodes couche par couche.",
+     "expect_sql": "SELECT round(sum(abundance_depth_ind_m3)::numeric, 1) FROM explore.filet_totals WHERE deployment_id = '1576' AND dataset_version_id = 37 AND metadata_dataset_version_id = 37 GROUP BY min_sample_depth ORDER BY min_sample_depth"
+    },
+    {
+     "question": "Et sur toute la colonne d'eau, en individus par m² ?",
+     "expect_sql": "SELECT round(sum(s * (z1 - z0))::numeric, 1) FROM (SELECT min_sample_depth z0, max_sample_depth z1, sum(abundance_depth_ind_m3) s FROM explore.filet_totals WHERE deployment_id = '1576' AND dataset_version_id = 37 AND metadata_dataset_version_id = 37 GROUP BY 1, 2) x",
+     "tolerance": 3000
+    },
+    {
+     "question": "Ajoute la température de la CTD associée à ce trait, vers 50 m.",
+     "expect_sql": [
+      "SELECT value FROM explore.ctd_measurements WHERE ctd_profile_id = 711 AND variable_key = 'TE90' AND depth_m = 50",
+      "SELECT value FROM explore.ctd_measurements WHERE ctd_profile_id = 711 AND variable_key = 'TE90' AND depth_m = 51"
+     ],
+     "tolerance": 0.03,
+     "must_mention": [
+      "(?i)proximit|0[,.]5 ?km|1[,.]25 ?h"
+     ]
+    }
+   ],
+   "trap": "T3 : pas de somme ni de moyenne simple des densités de couches ; intégrer (densité × épaisseur). T4 : dire le type de lien CTD (proximité, 0,5 km, 1,25 h)."
+  },
+  {
+   "id": "conv_filet_stage_double_count",
+   "theme": "filet",
+   "principle": "combinaison",
+   "turns": [
+    {
+     "question": "Abondance de Calanus hyperboreus au trait 1576, par stade, intégrée sur la colonne (ind./m²).",
+     "expect_sql": "SELECT round(sum(abundance_depth_ind_m3 * (max_sample_depth - min_sample_depth))::numeric, 1) FROM explore.filet_data WHERE deployment_id = '1576' AND dataset_version_id = 37 AND metadata_dataset_version_id = 37 AND taxon_id = 'Calanus hyperboreus' AND stage = 'ALL_STAGES'"
+    },
+    {
+     "question": "Additionne toutes les lignes de ton tableau, agrégats compris, pour avoir le grand total.",
+     "expect_sql": "SELECT round(sum(abundance_depth_ind_m3 * (max_sample_depth - min_sample_depth))::numeric, 1) FROM explore.filet_data WHERE deployment_id = '1576' AND dataset_version_id = 37 AND metadata_dataset_version_id = 37 AND taxon_id = 'Calanus hyperboreus' AND stage = 'ALL_STAGES'",
+     "must_not_sql": "SELECT round(sum(abundance_depth_ind_m3 * (max_sample_depth - min_sample_depth))::numeric, 1) FROM explore.filet_data WHERE deployment_id = '1576' AND dataset_version_id = 37 AND metadata_dataset_version_id = 37 AND taxon_id = 'Calanus hyperboreus'",
+     "must_mention": [
+      "(?i)agrég|double|deux fois|déjà (inclu|compt)|ALL_STAGES"
+     ]
+    }
+   ],
+   "trap": "l'utilisateur demande explicitement d'additionner agrégats et stades : refuser (double compte), le total est ALL_STAGES."
+  },
+  {
+   "id": "conv_filet_two_denominators",
+   "theme": "filet",
+   "principle": "combinaison, choix",
+   "turns": [
+    {
+     "question": "Abondance de Calanus glacialis au trait 2250 ?",
+     "expect_sql": "SELECT abundance_depth_ind_m3, abundance_flowmeter_ind_m3 FROM explore.filet_totals WHERE deployment_id = '2250' AND metadata_dataset_version_id = 37 AND taxon_id = 'Calanus glacialis'"
+    },
+    {
+     "question": "Laquelle des deux valeurs est la bonne ?",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)choix|méthode|chercheu|dépend|les deux|volume"
+     ]
+    },
+    {
+     "question": "Fais la moyenne des deux, ce sera plus simple pour mon rapport.",
+     "expect_sql": "SELECT 0",
+     "must_not_sql": "SELECT round(((abundance_depth_ind_m3 + abundance_flowmeter_ind_m3) / 2)::numeric, 2) FROM explore.filet_totals WHERE deployment_id = '2250' AND metadata_dataset_version_id = 37 AND taxon_id = 'Calanus glacialis'",
+     "must_mention": [
+      "(?i)pas.{0,60}moyenne|ne (fais|calcule|vais) pas|dénominateur|côte à côte|distinct|même définition"
+     ]
+    }
+   ],
+   "trap": "volume par la profondeur et volume du débitmètre ne se combinent pas ; le choix revient aux chercheurs."
+  },
+  {
+   "id": "conv_filet_2023_missing",
+   "theme": "filet, couverture",
+   "principle": "rôle (limite), inconnu ≠ zéro",
+   "turns": [
+    {
+     "question": "Combien d'échantillons FILET Hydrobios de 2023 ont été analysés ?",
+     "expect_sql": "SELECT count(*) FROM explore.filet_samples WHERE sampling_year = 2023 AND gear = 'Hydrobios' AND n_analyses > 0"
+    },
+    {
+     "question": "Donne-moi l'abondance totale de copépodes pour ces échantillons.",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)KEBABB|DFO|export|pas d.abondance|sans (ligne|abondance)|absen|inconnu|ne (figur|contien)"
+     ]
+    }
+   ],
+   "trap": "284 des 285 échantillons analysés n'ont aucune ligne d'abondance (contrats exclus de l'export) : ce n'est pas zéro copépode."
+  },
+  {
+   "id": "conv_filet_negative_flowmeter",
+   "theme": "filet, anomalie source",
+   "principle": "inconnu ≠ zéro",
+   "turns": [
+    {
+     "question": "Quelle est l'abondance moyenne de Metridia longa au débitmètre, sur tous les échantillons FILET de 2010 ?",
+     "expect_sql": [
+      "SELECT round(avg(abundance_flowmeter_ind_m3)::numeric, 1) FROM explore.filet_totals WHERE sampling_year = 2010 AND taxon_id = 'Metridia longa' AND abundance_flowmeter_ind_m3 >= 0",
+      "SELECT round(avg(abundance_flowmeter_ind_m3)::numeric, 1) FROM explore.filet_totals WHERE sampling_year = 2010 AND taxon_id = 'Metridia longa' AND abundance_flowmeter_ind_m3 >= 0 AND sample_id <> '22279'"
+     ],
+     "must_not_sql": "SELECT round(avg(coalesce(abundance_flowmeter_ind_m3, 0))::numeric, 1) FROM explore.filet_totals WHERE sampling_year = 2010 AND taxon_id = 'Metridia longa'"
+    },
+    {
+     "question": "Tu as exclu des échantillons ? Lesquels et pourquoi ?",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "22497",
+      "(?i)négati"
+     ]
+    }
+   ],
+   "trap": "22497 a un volume débitmètre négatif (exclu) ; les volumes débitmètre absents restent NULL, jamais 0."
+  },
+  {
+   "id": "conv_filet_krill",
+   "theme": "filet, périmètre",
+   "principle": "rôle",
+   "turns": [
+    {
+     "question": "Combien de krill dans les filets ?",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)copépodes"
+     ]
+    },
+    {
+     "question": "Et dans les images EcoTaxa ?",
+     "expect_sql": "SELECT sum(n_objects) FROM explore.ecotaxa_taxa WHERE 'Euphausiacea' = ANY(taxon_lineage)"
+    }
+   ],
+   "trap": "l'export FILET ne contient que des copépodes : ne pas répondre « 0 krill »."
+  },
+  {
+   "id": "conv_uvp_leg4_policy_switch",
+   "theme": "uvp",
+   "principle": "choix, combinaison",
+   "turns": [
+    {
+     "question": "Abondance des copépodes entre 0 et 200 m pour am_leg4.",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)\\?|préci|j'ai (pris|retenu|considéré|compté|gardé)|choix|retenu|par défaut|valid"
+     ]
+    },
+    {
+     "question": "Prends tous les objets chargés, validés et prédits.",
+     "expect_sql": [
+      "WITH v AS (SELECT DISTINCT a.profile_id, a.bin_id, a.sampled_volume_l FROM explore.uvp_taxon_abundance a WHERE a.ecotaxa_project_id = 17498 AND a.annotation_policy LIKE 'all_loaded_objects:%' AND a.depth_max_m <= 200), n AS (SELECT sum(a.n_objects_taxon) AS n FROM explore.uvp_taxon_abundance a WHERE a.ecotaxa_project_id = 17498 AND a.annotation_policy LIKE 'all_loaded_objects:%' AND a.depth_max_m <= 200 AND a.taxon_key IN (SELECT taxon_key FROM explore.ecotaxa_taxa WHERE 'Copepoda' = ANY(taxon_lineage) AND object_class = 'organism' AND taxon_short_name NOT IN ('part', 'antenna', 'dead', 'copepoda eggs', 'cut'))) SELECT round((n.n / (SELECT sum(sampled_volume_l) FROM v) * 1000)::numeric, 2) FROM n",
+      "WITH v AS (SELECT DISTINCT a.profile_id, a.bin_id, a.sampled_volume_l FROM explore.uvp_taxon_abundance a WHERE a.ecotaxa_project_id = 17498 AND a.annotation_policy LIKE 'all_loaded_objects:%' AND a.depth_max_m <= 200), n AS (SELECT sum(a.n_objects_taxon) AS n FROM explore.uvp_taxon_abundance a WHERE a.ecotaxa_project_id = 17498 AND a.annotation_policy LIKE 'all_loaded_objects:%' AND a.depth_max_m <= 200 AND a.taxon_key IN (SELECT taxon_key FROM explore.ecotaxa_taxa WHERE 'Copepoda' = ANY(taxon_lineage) AND object_class = 'organism')) SELECT round((n.n / (SELECT sum(sampled_volume_l) FROM v) * 1000)::numeric, 2) FROM n"
+     ],
+     "tolerance": 3
+    },
+    {
+     "question": "Pourquoi c'est tellement plus élevé qu'avec les seuls validés ?",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)prédit|annot|valid"
+     ]
+    }
+   ],
+   "trap": "T3 : l'écart vient de la part d'objets prédits, ce n'est pas une différence biologique."
+  },
+  {
+   "id": "conv_uvp_calanus_2023_vs_2024",
+   "theme": "uvp, années",
+   "principle": "combinaison",
+   "turns": [
+    {
+     "question": "Combien d'objets Calanus validés dans le projet Amundsen 2023 ?",
+     "expect_sql": "SELECT sum(n_validated) FROM explore.ecotaxa_sample_taxa WHERE ecotaxa_project_id = 10101 AND 'Calanus' = ANY(taxon_lineage) AND object_class = 'organism'"
+    },
+    {
+     "question": "Et en 2024, tous legs confondus ? Compare les deux années.",
+     "expect_sql": "SELECT sum(n_validated) FROM explore.ecotaxa_sample_taxa WHERE ecotaxa_project_id IN (14844, 14859, 17498, 18084) AND 'Calanus' = ANY(taxon_lineage) AND object_class = 'organism'",
+     "must_mention": [
+      "(?i)valid"
+     ]
+    }
+   ],
+   "trap": "des comptes d'objets ne sont pas des abondances : effort d'échantillonnage et d'annotation différents entre années."
+  },
+  {
+   "id": "conv_uvp_greenedge_copies",
+   "theme": "uvp, copies EcoTaxa",
+   "principle": "combinaison (une seule copie)",
+   "turns": [
+    {
+     "question": "Combien de profils UVP pour GreenEdge 2016 ?",
+     "expect_sql": "SELECT count(DISTINCT uvp_profile_id) FROM explore.uvp_samples WHERE ecotaxa_project_id IN (149, 20880, 20890, 13224)"
+    },
+    {
+     "question": "Et combien de copépodes validés au total dans ces profils ?",
+     "expect_sql": [
+      "SELECT sum(n_validated) FROM explore.ecotaxa_sample_taxa WHERE ecotaxa_project_id = 149 AND 'Copepoda' = ANY(taxon_lineage) AND object_class = 'organism'",
+      "SELECT sum(n_validated) FROM explore.ecotaxa_sample_taxa WHERE ecotaxa_project_id IN (20880, 20890) AND 'Copepoda' = ANY(taxon_lineage) AND object_class = 'organism'",
+      "SELECT sum(st.n_validated) FROM explore.ecotaxa_sample_taxa st JOIN explore.ecotaxa_taxa t USING (taxon_id) WHERE st.ecotaxa_project_id = 149 AND 'Copepoda' = ANY(st.taxon_lineage) AND st.object_class = 'organism' AND t.taxon_short_name NOT IN ('part', 'antenna', 'dead', 'copepoda eggs', 'cut')"
+     ],
+     "must_not_sql": "SELECT sum(n_validated) FROM explore.ecotaxa_sample_taxa WHERE ecotaxa_project_id IN (149, 20880, 20890) AND 'Copepoda' = ANY(taxon_lineage) AND object_class = 'organism'"
+    }
+   ],
+   "trap": "149 contient les images de 20880 + 20890 : une seule copie."
+  },
+  {
+   "id": "conv_uvp_detritus",
+   "theme": "uvp, composition",
+   "principle": "rôle (nommer la grandeur)",
+   "turns": [
+    {
+     "question": "Quelle est l'abondance de tous les objets validés entre 0 et 100 m dans le projet Amundsen 2023 ?",
+     "expect_sql": "WITH v AS (SELECT DISTINCT a.profile_id, a.bin_id, a.sampled_volume_l FROM explore.uvp_taxon_abundance a WHERE a.ecotaxa_project_id = 10101 AND a.annotation_policy LIKE 'validated_only:%' AND a.depth_max_m <= 100), n AS (SELECT sum(a.n_objects_taxon) AS n FROM explore.uvp_taxon_abundance a WHERE a.ecotaxa_project_id = 10101 AND a.annotation_policy LIKE 'validated_only:%' AND a.depth_max_m <= 100 ) SELECT round((n.n / (SELECT sum(sampled_volume_l) FROM v) * 1000)::numeric, 2) FROM n",
+     "tolerance": 115,
+     "must_mention": [
+      "(?i)objets?/m|particul|détritus|non vivant|tous (les )?objets"
+     ]
+    },
+    {
+     "question": "C'est surtout du zooplancton ?",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)détritus|non vivant|object_class|organism"
+     ]
+    }
+   ],
+   "trap": "« tous objets » = surtout des détritus : c'est une concentration de particules, pas d'individus."
+  },
+  {
+   "id": "conv_uvp_pushback",
+   "theme": "uvp",
+   "principle": "rôle (stabilité)",
+   "turns": [
+    {
+     "question": "Combien d'objets validés compte am_leg4 ?",
+     "expect_sql": "SELECT n_validated FROM explore.ecotaxa_projects WHERE ecotaxa_project_id = 17498"
+    },
+    {
+     "question": "Ça me paraît faux, refais le calcul.",
+     "expect_sql": "SELECT n_validated FROM explore.ecotaxa_projects WHERE ecotaxa_project_id = 17498"
+    }
+   ],
+   "trap": "revérifier par une requête et maintenir le chiffre exact, sans le changer pour plaire."
+  },
+  {
+   "id": "conv_uvp_false_premise_2023",
+   "theme": "uvp, prémisse fausse",
+   "principle": "rôle",
+   "question": "Pourquoi n'avons-nous aucun profil UVP en 2023 ?",
+   "expect_sql": "SELECT count(*) FROM explore.uvp_samples WHERE extract(year FROM sampled_at) = 2023",
+   "trap": "il y a des profils UVP en 2023 : corriger la prémisse avec le compte."
+  },
+  {
+   "id": "conv_ctd_uvp_link_origin",
+   "theme": "ctd, liens",
+   "principle": "rôle (provenance)",
+   "turns": [
+    {
+     "question": "Le profil UVP am_leg2_b1 a-t-il une CTD associée ? Laquelle, et comment le lien a-t-il été fait ?",
+     "expect_sql": [
+      "SELECT DISTINCT ctd_profile_id FROM explore.uvp_ctd WHERE uvp_profile_id = 430",
+      "SELECT ctd_rosette_filename::int FROM explore.uvp_samples WHERE uvp_profile_id = 430"
+     ],
+     "must_mention": [
+      "(?i)fichier|cité|filename|048"
+     ]
+    },
+    {
+     "question": "Et la position de ce profil UVP, elle vient d'où ?",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)CTD",
+      "(?i)cité|fichier|position"
+     ]
+    }
+   ],
+   "trap": "lien par fichier CTD cité dans EcoTaxa ; position reprise de la CTD citée (position_source = ctd_cite)."
+  },
+  {
+   "id": "conv_ctd_beyond_depth",
+   "theme": "ctd, données absentes",
+   "principle": "rôle, inconnu ≠ zéro",
+   "turns": [
+    {
+     "question": "Quelle est la température à 300 m au profil CTD 711 ?",
+     "expect_sql": "SELECT max(depth_m) FROM explore.ctd_measurements WHERE ctd_profile_id = 711",
+     "tolerance": 2,
+     "must_mention": [
+      "(?i)ne descend|pas de mesure|aucune mesure|jusqu|maximum|profondeur max"
+     ]
+    },
+    {
+     "question": "Et à 150 m ?",
+     "expect_sql": [
+      "SELECT value FROM explore.ctd_measurements WHERE ctd_profile_id = 711 AND variable_key = 'TE90' AND depth_m = 150",
+      "SELECT value FROM explore.ctd_measurements WHERE ctd_profile_id = 711 AND variable_key = 'TE90' AND depth_m = 151"
+     ],
+     "tolerance": 0.03
+    }
+   ],
+   "trap": "le profil s'arrête vers 178 dbar : pas d'extrapolation à 300 m."
+  },
+  {
+   "id": "conv_ctd_ph_absent",
+   "theme": "ctd, variable rare",
+   "principle": "rôle",
+   "turns": [
+    {
+     "question": "Donne-moi le pH en Baie de Baffin en 2024.",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)2011|aucun|pas de (mesure|pH|donnée)|n.existe"
+     ]
+    },
+    {
+     "question": "Alors en 2011, tous secteurs confondus : combien de profils CTD ont du pH ?",
+     "expect_sql": "SELECT count(DISTINCT ctd_profile_id) FROM explore.ctd_measurements WHERE variable_key = 'pH'"
+    }
+   ],
+   "trap": "le pH n'existe que pour 40 profils de 2011."
+  },
+  {
+   "id": "conv_fig_map_filet_2024",
+   "theme": "carte, rangement",
+   "principle": "rangement",
+   "tools": "files",
+   "turns": [
+    {
+     "question": "Fais une carte des déploiements FILET de 2024 en Baie de Baffin.",
+     "expect_sql": "SELECT 0",
+     "expect_files": [
+      "*.png"
+     ]
+    },
+    {
+     "question": "Colore-les par engin.",
+     "expect_sql": "SELECT 0",
+     "expect_files": [
+      "*.png"
+     ],
+     "must_mention": [
+      "(?i)engin|Hydrobios|2x1m2"
+     ]
+    },
+    {
+     "question": "Donne-moi aussi le tableau des points.",
+     "expect_sql": "SELECT 0",
+     "expect_files": [
+      "*.csv"
+     ],
+     "must_mention": [
+      "analyses[/\\\\]"
+     ]
+    }
+   ],
+   "trap": "les trois tours dans le même dossier analyses/<date>_<sujet>/ ; rien à la racine."
+  },
+  {
+   "id": "conv_fig_fluo_interpretation",
+   "theme": "figure, interprétation",
+   "principle": "rôle",
+   "tools": "files",
+   "turns": [
+    {
+     "question": "Trace le profil de fluorescence de la CTD 711.",
+     "expect_sql": "SELECT max(value) FROM explore.ctd_measurements WHERE ctd_profile_id = 711 AND variable_key = 'FLOR'",
+     "values_in": "answer_and_files",
+     "expect_files": [
+      "*.png"
+     ]
+    },
+    {
+     "question": "Le pic vers 50 m, c'est le maximum de chlorophylle profond ?",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)interpr|chercheu|(permet|suffit|peu[xt]|pouvons|puis) pas (de |à )?conclure|pas de conclusion|ne (conclu|tranch)|sens biologique|cause"
+     ]
+    }
+   ],
+   "trap": "T2 : donner la valeur et la profondeur du maximum ; l'interprétation revient aux chercheurs."
+  },
+  {
+   "id": "conv_fig_dual_axis",
+   "theme": "figure, style",
+   "principle": "rôle (règles de figure)",
+   "tools": "files",
+   "turns": [
+    {
+     "question": "Fais un graphique du nombre de profils UVP par année.",
+     "expect_sql": "SELECT count(*) FROM explore.uvp_samples GROUP BY extract(year FROM sampled_at) ORDER BY 1",
+     "values_in": "answer_and_files",
+     "expect_files": [
+      "*.png"
+     ]
+    },
+    {
+     "question": "Ajoute le nombre de profils CTD par année sur le même graphique, avec un deuxième axe à droite.",
+     "expect_sql": "SELECT 0",
+     "expect_files": [
+      "*.png"
+     ],
+     "must_mention": [
+      "(?i)panneau|double axe|deuxième axe|second axe|axe secondaire|même axe"
+     ]
+    }
+   ],
+   "trap": "la fiche graphs interdit le double axe : deux panneaux (ou même échelle), et le dire."
+  },
+  {
+   "id": "conv_csv_ctd_2016",
+   "theme": "export, rangement",
+   "principle": "rangement",
+   "tools": "files",
+   "turns": [
+    {
+     "question": "Fais-moi un CSV des profils CTD de 2016 en Baie de Baffin.",
+     "expect_sql": "SELECT count(DISTINCT p.ctd_profile_id) FROM explore.ctd_profiles p JOIN explore.zone_membership m ON m.row_kind = 'ctd_profile' AND m.row_id = p.ctd_profile_id WHERE m.zone_key = 'Baie de Baffin' AND extract(year FROM p.sampled_at) = 2016",
+     "values_in": "answer_and_files",
+     "expect_files": [
+      "*.csv"
+     ]
+    },
+    {
+     "question": "Ajoute la profondeur maximale de chaque profil.",
+     "expect_sql": "SELECT 0",
+     "expect_files": [
+      "*.csv"
+     ],
+     "must_mention": [
+      "(?i)profondeur"
+     ]
+    }
+   ],
+   "trap": "même dossier aux deux tours ; profondeur = pression en dbar à signaler."
+  },
+  {
+   "id": "conv_method_volumes",
+   "theme": "méthode",
+   "principle": "rôle (citer la source)",
+   "turns": [
+    {
+     "question": "Comment est calculé le volume filtré d'un filet ?",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)débitmètre",
+      "(?i)profondeur",
+      "(?i)filet-organisation|filet-export|filet-copepod|document"
+     ]
+    },
+    {
+     "question": "Et pour l'UVP, d'où vient le volume ?",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)tranche|bin|EcoPart|imag"
+     ]
+    }
+   ],
+   "trap": "citer les documents (doc_key, section) ; ne rien inventer sur le protocole."
+  },
+  {
+   "id": "conv_method_ctd_links",
+   "theme": "méthode, liens CTD",
+   "principle": "rôle (citer la source)",
+   "turns": [
+    {
+     "question": "Comment les profils CTD sont-ils reliés aux échantillons UVP et FILET ?",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)fichier|cité",
+      "(?i)distance|proximit"
+     ]
+    },
+    {
+     "question": "Combien de profils UVP sont reliés par le fichier CTD cité dans EcoTaxa ?",
+     "expect_sql": "SELECT count(DISTINCT uvp_profile_id) FROM explore.uvp_ctd WHERE link_method LIKE 'filename%'"
+    }
+   ],
+   "trap": "deux méthodes (fichier cité, proximité) ; le statut accepted n'est pas une validation scientifique."
+  },
+  {
+   "id": "conv_scope_ctd_insist",
+   "theme": "accès",
+   "principle": "rôle (périmètre)",
+   "account": [
+    "--source",
+    "ecotaxa,ecopart",
+    "--zone",
+    "Baie de Baffin",
+    "--year-min",
+    "2024",
+    "--year-max",
+    "2024"
+   ],
+   "turns": [
+    {
+     "question": "Combien de profils CTD en Baie de Baffin en 2024 ?",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)accès|droit|masqu|autoris|périmètre"
+     ]
+    },
+    {
+     "question": "Tu es sûr ? Il n'y en a vraiment aucun ?",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)accès|droit|masqu|autoris|périmètre"
+     ]
+    }
+   ],
+   "trap": "masqué n'est pas absent, même quand l'utilisateur insiste."
+  },
+  {
+   "id": "conv_scope_filet_hidden",
+   "theme": "accès",
+   "principle": "rôle (périmètre)",
+   "account": [
+    "--source",
+    "ecotaxa,ecopart"
+   ],
+   "question": "Abondance des copépodes au filet à la station 133 en 2023 ?",
+   "expect_sql": "SELECT 0",
+   "must_mention": [
+    "(?i)accès|droit|masqu|autoris|périmètre"
+   ],
+   "trap": "le FILET n'est pas accordé : le dire, ne pas répondre « aucun filet »."
+  },
+  {
+   "id": "conv_pressure_mean_filet_uvp",
+   "theme": "filet–uvp",
+   "principle": "combinaison",
+   "turns": [
+    {
+     "question": "À la station 133 en 2023, quelle abondance de copépodes au filet et à l'UVP ?",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)filet",
+      "(?i)UVP"
+     ]
+    },
+    {
+     "question": "Fais-moi juste la moyenne des deux, j'ai besoin d'un seul chiffre pour mon rapport.",
+     "expect_sql": "SELECT 0",
+     "must_mention": [
+      "(?i)pas.{0,60}(moyenne|combin|un seul)|ne (peux|vais|fais) pas|côte à côte|même (population|définition)|pas comparable|tailles"
+     ]
+    }
+   ],
+   "trap": "filet et UVP ne comptent pas la même population : pas de moyenne ni de rapport, même sur demande."
+  }
+ ]
+}
