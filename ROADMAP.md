@@ -27,6 +27,39 @@
 - Limites : rappels par motifs dans le texte SQL, ils peuvent manquer un piège écrit autrement ou en signaler un
   déjà traité ; leur effet sur les réponses n'est pas encore mesuré par une batterie d'agents.
 
+### 16 novembre 2026 — Fiche graphs : rubrique CLARTÉ et gabarit R
+
+- Revue des 33 figures produites par les agents (PDF hors dépôt : `~/neolab_agent_battery/revue_figures_20261116.pdf`).
+  Les valeurs sont justes, mais plusieurs figures du 10 et du 11 novembre sont peu lisibles. Défauts relevés :
+  légende sur les données, deux séries identiques superposées, série écrasée près de zéro, ligne tracée à travers des
+  tranches masquées, libellés coupés en plein mot, longitudes dupliquées sur une carte, entrée de légende sans
+  élément visible, grandes marges vides, 23 camemberts, corrélations sans effectif. Les figures faites après la fiche
+  graphs (14 novembre et après) n'ont pas ces défauts.
+- `scripts/warehouse_context.py`, fiche graphs : rubrique CLARTÉ en règles générales, sans liste de cas :
+  - rien ne se superpose ;
+  - chaque série se voit ;
+  - aucune ligne ne relie deux points à travers une tranche absente ;
+  - aucun texte n'est coupé ;
+  - chaque graduation apparaît une seule fois ;
+  - une entrée de légende par élément visible ;
+  - le cadrage suit les données ;
+  - beaucoup de catégories se trient, se regroupent ou passent en tableau ;
+  - tout coefficient tracé porte son effectif n ;
+  - l'image finale est relue point par point.
+- R installé sur ce PC (R 4.6.2 par winget, pour toute la machine). Bibliothèques installées dans la bibliothèque
+  utilisateur : ggplot2, dplyr, tidyr, readr, jsonlite, svglite, ragg, patchwork, scales, oce, gsw, cmocean, sf,
+  rnaturalearth et rnaturalearthdata (15 sur 15 chargées).
+- Gabarit `STYLE_CODE_R`, servi par la fiche, avec les mêmes tailles, palette, police et formats que le gabarit
+  Python : `theme_neolab()`, `nombre_fr` (espace fine, virgule, vrai signe moins), `couleurs(entites)` (couleur liée à
+  l'entité), `taxon` (italiques, passée comme fonction), `lettres(p)` (patchwork), `enregistrer(p, nom, dossier, …)`
+  (PNG 300 dpi par ragg, SVG par svglite, PDF). Règle sur les NA de R : ne jamais ajouter `na.rm = TRUE` ni remplacer
+  un NA par 0 sans compter et dire les valeurs écartées.
+- Erreur trouvée en essayant le gabarit : des libellés passés en vecteur dans l'ordre des données se décalent, car
+  ggplot trie les catégories ; la barre d'un taxon portait alors le nom d'un autre. Corrigé : `labels = taxon` (la
+  fonction) et `values = couleurs(...)` (couleurs nommées). Le test `CopiedAsIsInR` fixe ce point avec des données
+  hors de l'ordre alphabétique (il est sauté si R est absent).
+- Tests : 226 réussis. La fiche n'atteint les agents qu'après un déploiement : poussée, puis mise à jour du conteneur.
+
 ### 16 novembre 2026 — Batterie lot 2 : 14 conversations neuves, attendus fixés avant lancement
 
 - `tests/agent_battery/conversation_cases_lot2.json` (commit 0020fae, avant tout lancement) : 14 conversations,

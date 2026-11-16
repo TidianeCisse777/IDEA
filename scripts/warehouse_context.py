@@ -56,6 +56,63 @@ def enregistrer(fig, nom, dossier):
     return [os.path.abspath(c) for c in chemins]
 """
 
+# Même style en R (ggplot2), quand l'utilisateur travaille en R : copier tel quel en tête de script.
+STYLE_CODE_R = r"""suppressPackageStartupMessages({library(ggplot2); library(scales)})
+LARGEUR_CM <- c(colonne = 8, intermediaire = 12, page = 16)   # taille d'impression, collée sans redimensionner
+PALETTE <- c('#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948')  # ordre fixe
+AUTRES <- '#9e9d97'
+STATUT <- list(confirmed = c('#007B88', 'solid'), exploratory = c('#B87514', 'dashed'), uncertain = c('#737C86', 'dotted'))
+POLICE <- if ('DejaVu Sans' %in% systemfonts::system_fonts()$family) 'DejaVu Sans' else 'sans'
+# nombres à la française sur chaque échelle continue : scale_x_continuous(labels = nombre_fr)
+nombre_fr <- label_number(big.mark = ' ', decimal.mark = ',', style_negative = 'minus', trim = TRUE)
+
+theme_neolab <- function() {
+  theme_minimal(base_size = 8, base_family = POLICE) %+replace% theme(
+    plot.title = element_text(size = 9, hjust = 0), plot.title.position = 'plot',
+    strip.text = element_text(size = 9, hjust = 0),
+    axis.line = element_line(colour = '#9a9a9a', linewidth = 0.3),
+    axis.ticks = element_line(colour = '#9a9a9a', linewidth = 0.3),
+    panel.grid.major = element_line(colour = '#e3e3e3', linewidth = 0.25), panel.grid.minor = element_blank(),
+    legend.position = 'bottom', legend.title = element_blank(),
+    plot.background = element_rect(fill = 'white', colour = NA))
+}
+theme_set(theme_neolab())
+update_geom_defaults('line', list(linewidth = 0.45))   # environ 1,2 pt
+
+couleurs <- function(entites) setNames(PALETTE[seq_along(entites)], entites)   # couleur liée à l'entité, pas au rang
+
+taxon <- function(noms) {
+  # genre et espèce en italique, « spp. » en romain; un nom seul (rang inconnu) reste en romain.
+  # Passer la fonction, jamais un vecteur de libellés (ggplot trie les catégories) :
+  # scale_fill_manual(values = couleurs(noms), labels = taxon)
+  as.expression(lapply(noms, function(nom) {
+    m <- strsplit(nom, ' ', fixed = TRUE)[[1]]
+    if (length(m) %in% 2:3 && grepl('^[A-Z][a-z]+$', m[1]) && grepl('^[a-z.]+$', m[2]) &&
+        all(grepl('^[A-Za-z]+$', m) | m %in% c('spp.', 'sp.')))
+      parse(text = paste(ifelse(m %in% c('spp.', 'sp.'), sprintf('"%s"', m), sprintf('italic("%s")', m)),
+                         collapse = '~'))[[1]]
+    else nom
+  }))
+}
+
+lettres <- function(p) {
+  # panneaux assemblés avec patchwork : (a), (b)... en haut à gauche de chaque panneau
+  p + patchwork::plot_annotation(tag_levels = 'a', tag_prefix = '(', tag_suffix = ')') &
+    theme(plot.tag = element_text(size = 9, family = POLICE))
+}
+
+enregistrer <- function(p, nom, dossier, largeur = 'page', hauteur_cm = 9) {
+  # dossier = celui de la question (analyses/AAAA-MM-JJ_sujet/); PNG 300 dpi, SVG et PDF à la taille d'impression
+  dir.create(dossier, recursive = TRUE, showWarnings = FALSE)
+  l <- LARGEUR_CM[[largeur]]
+  chemins <- file.path(dossier, paste0(nom, c('.png', '.svg', '.pdf')))
+  ggsave(chemins[1], p, device = ragg::agg_png, width = l, height = hauteur_cm, units = 'cm', dpi = 300, bg = 'white')
+  ggsave(chemins[2], p, device = svglite::svglite, width = l, height = hauteur_cm, units = 'cm')
+  ggsave(chemins[3], p, device = if (capabilities('cairo')) cairo_pdf else pdf, width = l, height = hauteur_cm, units = 'cm')
+  normalizePath(chemins)
+}
+"""
+
 
 GRAPHICS = view(
     # Bibliothèques et outil
@@ -70,7 +127,18 @@ GRAPHICS = view(
     'vérifier entrées, unités, convention et domaine de validité; toute grandeur dérivée garde formule et provenance. Avec gsw, '
     'distinguer salinité pratique/absolue et température in situ/conservative; ne jamais substituer pression et profondeur '
     '(profondeur = -gsw.z_from_p(pression_dbar, latitude du profil), TEOS-10). Clarifier les hypothèses manquantes avant tout calcul. '
-    'Respecter un choix explicite de l’utilisateur. STYLE (à copier) :\n' + STYLE_CODE,
+    'Respecter un choix explicite de l’utilisateur. '
+    'R : si l’utilisateur travaille en R ou le demande, tout le script est en R (pas de mélange avec Python), avec le '
+    'bloc STYLE R (fin de cette fiche) copié tel quel : mêmes tailles, palette, police, italiques et formats que le '
+    'style Python. ggplot2 pour toute figure, patchwork pour assembler des panneaux (lettres(p)), dplyr/tidyr/readr '
+    'pour les données, sf avec rnaturalearth pour les cartes (coord_sf; crs = 4326 pour les coordonnées du warehouse), '
+    'gsw (TEOS-10, mêmes conventions qu’en Python : gsw_z_from_p), oce pour les objets CTD, cmocean pour une variable '
+    'océanographique continue. Couleurs : scale_*_manual(values = couleurs(entites)), jamais une palette passée dans '
+    'l’ordre des données; libellés de taxons par la fonction taxon (labels = taxon); nombres à la française par '
+    'labels = nombre_fr sur chaque échelle continue; profondeur par scale_y_reverse(). NA en R : sum(), mean() et les '
+    'comparaisons renvoient NA dès qu’une valeur manque; ne jamais ajouter na.rm = TRUE ni remplacer un NA par 0 sans '
+    'compter et dire les valeurs écartées (inconnu ≠ zéro). Lancer le script avec Rscript et relire l’image produite. '
+    'STYLE (à copier) :\n' + STYLE_CODE + '\nSTYLE R (à copier en tête d’un script R) :\n' + STYLE_CODE_R,
     # Données et calcul
     'DONNÉES : la figure montre le grain documenté et un résultat réellement calculé; agréger dans SQL avant transfert. '
     'DbHub limite une réponse à 1 000 lignes : contrôler le nombre attendu et toute indication de résultat tronqué; ne '
@@ -106,6 +174,22 @@ GRAPHICS = view(
     '(jet, rainbow); séquentielle pour une grandeur, divergente centrée sur une valeur de référence nommée (ex. 0 pour un '
     'écart ou une anomalie) (Thyng et al. 2016). '
     'INTERDITS : 3D décorative, double axe, camemberts, ombres, dégradés, étiquettes de valeur sur chaque point. '
+    'CLARTÉ (la figure doit se lire sans effort, à sa taille d’impression; des valeurs justes ne suffisent pas) : '
+    'RIEN NE SE SUPERPOSE : légende, étiquettes et textes jamais sur des données ni entre eux (légende sous la figure '
+    'ou dans une zone vide vérifiée à l’image); au-delà d’une quinzaine d’étiquettes sur une carte, numéroter et donner '
+    'la correspondance dans la légende de figure. CHAQUE SÉRIE SE VOIT : deux séries confondues ou identiques ne se '
+    'superposent pas (en tracer une et le dire dans la légende de figure); une série écrasée près de zéro par une '
+    'autre plus grande va dans son propre panneau. PAS DE LIEN INVENTÉ : des données par couche ou par tranche se '
+    'tracent en barres ou en marches; une ligne ne relie jamais deux points à travers une tranche manquante, masquée '
+    'ou non renseignée (la laisser vide ou hachurée et légendée). TEXTE ENTIER : aucun libellé coupé au milieu d’un '
+    'mot ni tronqué; un libellé long est raccourci (identifiant + nom court) et donné en entier dans la légende de '
+    'figure. GRADUATIONS : chaque valeur une seule fois, à sa place (cartes : étiquettes de méridiens et parallèles '
+    'sur deux bords seulement). LÉGENDE : une entrée par élément réellement visible, aucune pour un élément absent. '
+    'CADRAGE : étendue ajustée aux données (cartes : points et une marge), pas de grand vide autour ni entre panneaux. '
+    'DENSITÉ : beaucoup de catégories (plus d’une trentaine de barres ou de nombreux petits multiples) se trient, se '
+    'regroupent ou passent en tableau. STATISTIQUE : tout coefficient tracé (corrélation, pente) porte son effectif n. '
+    'RELECTURE : regarder l’image finale et vérifier un par un ces points; tout point manqué se corrige dans le script, '
+    'puis l’image est relue de nouveau. '
     'TYPES : profil vertical = profondeur en ordonnée croissante vers le bas (ax.set_ylim(profondeur_max, 0)), un panneau par variable sur un '
     'axe de profondeur commun, couches du filet en barres horizontales de min_sample_depth à max_sample_depth, CTD en '
     'profondeur TEOS-10, UVP au même grain de couche (ou par tranche, en le disant); échelle logarithmique seulement '
@@ -160,7 +244,7 @@ GRAPHICS = view(
     'LIVRABLES (enregistrer() pour PNG, SVG et PDF) : tous dans le dossier de la question, analyses/AAAA-MM-JJ_sujet-court/ '
     '(RANGEMENT des instructions du serveur : rien à la racine du dossier de travail), avec des chemins relatifs (jamais un chemin absolu '
     'recopié à la main, jamais un dossier synchronisé type OneDrive) : PNG 300 dpi, SVG (texte modifiable) et PDF '
-    '(vectoriel, préféré des revues) à la taille d’impression, CSV exact des données tracées, script Python reproductible, fichier de provenance (requête SQL, '
+    '(vectoriel, préféré des revues) à la taille d’impression, CSV exact des données tracées, script reproductible (Python, ou R si l’utilisateur travaille en R), fichier de provenance (requête SQL, '
     'paramètres, versions, méthode, exclusions, limites). Puis vérifier qu’ils existent (ex. ls) et donner le chemin absolu '
     'réellement affiché par cette vérification. RENDU : relire l’image finale APRÈS la dernière modification du script, pas '
     'une version antérieure; si une retouche suit la relecture, relire de nouveau.',

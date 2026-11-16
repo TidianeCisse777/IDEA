@@ -55,6 +55,54 @@ class CopiedAsIs(unittest.TestCase):
         self.assertEqual(plt.rcParams['savefig.dpi'], 300)
 
 
+def rscript():
+    import glob
+    import shutil
+    found = shutil.which('Rscript') or sorted(glob.glob(r'C:\Program Files\R\R-*\bin\Rscript.exe'))
+    return found if isinstance(found, str) else (found[-1] if found else None)
+
+
+class Clarity(unittest.TestCase):
+    def test_clarity_rules_and_r_template_are_served(self):
+        from warehouse_context import STYLE_CODE_R
+        text = ' '.join(GRAPHICS.values())
+        self.assertIn(STYLE_CODE_R, GRAPHICS['purpose'])
+        for rule in ('RIEN NE SE SUPERPOSE', 'CHAQUE SÉRIE SE VOIT', 'PAS DE LIEN INVENTÉ', 'TEXTE ENTIER',
+                     'GRADUATIONS', 'CADRAGE', 'RELECTURE', 'na.rm = TRUE', 'labels = taxon'):
+            self.assertIn(rule, text)
+        self.assertIn('enregistrer <- function(p, nom, dossier,', STYLE_CODE_R)   # no default folder either
+
+
+@unittest.skipUnless(rscript(), 'R requis')
+class CopiedAsIsInR(unittest.TestCase):
+    def test_the_r_template_saves_three_formats_with_labels_bound_to_entities(self):
+        import subprocess
+        from warehouse_context import STYLE_CODE_R
+        folder = Path(tempfile.mkdtemp())
+        script = folder / 'essai.R'
+        # Data deliberately not in alphabetical order: labels must follow the entity, not the position.
+        script.write_text(STYLE_CODE_R + """
+d <- data.frame(z0 = c(0, 20), z1 = c(20, 40), a = c(1500, 30), t = c('Oithona similis', 'Harpacticoida'))
+p <- ggplot(d) + geom_rect(aes(xmin = 0, xmax = a, ymin = z0, ymax = z1, fill = t)) + scale_y_reverse() +
+  scale_x_continuous(labels = nombre_fr) + scale_fill_manual(values = couleurs(d$t), labels = taxon)
+b <- ggplot_build(p)
+cat('COULEUR', b$data[[1]]$fill[b$plot$data$t == 'Oithona similis'], '\\n')
+cat('LIBELLES', sapply(taxon(c('Oithona similis', 'Pseudocalanus spp.', 'Harpacticoida')), deparse), sep = '|')
+cat('\\nNOMBRE', utf8ToInt(nombre_fr(1500)), '|', utf8ToInt(nombre_fr(c(-0.5, 0, 0.5))[1]), '\\n')   # codes: console-proof; ticks as on an axis
+invisible(enregistrer(p, 'essai', '""" + folder.as_posix() + """'))
+""", encoding='utf-8')
+        done = subprocess.run([rscript(), str(script)], capture_output=True, text=True, encoding='utf-8')
+        self.assertEqual(done.returncode, 0, done.stderr[-500:])
+        self.assertIn('COULEUR #2a78d6', done.stdout)            # first entity, first colour, whatever the sort
+        self.assertIn('italic("Oithona") ~ italic("similis")', done.stdout)
+        self.assertIn('italic("Pseudocalanus") ~ "spp."', done.stdout)
+        self.assertIn('"Harpacticoida"', done.stdout)
+        # \u00ab 1 500 \u00bb with a narrow no-break space (8239), \u00ab \u22120,5 \u00bb with a true minus (8722) and a decimal comma (44)
+        self.assertIn('NOMBRE 49 8239 53 48 48 | 8722 48 44 53', done.stdout)
+        for ext in ('png', 'svg', 'pdf'):
+            self.assertTrue((folder / f'essai.{ext}').stat().st_size > 0)
+
+
 class Tidiness(unittest.TestCase):
     def test_every_question_gets_its_own_folder_never_the_root(self):
         import warehouse_connect
