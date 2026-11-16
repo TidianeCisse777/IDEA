@@ -15,7 +15,8 @@ aucun mot de passe de la base n'est dans son environnement. Il travaille dans un
 Installation tout-en-un (--docker <conteneur>) : la base ne sort pas du conteneur. Les attendus sont calculés par
 « docker exec … psql » en lecture seule, et l'agent est branché comme un utilisateur (docker exec -i <conteneur>
 neolab-mcp, compte de lecture du conteneur). Aucun port ouvert, aucun mot de passe lu. Les cas avec « account »
-(compte restreint) demandent de créer un rôle dans la base : ils sont notés non exécutés dans ce mode.
+(compte restreint) ont un compte temporaire créé dans le conteneur par warehouse_user.py (identifiants laissés
+dans le conteneur), supprimé à la fin.
 
 Note d'un cas : chaque nombre attendu (non nul) doit apparaître dans la réponse (entier exact; décimal à
 `tolerance` près), chaque motif `must_mention` doit être trouvé, et les nombres de `must_not_sql` ne doivent
@@ -165,6 +166,49 @@ def docker_mcp_config(tmp: Path, container: str) -> Path:
     mcp.write_text(json.dumps({'mcpServers': {'neolab-warehouse': {
         'command': shutil.which('docker') or 'docker', 'args': ['exec', '-i', container, 'neolab-mcp']}}}))
     return mcp
+
+
+# Inside the all-in-one container, with the owner role of secrets.env (as initdb.sh creates lecture_mcp): the
+# account and its credentials file stay in the container; no password reaches this machine or the arguments.
+DOCKER_ACCOUNT = r'''set -euo pipefail
+set -a; . "$NEOLAB_STATE/secrets.env"; set +a
+cd /opt/neolab/IDEA
+export WAREHOUSE_POSTGRES_HOST=/var/run/postgresql WAREHOUSE_POSTGRES_PORT=5432 \
+       WAREHOUSE_POSTGRES_DB="$POSTGRES_DB" WAREHOUSE_POSTGRES_USER="$POSTGRES_USER" \
+       WAREHOUSE_POSTGRES_PASSWORD="$POSTGRES_PASSWORD" WAREHOUSE_PUBLIC_HOST=127.0.0.1 WAREHOUSE_PUBLIC_PORT=5432
+py=/opt/neolab/venv/bin/python
+action=$1; name=$2; shift 2
+home=/tmp/$name
+if [ "$action" = create ]; then
+    umask 077; mkdir "$home"
+    "$py" scripts/warehouse_user.py create "$name" "$@" --note 'batterie de tests agent (temporaire)' --out-dir "$home" >/dev/null
+    NEOLAB_WAREHOUSE_CREDENTIALS="$home/credentials.env" "$py" scripts/warehouse_connect.py init --from-file "$home/$name.env" >/dev/null
+    rm -f "$home/$name.env"
+else
+    "$py" scripts/warehouse_user.py remove "$name" --yes >/dev/null || true
+    rm -rf "$home"
+fi
+'''
+
+
+def docker_account(container: str, action: str, name: str, grant: list[str] | None = None) -> None:
+    done = subprocess.run(['docker', 'exec', '-i', container, 'bash', '-s', '--', action, name, *(grant or [])],
+                          input=DOCKER_ACCOUNT.encode('utf-8'),   # bytes: text mode would send CRLF to bash on Windows
+                          capture_output=True, env=dict(os.environ, MSYS_NO_PATHCONV='1'))
+    if done.returncode != 0:
+        raise RuntimeError(f"compte temporaire {action} : {done.stderr.decode('utf-8', 'replace').strip()[-300:]}")
+
+
+def docker_temporary_account(tmp: Path, container: str, grant: list[str]) -> tuple[str, None, Path]:
+    """A restricted read account inside the container; the agent reaches it through docker exec, as neolab-mcp."""
+    name = 'battery_' + uuid.uuid4().hex[:8]
+    docker_account(container, 'create', name, grant)
+    mcp = tmp / f'mcp_{name}.json'
+    mcp.write_text(json.dumps({'mcpServers': {'neolab-warehouse': {
+        'command': shutil.which('docker') or 'docker',
+        'args': ['exec', '-i', '-e', f'NEOLAB_WAREHOUSE_CREDENTIALS=/tmp/{name}/credentials.env', container,
+                 '/opt/neolab/venv/bin/python', '/opt/neolab/IDEA/scripts/warehouse_connect.py', 'run']}}}))
+    return name, None, mcp
 
 
 def agent_env() -> dict:
@@ -331,7 +375,8 @@ def main(argv=None) -> int:
                     'plutôt que dans un dossier vide')
     ap.add_argument('--docker', metavar='CONTENEUR',
                     help='installation tout-en-un : attendus par docker exec (lecture seule), agent branché par '
-                    'docker exec -i CONTENEUR neolab-mcp; les cas « account » sont notés non exécutés')
+                    'docker exec -i CONTENEUR neolab-mcp; les cas « account » ont un compte temporaire créé et '
+                    'supprimé dans le conteneur')
     args = ap.parse_args(argv)
     if not shutil.which('claude'):
         print('Claude Code (commande claude) est introuvable.', file=sys.stderr)
@@ -356,14 +401,16 @@ def main(argv=None) -> int:
     accounts = {}  # one temporary account per distinct "account" of the cases (all-access by default)
     try:
         if args.docker:
-            mcp = docker_mcp_config(tmp, args.docker)
+            # All-access cases use the container's own MCP account; restricted ones a temporary account in it.
+            mcps = {'null': docker_mcp_config(tmp, args.docker)}
+            for case in cases:
+                key = json.dumps(case.get('account'))
+                if key not in mcps:
+                    accounts[key] = docker_temporary_account(tmp, args.docker, case['account'])
+                    mcps[key] = accounts[key][2]
 
             def run_one(c):
-                if c.get('account'):
-                    return {'id': c['id'], 'exit': None, 'seconds': 0, 'not_run': True, 'answer': '', 'turns': 0,
-                            'not_run_reason': 'compte restreint : non créé en mode --docker',
-                            'cost_usd': 0, 'sql_queries': 0, 'conversation': []}
-                return run_case(c, out, mcp, args.model, args.timeout, args.workspace)
+                return run_case(c, out, mcps[json.dumps(c.get('account'))], args.model, args.timeout, args.workspace)
         else:
             for case in cases:
                 key = json.dumps(case.get('account'))
@@ -376,6 +423,9 @@ def main(argv=None) -> int:
             results = list(pool.map(run_one, cases))
     finally:
         for name, _, _ in accounts.values():
+            if args.docker:
+                docker_account(args.docker, 'remove', name)
+                continue
             subprocess.run([sys.executable, str(ROOT / 'scripts/warehouse_user.py'), 'remove', name, '--yes'],
                            capture_output=True, text=True)
         shutil.rmtree(tmp, ignore_errors=True)

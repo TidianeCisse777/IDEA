@@ -27,6 +27,27 @@
 - Limites : rappels par motifs dans le texte SQL, ils peuvent manquer un piège écrit autrement ou en signaler un
   déjà traité ; leur effet sur les réponses n'est pas encore mesuré par une batterie d'agents.
 
+### 16 novembre 2026 — Batterie : cas à compte restreint en mode tout-en-un
+
+- `scripts/agent_battery.py --docker` : un cas avec `account` reçoit un compte temporaire créé dans le conteneur par
+  `warehouse_user.py create` (rôle propriétaire de `secrets.env`, comme `initdb.sh` pour `lecture_mcp`). Le fichier
+  d'identifiants reste dans le conteneur (`/tmp/battery_…`, mode 700) et l'agent passe par
+  `docker exec -i -e NEOLAB_WAREHOUSE_CREDENTIALS=… neolab-warehouse … warehouse_connect.py run`. Aucun mot de passe
+  ne sort du conteneur. À la fin : `warehouse_user.py remove` et suppression du dossier. Le script est envoyé à bash
+  en octets, sinon Python sous Windows le passe en CRLF (« set: pipefail: invalid option name »).
+- Essai à blanc (compte `--source ecotaxa,ecopart`) : `explore.filet_data` renvoie 0 ligne avec ce compte. Après
+  suppression : 0 rôle `battery_%`, 0 dossier `/tmp/battery_*`.
+- Exécution (accord de l'utilisateur pour les comptes temporaires) : conv_scope_ctd_insist et
+  conv_scope_filet_hidden réussis, 2 sur 2, 16 tours, 6 requêtes SQL, 1,19 $ au tarif API. Réponses relues : l'agent
+  lit `catalogue.my_access` et `my_datasets`, dit que le 0 vient de données masquées et non absentes, le maintient
+  quand on insiste, et ne remplace pas le filet par l'UVP. Les attendus de ces cas valent 0 : c'est la relecture qui
+  fait foi ici, pas la note.
+- Batterie complète de conversations : 24 sur 24. Tests : 224 réussis (pytest installé dans un dossier temporaire :
+  les Python 3.9 et 3.13 de ce PC n'avaient plus pytest, psycopg, matplotlib…).
+- Limite : une batterie coupée en cours (arrêt de Docker ou de la session) peut laisser un compte `battery_…` ;
+  vérifier avec `SELECT rolname FROM pg_roles WHERE rolname LIKE 'battery_%'`. Après la coupure du 16 novembre :
+  aucun.
+
 ### 15 novembre 2026 — Catalogue de conversations multi-tours pour tester un agent
 
 - `tests/agent_battery/conversation_cases.json` : 24 conversations de chercheurs, 51 tours, au format de
