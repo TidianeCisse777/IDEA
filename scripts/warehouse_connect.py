@@ -978,7 +978,9 @@ def workspace_text():
             + SERVER_INSTRUCTIONS + '\n\n'
             'Les fichiers produits vont dans analyses/<date>_<sujet>/, un dossier par question (voir RANGEMENT ci-dessus), '
             'jamais à la racine de ce dossier. '
-            'Graphiques : lire warehouse_context(topic=graphs) et copier son code de style standard en tête de script.\n'
+            'Graphiques : lire warehouse_context(topic=graphs) et copier son code de style standard en tête de script; '
+            'Python dans un seul environnement .venv à la racine de ce dossier (rubrique ENVIRONNEMENT de la fiche graphs), '
+            'et rien n’est installé hors de ce dossier sans accord.\n'
             'Ce fichier ne contient aucun mot de passe : la connexion passe par le serveur MCP neolab-warehouse.\n')
 
 

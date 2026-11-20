@@ -55,6 +55,61 @@ class CopiedAsIs(unittest.TestCase):
         self.assertEqual(plt.rcParams['savefig.dpi'], 300)
 
 
+@unittest.skipUnless(HAS_MPL, 'matplotlib requis')
+class Helpers(unittest.TestCase):
+    """Fonctions du style pour les erreurs de figure les plus fréquentes : nombres, profondeur, couches, légende."""
+
+    def setUp(self):
+        import matplotlib
+        matplotlib.use('Agg')
+        self.ns = {}
+        exec(STYLE_CODE, self.ns)
+
+    def test_numbers_in_french_without_negative_zero_nor_e_notation(self):
+        fr = self.ns['nombre_fr']
+        self.assertEqual(fr(-0.0), '0')
+        self.assertEqual(fr(0.1 + 0.2), '0,3')
+        self.assertEqual(fr(-2500.5), '\u22122\u202f500,5')
+        self.assertEqual(fr(1e-05), '10$^{-5}$')
+        self.assertEqual(fr(2.5e-06), '2,5\u202f×\u202f10$^{-6}$')
+        self.assertEqual(fr(-1e16), '\u221210$^{16}$')
+
+    def test_layers_are_bars_and_a_missing_layer_is_hatched_never_zero(self):
+        import math
+        fig, ax = self.ns['figure']('colonne')
+        vides = self.ns['couches'](ax, ['0', 10, 20, 40], [10, 20, 40, 60], ['2010', None, math.nan, 2.4])
+        self.assertEqual(vides, 2)
+        bars = ax.patches[:2]
+        self.assertEqual([(b.get_y(), b.get_height(), b.get_width()) for b in bars], [(0, 10, 2010), (40, 20, 2.4)])
+        bands = [p for p in ax.patches[2:]]
+        self.assertEqual(len(bands), 2)
+        self.assertTrue(all(p.get_hatch() for p in bands))
+        labels = ax.get_legend_handles_labels()[1]
+        self.assertEqual(labels, ['Couche non renseignée'])            # one entry, not one per band
+        self.assertEqual(self.ns['couches'](ax, [], [], []), 0)
+
+    def test_depth_axis_points_down_and_legend_goes_under_the_panels(self):
+        fig, axes = self.ns['figure']('page', ncols=2)
+        self.ns['profondeur'](axes[0], 160)
+        self.assertEqual(axes[0].get_ylim(), (160, 0))
+        self.assertEqual(axes[0].get_ylabel(), 'Profondeur (m)')
+        for ax in axes:
+            ax.plot([0, 1], [0, 1], label='Oithona')
+            ax.legend()
+        axes[1].plot([0, 1], [1, 0], label='Calanus')
+        self.ns['legende_dessous'](fig)
+        self.assertTrue(all(ax.get_legend() is None for ax in axes))
+        self.assertEqual([t.get_text() for t in fig.legends[0].get_texts()], ['Oithona', 'Calanus'])
+
+    def test_environment_rules_are_served(self):
+        import warehouse_connect
+        text = ' '.join(GRAPHICS.values())
+        for rule in ('ENVIRONNEMENT', '.venv', 'seule exception à RANGEMENT', 'ne pas l’installer sans accord',
+                     'pas de sudo', 'provenance.md', 'install.packages'):
+            self.assertIn(rule, text)
+        self.assertIn('.venv', warehouse_connect.workspace_text())
+
+
 def rscript():
     import glob
     import shutil
@@ -101,6 +156,28 @@ invisible(enregistrer(p, 'essai', '""" + folder.as_posix() + """'))
         self.assertIn('NOMBRE 49 8239 53 48 48 | 8722 48 44 53', done.stdout)
         for ext in ('png', 'svg', 'pdf'):
             self.assertTrue((folder / f'essai.{ext}').stat().st_size > 0)
+
+
+@unittest.skipUnless(rscript(), 'R requis')
+class HelpersInR(unittest.TestCase):
+    def test_depth_points_down_keeps_deep_data_and_missing_layers_are_grey_bands(self):
+        import subprocess
+        from warehouse_context import STYLE_CODE_R
+        folder = Path(tempfile.mkdtemp())
+        script = folder / 'aides.R'
+        script.write_text(STYLE_CODE_R + """
+d <- data.frame(haut = c(0, 10, 20), bas = c(10, 20, 40), valeur = c(2010, NA, 2.4))
+p <- ggplot() + couches(d) + profondeur(30)
+b <- ggplot_build(p)
+cat('COUCHES', nrow(b$data[[1]]), nrow(b$data[[2]]), '\\n')        # 2 bars, 1 grey band
+cat('PROFONDEUR', b$layout$panel_params[[1]]$y.range, '\\n')      # reversed scale: -30 to 0
+cat('GARDEES', sum(!is.na(b$data[[1]]$ymax)), '\\n')              # the 20-40 m bar beyond 30 m is kept, clipped
+""", encoding='utf-8')
+        done = subprocess.run([rscript(), str(script)], capture_output=True, text=True, encoding='utf-8')
+        self.assertEqual(done.returncode, 0, done.stderr[-500:])
+        self.assertIn('COUCHES 2 1', done.stdout)
+        self.assertIn('PROFONDEUR -30 0', done.stdout)
+        self.assertIn('GARDEES 2', done.stdout)
 
 
 class Tidiness(unittest.TestCase):

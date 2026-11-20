@@ -2,7 +2,33 @@
 
 **Période proposée :** du 14 septembre au 30 novembre 2026
 
-**Dernière mise à jour :** 15 novembre 2026
+**Dernière mise à jour :** 20 novembre 2026
+
+### 20 novembre 2026 — Figures Python et R : fonctions pour les couches, la profondeur, la légende; environnement
+
+- Essai réel (base locale `9cc5973` + ces changements, compte `lecture_mcp`) : déploiement FILET 1576, *Oithona
+  similis* et *Calanus glacialis* (ALL_STAGES, volume par la profondeur) par couche, et température CTD 711
+  (TE90, `depth_m` source), tracés comme un agent avec le style copié tel quel, en Python puis en R (R 4.3.3,
+  ggplot2 3.4.4, patchwork 1.2.0); images relues.
+- Défauts trouvés et corrigés :
+  - Python : couches collées sans séparation; couche sans valeur (*C. glacialis* 140-160 m, aucune ligne dans
+    l'export) laissée blanche, donc confondue avec une valeur proche de 0; nombres `−0`, `1e−05`, `1e+12`.
+  - R : profondeur à l'endroit (`coord_cartesian` annulait `scale_y_reverse`) et données au-delà de la limite
+    retirées par `limits`; « Profondeur (m) » répété sur chaque panneau; graduations collées dans un panneau étroit;
+    DejaVu Sans choisie même sans son italique (noms de taxons en romain sur une machine sans fonts-dejavu-extra).
+- Ajouts au style servi par la fiche graphs (Python, et R quand c'est utile) : `nombre_fr` (sans −0, 10ⁿ),
+  `profondeur(ax, max_m)` / `profondeur(max_m)` (données profondes gardées, coupées au bord), `couches(...)` (barres
+  séparées par un liseré; couche sans valeur hachurée « Couche non renseignée » en Python, bande grise « non
+  renseignée » en R; renvoie le nombre de couches vides), `legende_dessous(fig)`, titres d'axe communs en R, police
+  R choisie avec son italique.
+- Rubrique ENVIRONNEMENT (fiche graphs, et une phrase du dossier de travail) : vérifier Python ou R; un seul `.venv`
+  à la racine du dossier de travail (exception à RANGEMENT), seulement les bibliothèques importées, jamais dans le
+  Python du système; R dans la bibliothèque de l'utilisateur; versions dans provenance.md; Python ou R absent : le
+  dire, proposer l'installation et attendre l'accord, tableau en attendant.
+- Vérifié : tests Python et R du style (15, dont le modèle R exécuté pour la première fois ici), suite complète,
+  déploiement rejoué « À JOUR », fiche graphs lue avec `lecture_mcp` (ENVIRONNEMENT, `couches` Python et R).
+- Limites : pas encore essayé par un agent neuf; Windows et macOS non essayés pour ces fonctions (R testé sous
+  Linux seulement).
 
 ### 16 novembre 2026 — Déploiement 9cc5973 et lot R (8 conversations)
 

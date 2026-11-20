@@ -40,11 +40,63 @@ def lettres(axes):
     for i, ax in enumerate(getattr(axes, 'flat', axes)):
         ax.set_title(f'({chr(97 + i)}) ' + ax.get_title(loc='left'), loc='left')
 
+def nombre_fr(v, chiffres=10):
+    # 1 234,5 : virgule décimale, espace fine des milliers, vrai signe moins, 10ⁿ au lieu de 1e-05
+    if v == 0:
+        return '0'
+    s = f'{v:,.{chiffres}g}' if 1000 <= abs(v) < 1e15 else f'{v:.{chiffres}g}'
+    if 'e' in s:
+        m, e = s.split('e')
+        m = m.replace('.', ',').replace('-', '\u2212')
+        return {'1': '', '\u22121': '\u2212'}.get(m, m + '\u202f×\u202f') + f'10$^{{{int(e)}}}$'
+    return s.replace(',', '\u202f').replace('.', ',').replace('-', '\u2212')
+
+def profondeur(ax, max_m, min_m=0):
+    # axe vertical de profondeur : surface en haut, max_m en bas
+    ax.set_ylim(max_m, min_m)
+    ax.set_ylabel('Profondeur (m)')
+
+def couches(ax, haut, bas, valeurs, **kw):
+    # données par couche (filet, tranche) : une barre horizontale de haut à bas (m) par couche, séparée de ses
+    # voisines par un liseré blanc; une valeur manquante (None, NaN, pd.NA) n'est ni 0 ni reliée aux voisines :
+    # la couche est hachurée en gris, légendée « Couche non renseignée »; renvoie le nombre de couches non
+    # renseignées, à dire dans la légende de figure
+    def connue(v):
+        try:
+            return float(v) == float(v)
+        except (TypeError, ValueError):
+            return False
+    lignes = [(float(h), float(b), v) for h, b, v in zip(haut, bas, valeurs)]
+    garde = [(h, b, float(v)) for h, b, v in lignes if connue(v)]
+    if garde:
+        h, b, v = zip(*garde)
+        kw.setdefault('color', PALETTE[0])
+        kw.setdefault('edgecolor', 'white')
+        kw.setdefault('linewidth', 0.6)
+        ax.barh(h, v, height=[y - x for x, y in zip(h, b)], align='edge', **kw)
+    manquantes = [(h, b) for h, b, v in lignes if not connue(v)]
+    for i, (h, b) in enumerate(manquantes):
+        ax.axhspan(h, b, facecolor='none', edgecolor=AUTRES, hatch='////', linewidth=0,
+                   label='Couche non renseignée' if i == 0 else '_')
+    return len(manquantes)
+
+def legende_dessous(fig, colonnes=None):
+    # une seule légende, sous les panneaux (jamais sur les données); une entrée par série réellement tracée
+    poignees, noms = [], []
+    for ax in fig.axes:
+        for p, n in zip(*ax.get_legend_handles_labels()):
+            if n not in noms and not n.startswith('_'):
+                poignees.append(p)
+                noms.append(n)
+        if ax.get_legend():
+            ax.get_legend().remove()
+    if poignees:
+        fig.legend(poignees, noms, loc='outside lower center', ncols=colonnes or min(len(noms), 4))
+
 def enregistrer(fig, nom, dossier):
     # dossier = celui de la question (analyses/AAAA-MM-JJ_sujet/); nombres à la française puis PNG 300 dpi,
     # SVG et PDF (vectoriels) à la taille d'impression; renvoie les chemins
-    fr = FuncFormatter(lambda v, _: (f'{v:,.10g}' if abs(v) >= 1000 else f'{v:.10g}')
-                       .replace(',', '\u202f').replace('.', ',').replace('-', '\u2212'))
+    fr = FuncFormatter(lambda v, _: nombre_fr(v))
     for ax in fig.axes:
         for axe in (ax.xaxis, ax.yaxis):
             if axe.get_scale() == 'linear':
@@ -62,8 +114,12 @@ LARGEUR_CM <- c(colonne = 8, intermediaire = 12, page = 16)   # taille d'impress
 PALETTE <- c('#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948')  # ordre fixe
 AUTRES <- '#9e9d97'
 STATUT <- list(confirmed = c('#007B88', 'solid'), exploratory = c('#B87514', 'dashed'), uncertain = c('#737C86', 'dotted'))
-POLICE <- if ('DejaVu Sans' %in% systemfonts::system_fonts()$family) 'DejaVu Sans' else 'sans'
-# nombres à la française sur chaque échelle continue : scale_x_continuous(labels = nombre_fr)
+POLICE <- local({   # DejaVu Sans seulement avec son italique (noms de taxons), sinon la police sans du système
+  f <- systemfonts::system_fonts(); f <- f[f$family == 'DejaVu Sans', ]
+  if (any(grepl('Oblique|Italic', f$style))) 'DejaVu Sans' else 'sans'
+})
+# nombres à la française sur chaque échelle continue : scale_x_continuous(labels = nombre_fr); panneau étroit :
+# n.breaks = 3 pour que les graduations ne se touchent pas. Script enregistré en UTF-8 (accents, espaces fines).
 nombre_fr <- label_number(big.mark = ' ', decimal.mark = ',', style_negative = 'minus', trim = TRUE)
 
 theme_neolab <- function() {
@@ -95,8 +151,30 @@ taxon <- function(noms) {
   }))
 }
 
+profondeur <- function(max_m, min_m = 0) {
+  # axe vertical de profondeur : surface en haut, max_m en bas; les données au-delà sont coupées au bord, pas retirées
+  scale_y_reverse(name = 'Profondeur (m)', labels = nombre_fr, limits = c(max_m, min_m),
+                  oob = scales::oob_keep, expand = expansion(0))
+}
+
+couches <- function(d, couleur = PALETTE[1]) {
+  # données par couche (filet, tranche) : d a une ligne par couche, colonnes haut et bas (m) et valeur.
+  # Barres séparées par un liseré blanc; une valeur NA n'est ni 0 ni reliée aux voisines : bande grise
+  # « non renseignée ». Dire dans la légende de figure le nombre de couches non renseignées (sum(is.na(d$valeur))).
+  vides <- d[is.na(d$valeur), , drop = FALSE]
+  list(
+    geom_rect(data = d[!is.na(d$valeur), , drop = FALSE], aes(xmin = 0, xmax = valeur, ymin = haut, ymax = bas),
+              fill = couleur, colour = 'white', linewidth = 0.3, inherit.aes = FALSE),
+    if (nrow(vides)) geom_rect(data = vides, aes(xmin = -Inf, xmax = Inf, ymin = haut, ymax = bas),
+                               fill = AUTRES, alpha = 0.25, colour = NA, inherit.aes = FALSE),
+    if (nrow(vides)) geom_text(data = vides, aes(x = Inf, y = (haut + bas) / 2), label = 'non renseignée',
+                               hjust = 1.05, size = 8 / .pt, colour = '#5f5e5a', family = POLICE, inherit.aes = FALSE))
+}
+
 lettres <- function(p) {
   # panneaux assemblés avec patchwork : (a), (b)... en haut à gauche de chaque panneau
+  # un titre d'axe identique n'est écrit qu'une fois (patchwork ≥ 1.2)
+  if (packageVersion('patchwork') >= '1.2.0') p <- p + patchwork::plot_layout(axis_titles = 'collect')
   p + patchwork::plot_annotation(tag_levels = 'a', tag_prefix = '(', tag_suffix = ')') &
     theme(plot.tag = element_text(size = 9, family = POLICE))
 }
@@ -116,7 +194,16 @@ enregistrer <- function(p, nom, dossier, largeur = 'page', hauteur_cm = 9) {
 
 GRAPHICS = view(
     # Bibliothèques et outil
-    'CODE STANDARD : copier tel quel, en tête de tout script de figure, le bloc STYLE ci-dessous (fin de cette fiche) : il fixe police, tailles, palette, italiques, nombres à la française et formats. Puis fig, axes = figure("page", hauteur_cm=9, ...), taxon(nom) pour les légendes, lettres(axes) pour les panneaux, enregistrer(fig, nom). Ne pas redéfinir ces valeurs à la main. '
+    'CODE STANDARD : copier tel quel, en tête de tout script de figure, le bloc STYLE ci-dessous (fin de cette fiche) : il fixe police, tailles, palette, italiques, nombres à la française et formats. Puis fig, axes = figure("page", hauteur_cm=9, ...), taxon(nom) pour les légendes, lettres(axes) pour les panneaux, profondeur(ax, max_m) pour un axe de profondeur, couches(ax, haut, bas, valeurs) pour des données par couche ou par tranche (barres séparées; couche sans valeur hachurée « Couche non renseignée », jamais 0 ni reliée; renvoie leur nombre, à dire dans la légende de figure), legende_dessous(fig) pour une légende sous les panneaux, nombre_fr(v) pour un nombre écrit dans un texte, enregistrer(fig, nom, dossier). En R, les mêmes : profondeur(max_m), couches(d) (colonnes haut, bas, valeur). Ne pas redéfinir ces valeurs à la main. '
+    'ENVIRONNEMENT : avant le premier script, vérifier l’interpréteur (python3 --version, sous Windows py --version; Rscript --version). '
+    'Python : un seul environnement virtuel pour tout le dossier de travail, .venv à sa racine (seule exception à RANGEMENT : '
+    'python -m venv .venv, puis .venv/bin/python ou, sous Windows, .venv\\Scripts\\python), réutilisé par toutes les questions; '
+    'y installer seulement ce que le script importe (pandas et matplotlib d’abord; gsw, cmocean, cartopy au besoin), jamais '
+    'dans le Python du système (pas de sudo, pas de pip install --user). R : paquets dans la bibliothèque de l’utilisateur '
+    '(install.packages, sans droits administrateur). Noter dans provenance.md la version de Python ou de R et des bibliothèques. '
+    'Si Python ou R manque, ne pas l’installer sans accord : le dire, proposer l’installation (Windows : winget install '
+    'Python.Python.3.12 ou python.org; macOS : python.org ou Homebrew; R : cran.r-project.org) et attendre la réponse; '
+    'entre-temps, donner les résultats en tableau. '
     'BIBLIOTHÈQUES : Python; pandas pour manipuler les résultats SQL, Matplotlib pour toute figure statique (seaborn '
     'facultatif pour les distributions). Cartopy avec Matplotlib pour les cartes statiques; Folium seulement pour une carte '
     'interactive en HTML. Plotly uniquement si une interaction est demandée ou utile à une exploration explicitée, en HTML '
